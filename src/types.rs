@@ -9,25 +9,6 @@ pub enum OpenCodeStatus {
     Unknown,
 }
 
-impl OpenCodeStatus {
-    pub fn label(&self) -> &str {
-        match self {
-            Self::Idle => "idle",
-            Self::Busy => "busy",
-            Self::Retry { .. } => "retrying",
-            Self::Unknown => "no server",
-        }
-    }
-
-    pub fn icon(&self) -> &str {
-        match self {
-            Self::Idle => "○",
-            Self::Busy => "●",
-            Self::Retry { .. } => "⚠",
-            Self::Unknown => "?",
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -47,6 +28,7 @@ pub struct OpenCodePane {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub last_activity: Option<i64>,
+    pub db_session_id: Option<String>,
 }
 
 impl OpenCodePane {
@@ -106,3 +88,43 @@ pub struct HealthResponse {
 }
 
 pub type SessionStatusMap = HashMap<String, SessionStatus>;
+
+/// Detailed information about a session, shown in the detail panel.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct SessionDetail {
+    pub session_id: String,
+    pub title: String,
+    pub directory: String,
+    pub message_count: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub session_created: Option<i64>,
+    pub session_updated: Option<i64>,
+    pub summary_files: Option<u32>,
+    pub summary_additions: Option<u32>,
+    pub summary_deletions: Option<u32>,
+    pub messages: Vec<MessageSummary>,
+    pub todos: Vec<TodoItem>,
+}
+
+/// A single message turn for the timeline.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MessageSummary {
+    pub role: String,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub output_tokens: u64,
+    pub timestamp: i64,
+    pub text_preview: Option<String>,
+}
+
+/// A todo item from the session.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TodoItem {
+    pub content: String,
+    pub status: String,
+    pub priority: String,
+}

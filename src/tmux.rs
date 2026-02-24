@@ -43,6 +43,7 @@ pub fn list_opencode_panes() -> anyhow::Result<Vec<OpenCodePane>> {
             agent: None,
             model: None,
             last_activity: None,
+            db_session_id: None,
         });
     }
 

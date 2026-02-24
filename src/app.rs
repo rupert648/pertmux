@@ -1,4 +1,4 @@
-use crate::types::OpenCodePane;
+use crate::types::{OpenCodePane, SessionDetail};
 use crate::{api, db, discovery, tmux};
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,8 @@ pub struct App {
     /// (session_name, vec of indices into self.panes)
     pub groups: Vec<(String, Vec<usize>)>,
     pub error: Option<String>,
+    /// Detailed session info for the currently selected pane.
+    pub detail: Option<SessionDetail>,
 }
 
 impl App {
@@ -23,6 +25,7 @@ impl App {
             refresh_interval: Duration::from_secs(2),
             groups: Vec::new(),
             error: None,
+            detail: None,
         }
     }
 
@@ -60,15 +63,15 @@ impl App {
         if self.selected >= self.panes.len() && !self.panes.is_empty() {
             self.selected = self.panes.len() - 1;
         }
+
+        self.update_detail();
     }
 
     fn build_groups(&mut self, panes: &[OpenCodePane]) {
         use std::collections::BTreeMap;
         let mut map: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (i, pane) in panes.iter().enumerate() {
-            map.entry(pane.session_name.clone())
-                .or_default()
-                .push(i);
+            map.entry(pane.session_name.clone()).or_default().push(i);
         }
         self.groups = map.into_iter().collect();
     }
@@ -80,12 +83,14 @@ impl App {
     pub fn move_up(&mut self) {
         if !self.panes.is_empty() && self.selected > 0 {
             self.selected -= 1;
+            self.update_detail();
         }
     }
 
     pub fn move_down(&mut self) {
         if !self.panes.is_empty() && self.selected < self.panes.len() - 1 {
             self.selected += 1;
+            self.update_detail();
         }
     }
 
@@ -98,5 +103,14 @@ impl App {
 
     pub fn seconds_since_refresh(&self) -> u64 {
         self.last_refresh.elapsed().as_secs()
+    }
+
+    /// Fetch session detail for the currently selected pane from the DB.
+    fn update_detail(&mut self) {
+        self.detail = self
+            .panes
+            .get(self.selected)
+            .and_then(|pane| pane.db_session_id.as_deref())
+            .and_then(db::fetch_session_detail);
     }
 }
