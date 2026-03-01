@@ -29,6 +29,7 @@ pub struct OpenCodePane {
     pub model: Option<String>,
     pub last_activity: Option<i64>,
     pub db_session_id: Option<String>,
+    pub last_response: Option<String>,
 }
 
 impl OpenCodePane {

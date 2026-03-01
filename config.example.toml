@@ -1,0 +1,10 @@
+# pertmux configuration
+# Copy to ~/.config/pertmux/pertmux.toml or pass via: pertmux -c ./config.toml
+
+# How often (in seconds) to poll tmux panes and refresh the dashboard.
+# refresh_interval = 2
+
+[opencode]
+# Path to the opencode SQLite database.
+# Only needed if your database is in a non-standard location.
+# path = "~/.local/share/opencode/opencode.db"

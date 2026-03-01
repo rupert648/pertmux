@@ -1,10 +1,13 @@
 use crate::types::{MessageSummary, OpenCodePane, SessionDetail, TodoItem};
 use rusqlite::Connection;
 
-const DB_PATH_SUFFIX: &str = ".local/share/opencode/opencode.db";
+const DEFAULT_DB_PATH_SUFFIX: &str = ".local/share/opencode/opencode.db";
 
-fn open_db() -> Option<Connection> {
-    let db_path = dirs::home_dir().map(|h| h.join(DB_PATH_SUFFIX))?;
+fn open_db(db_path_override: Option<&str>) -> Option<Connection> {
+    let db_path = match db_path_override {
+        Some(p) => std::path::PathBuf::from(p),
+        None => dirs::home_dir().map(|h| h.join(DEFAULT_DB_PATH_SUFFIX))?,
+    };
     if !db_path.exists() {
         return None;
     }
@@ -15,12 +18,12 @@ fn open_db() -> Option<Connection> {
     .ok()
 }
 
-pub fn enrich_pane(pane: &mut OpenCodePane) {
-    let _ = try_enrich(pane);
+pub fn enrich_pane(pane: &mut OpenCodePane, db_path: Option<&str>) {
+    let _ = try_enrich(pane, db_path);
 }
 
-fn try_enrich(pane: &mut OpenCodePane) -> anyhow::Result<()> {
-    let conn = open_db().ok_or_else(|| anyhow::anyhow!("no db"))?;
+fn try_enrich(pane: &mut OpenCodePane, db_path: Option<&str>) -> anyhow::Result<()> {
+    let conn = open_db(db_path).ok_or_else(|| anyhow::anyhow!("no db"))?;
 
     let title_raw = pane
         .pane_title
@@ -38,7 +41,15 @@ fn try_enrich(pane: &mut OpenCodePane) -> anyhow::Result<()> {
                s.title,
                json_extract(m.data, '$.agent') as agent,
                json_extract(m.data, '$.modelID') as model,
-               s.time_updated
+               s.time_updated,
+               (SELECT substr(json_extract(p.data, '$.text'), 1, 200)
+                FROM part p
+                JOIN message mlast ON p.message_id = mlast.id
+                WHERE mlast.session_id = s.id
+                  AND json_extract(mlast.data, '$.role') = 'assistant'
+                  AND json_extract(p.data, '$.type') = 'text'
+                ORDER BY mlast.time_created DESC
+                LIMIT 1) as last_response
         FROM session s
         LEFT JOIN message m ON m.session_id = s.id
             AND m.time_created = (
@@ -59,22 +70,24 @@ fn try_enrich(pane: &mut OpenCodePane) -> anyhow::Result<()> {
             row.get::<_, Option<String>>(2)?,
             row.get::<_, Option<String>>(3)?,
             row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<String>>(5)?,
         ))
     });
 
-    if let Ok((session_id, title, agent, model, updated)) = result {
+    if let Ok((session_id, title, agent, model, updated, last_response)) = result {
         pane.db_session_id = session_id;
         pane.db_session_title = title;
         pane.agent = agent;
         pane.model = model;
         pane.last_activity = updated;
+        pane.last_response = last_response;
     }
     Ok(())
 }
 
 /// Fetch detailed session info for the detail panel.
-pub fn fetch_session_detail(session_id: &str) -> Option<SessionDetail> {
-    let conn = open_db()?;
+pub fn fetch_session_detail(session_id: &str, db_path: Option<&str>) -> Option<SessionDetail> {
+    let conn = open_db(db_path)?;
     try_fetch_detail(&conn, session_id).ok()
 }
 
