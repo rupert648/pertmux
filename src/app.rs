@@ -1,3 +1,4 @@
+use crate::config::{Config, OpencodeConfig};
 use crate::types::{OpenCodePane, SessionDetail};
 use crate::{api, db, discovery, tmux};
 use std::time::{Duration, Instant};
@@ -13,19 +14,22 @@ pub struct App {
     pub error: Option<String>,
     /// Detailed session info for the currently selected pane.
     pub detail: Option<SessionDetail>,
+    /// Optional override for the opencode database path.
+    pub opencode_config: OpencodeConfig,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             panes: Vec::new(),
             selected: 0,
             running: true,
             last_refresh: Instant::now() - Duration::from_secs(10),
-            refresh_interval: Duration::from_secs(2),
+            refresh_interval: Duration::from_secs(config.refresh_interval),
             groups: Vec::new(),
             error: None,
             detail: None,
+            opencode_config: config.opencode,
         }
     }
 
@@ -52,7 +56,7 @@ impl App {
             }
 
             // Enrich from DB
-            db::enrich_pane(pane);
+            db::enrich_pane(pane, self.opencode_config.path.as_deref());
         }
 
         // Build groups sorted by session name
@@ -111,6 +115,6 @@ impl App {
             .panes
             .get(self.selected)
             .and_then(|pane| pane.db_session_id.as_deref())
-            .and_then(db::fetch_session_detail);
+            .and_then(|id| db::fetch_session_detail(id, self.opencode_config.as_deref()));
     }
 }

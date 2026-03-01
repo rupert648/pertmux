@@ -207,6 +207,26 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             let mut detail_line = vec![Span::raw("          ")];
             detail_line.extend(detail_parts);
             lines.push(Line::from(detail_line));
+
+            // Row 3: latest AI response preview
+            if let Some(ref response) = pane.last_response {
+                let preview = response.lines().next().unwrap_or("");
+                if !preview.is_empty() {
+                    let max_w = area.width.saturating_sub(14) as usize;
+                    let truncated = if preview.len() > max_w && max_w > 3 {
+                        format!("{}...", &preview[..max_w - 3])
+                    } else {
+                        preview.to_string()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("          ▹ ", Style::default().fg(Color::Green)),
+                        Span::styled(
+                            truncated,
+                            Style::default().fg(Color::Indexed(250)),
+                        ),
+                    ]));
+                }
+            }
         }
 
         // Spacing between groups
@@ -215,7 +235,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     // Scroll to keep selected visible
     let visible_height = inner.height as usize;
-    let scroll = compute_scroll(&lines, app.selected, &app.groups, visible_height);
+    let scroll = compute_scroll(&lines, app.selected, &app.groups, &app.panes, visible_height);
 
     let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
     frame.render_widget(paragraph, inner);
@@ -525,21 +545,23 @@ fn compute_scroll(
     lines: &[Line],
     selected: usize,
     groups: &[(String, Vec<usize>)],
+    panes: &[crate::types::OpenCodePane],
     visible_height: usize,
 ) -> usize {
-    // Each group has: 1 header line, then 2 lines per pane, then 1 blank
+    // Each group: 1 header, then 2-3 lines per pane (3 if has last_response), then 1 blank
     let mut line_idx = 0;
     let mut flat = 0;
     for (_, pane_indices) in groups {
         line_idx += 1; // header
-        for _ in pane_indices {
+        for &idx in pane_indices {
             if flat == selected {
-                if line_idx + 2 > visible_height {
+                if line_idx + 3 > visible_height {
                     return line_idx.saturating_sub(visible_height / 2);
                 }
                 return 0;
             }
-            line_idx += 2; // title + detail
+            let pane_lines = if panes[idx].last_response.is_some() { 3 } else { 2 };
+            line_idx += pane_lines;
             flat += 1;
         }
         line_idx += 1; // spacing

@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod config;
 mod db;
 mod discovery;
 mod tmux;
@@ -7,6 +8,7 @@ mod types;
 mod ui;
 
 use app::App;
+use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -16,14 +18,25 @@ use ratatui::prelude::*;
 use std::io;
 use std::time::Duration;
 
+#[derive(Parser)]
+#[command(name = "pertmux", about = "TUI dashboard for opencode sessions in tmux")]
+struct Cli {
+    /// Path to config file
+    #[arg(short = 'c', long = "config")]
+    config: Option<String>,
+}
+
 fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let config = config::load(cli.config.as_deref())?;
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(config);
     app.refresh();
 
     let result = run_loop(&mut terminal, &mut app);
