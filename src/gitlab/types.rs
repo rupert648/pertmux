@@ -161,4 +161,65 @@ mod tests {
         assert!(!notes[0].system);
         assert!(notes[1].system);
     }
+
+    #[test]
+    fn test_mr_list_with_draft_mr() {
+        let json = r#"[
+            {
+                "iid": 55,
+                "title": "Draft: my feature",
+                "state": "opened",
+                "source_branch": "feat/draft-feature",
+                "target_branch": "main",
+                "author": {"id": 1, "username": "dev", "name": "Developer"},
+                "draft": true,
+                "user_notes_count": 0,
+                "web_url": "https://gitlab.example.com/team/project/-/merge_requests/55",
+                "created_at": "2026-02-01T00:00:00.000Z",
+                "updated_at": "2026-02-01T00:00:00.000Z"
+            }
+        ]"#;
+        let mrs: Vec<MergeRequestSummary> = serde_json::from_str(json).unwrap();
+        assert_eq!(mrs.len(), 1);
+        assert!(mrs[0].draft);
+        assert_eq!(mrs[0].title, "Draft: my feature");
+        assert_eq!(mrs[0].iid, 55);
+    }
+
+    #[test]
+    fn test_mr_notes_empty_list() {
+        let notes: Vec<MergeRequestNote> = serde_json::from_str("[]").unwrap();
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_mr_detail_with_conflicts_and_assignees() {
+        let json = r#"{
+            "iid": 88,
+            "title": "fix: resolve merge conflict",
+            "state": "opened",
+            "source_branch": "fix/conflicts",
+            "target_branch": "main",
+            "author": {"id": 1, "username": "dev", "name": "Developer"},
+            "draft": false,
+            "user_notes_count": 3,
+            "web_url": "https://gitlab.example.com/team/project/-/merge_requests/88",
+            "created_at": "2026-03-01T00:00:00.000Z",
+            "updated_at": "2026-03-01T12:00:00.000Z",
+            "detailed_merge_status": "broken_status",
+            "has_conflicts": true,
+            "assignees": [
+                {"id": 2, "username": "alice", "name": "Alice"},
+                {"id": 3, "username": "bob", "name": "Bob"}
+            ],
+            "reviewers": [],
+            "head_pipeline": null
+        }"#;
+        let mr: MergeRequestDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(mr.has_conflicts, Some(true));
+        assert_eq!(mr.assignees.len(), 2);
+        assert_eq!(mr.assignees[0].username, "alice");
+        assert_eq!(mr.assignees[1].username, "bob");
+        assert!(mr.head_pipeline.is_none());
+    }
 }

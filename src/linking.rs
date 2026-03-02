@@ -228,4 +228,107 @@ mod tests {
 
         let _ = std::fs::remove_file(db_path);
     }
+
+    #[test]
+    fn test_mr_without_matching_worktree() {
+        let db_path = test_db_path("no_wt");
+        let read_state = ReadStateDb::open(Some(&db_path)).expect("Should open test read-state DB");
+
+        let mr = make_mr(99, "feat/no-worktree", 0);
+        let worktree = make_worktree("/tmp", Some("feat/other-branch"));
+        let pane = make_pane("%3", "/tmp");
+
+        let state = link_all(&[mr], &[worktree], &[pane], &read_state, "group/project")
+            .expect("link_all should succeed");
+
+        assert_eq!(state.linked_mrs.len(), 1);
+        let linked = &state.linked_mrs[0];
+        assert_eq!(linked.mr.iid, 99);
+        assert!(linked.worktree.is_none());
+        assert!(linked.tmux_pane.is_none());
+
+        assert_eq!(state.unlinked_instances.len(), 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_worktree_without_pane() {
+        let db_path = test_db_path("wt_no_pane");
+        let read_state = ReadStateDb::open(Some(&db_path)).expect("Should open test read-state DB");
+
+        let mr = make_mr(50, "feat/wt-only", 2);
+        let worktree = make_worktree("/tmp", Some("feat/wt-only"));
+        let pane = make_pane("%4", "/var");
+
+        let state = link_all(&[mr], &[worktree], &[pane], &read_state, "group/project")
+            .expect("link_all should succeed");
+
+        assert_eq!(state.linked_mrs.len(), 1);
+        let linked = &state.linked_mrs[0];
+        assert!(linked.worktree.is_some());
+        assert!(linked.tmux_pane.is_none());
+        assert_eq!(state.unlinked_instances.len(), 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_multiple_mrs_multiple_panes() {
+        let db_path = test_db_path("multi");
+        let read_state = ReadStateDb::open(Some(&db_path)).expect("Should open test read-state DB");
+
+        let mr1 = make_mr(10, "feat/alpha", 0);
+        let mr2 = make_mr(20, "feat/beta", 0);
+        let wt1 = make_worktree("/tmp", Some("feat/alpha"));
+        let wt2 = make_worktree("/var", Some("feat/beta"));
+        let pane1 = make_pane("%10", "/tmp");
+        let pane2 = make_pane("%20", "/var");
+
+        let state = link_all(
+            &[mr1, mr2],
+            &[wt1, wt2],
+            &[pane1, pane2],
+            &read_state,
+            "group/project",
+        )
+        .expect("link_all should succeed");
+
+        assert_eq!(state.linked_mrs.len(), 2);
+        assert_eq!(state.unlinked_instances.len(), 0);
+
+        assert_eq!(state.linked_mrs[0].mr.iid, 10);
+        assert_eq!(
+            state.linked_mrs[0].tmux_pane.as_ref().unwrap().pane_id,
+            "%10"
+        );
+        assert_eq!(state.linked_mrs[1].mr.iid, 20);
+        assert_eq!(
+            state.linked_mrs[1].tmux_pane.as_ref().unwrap().pane_id,
+            "%20"
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_pane_path_not_canonicalizable() {
+        let db_path = test_db_path("bad_path");
+        let read_state = ReadStateDb::open(Some(&db_path)).expect("Should open test read-state DB");
+
+        let mr = make_mr(77, "feat/ghost", 0);
+        let worktree = make_worktree("/tmp", Some("feat/ghost"));
+        let pane = make_pane("%99", "/nonexistent/path/xyz");
+
+        let state = link_all(&[mr], &[worktree], &[pane], &read_state, "group/project")
+            .expect("Should not panic on non-existent path");
+
+        assert_eq!(state.linked_mrs.len(), 1);
+        assert!(state.linked_mrs[0].worktree.is_some());
+        assert!(state.linked_mrs[0].tmux_pane.is_none());
+        assert_eq!(state.unlinked_instances.len(), 1);
+        assert!(state.unlinked_instances[0].worktree.is_none());
+
+        let _ = std::fs::remove_file(db_path);
+    }
 }
