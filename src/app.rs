@@ -81,10 +81,6 @@ impl App {
         self.groups = map.into_iter().collect();
     }
 
-    pub fn should_refresh(&self) -> bool {
-        self.last_refresh.elapsed() >= self.refresh_interval
-    }
-
     pub fn move_up(&mut self) {
         if !self.panes.is_empty() && self.selected > 0 {
             self.selected -= 1;
