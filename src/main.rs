@@ -6,6 +6,7 @@ mod discovery;
 mod git;
 #[allow(unused)]
 mod gitlab;
+mod linking;
 #[allow(unused)]
 mod read_state;
 mod tmux;
