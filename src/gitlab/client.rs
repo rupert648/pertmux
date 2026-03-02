@@ -13,8 +13,12 @@ impl GitLabClient {
     pub fn new(token: String, host: &str, project: &str) -> Self {
         let base_url = format!("https://{}/api/v4", host);
         let project_id = project.replace('/', "%2F");
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
         Self {
-            client: Client::new(),
+            client,
             base_url,
             token,
             project_id,
