@@ -1,8 +1,18 @@
 use crate::coding_agent::CodingAgent;
-use crate::config::{AgentConfig, Config};
+use crate::config::{AgentConfig, Config, GitLabConfig};
+use crate::git::discover_worktrees;
+use crate::gitlab::client::GitLabClient;
+use crate::gitlab::types::{MergeRequestDetail, MergeRequestSummary};
+use crate::linking::{link_all, DashboardState};
+use crate::read_state::ReadStateDb;
 use crate::types::{AgentPane, SessionDetail};
 use crate::{coding_agent, db, tmux};
 use std::time::{Duration, Instant};
+
+pub enum SelectionSection {
+    MergeRequests,
+    UnlinkedInstances,
+}
 
 pub struct App {
     pub panes: Vec<AgentPane>,
@@ -15,10 +25,31 @@ pub struct App {
     pub detail: Option<SessionDetail>,
     agent_config: AgentConfig,
     agents: Vec<Box<dyn CodingAgent>>,
+    pub dashboard: DashboardState,
+    pub cached_mrs: Vec<MergeRequestSummary>,
+    pub cached_mr_detail: Option<MergeRequestDetail>,
+    pub gitlab_client: Option<GitLabClient>,
+    pub read_state: Option<ReadStateDb>,
+    pub gitlab_config: Option<GitLabConfig>,
+    pub last_detail_refresh: Instant,
+    pub detail_refresh_interval: Duration,
+    pub selection_section: SelectionSection,
+    pub mr_selected: usize,
+    pub unlinked_selected: usize,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let gitlab_config = config.gitlab.clone();
+        let gitlab_client = gitlab_config.as_ref().and_then(|cfg| {
+            cfg.api_token()
+                .map(|token| GitLabClient::new(token, &cfg.host, &cfg.project))
+        });
+        let read_state = if gitlab_config.is_some() {
+            ReadStateDb::open(None).ok()
+        } else {
+            None
+        };
         let agents = coding_agent::agents_from_config(&config.agent);
         Self {
             panes: Vec::new(),
@@ -31,10 +62,24 @@ impl App {
             detail: None,
             agent_config: config.agent,
             agents,
+            dashboard: DashboardState {
+                linked_mrs: vec![],
+                unlinked_instances: vec![],
+            },
+            cached_mrs: vec![],
+            cached_mr_detail: None,
+            gitlab_client,
+            read_state,
+            gitlab_config,
+            last_detail_refresh: Instant::now() - Duration::from_secs(120),
+            detail_refresh_interval: Duration::from_secs(60),
+            selection_section: SelectionSection::MergeRequests,
+            mr_selected: 0,
+            unlinked_selected: 0,
         }
     }
 
-    pub fn refresh(&mut self) {
+    pub async fn refresh(&mut self) {
         self.last_refresh = Instant::now();
         self.error = None;
 
@@ -70,6 +115,49 @@ impl App {
         }
 
         self.update_detail();
+
+        if let (Some(_), Some(read_state), Some(gitlab_config)) =
+            (&self.gitlab_client, &self.read_state, &self.gitlab_config)
+        {
+            match discover_worktrees(&gitlab_config.local_path).await {
+                Ok(worktrees) => {
+                    match link_all(
+                        &self.cached_mrs,
+                        &worktrees,
+                        &self.panes,
+                        read_state,
+                        &gitlab_config.project,
+                    ) {
+                        Ok(dashboard) => {
+                            self.dashboard = dashboard;
+                            if self.mr_selected >= self.dashboard.linked_mrs.len()
+                                && !self.dashboard.linked_mrs.is_empty()
+                            {
+                                self.mr_selected = self.dashboard.linked_mrs.len() - 1;
+                            }
+                            if self.unlinked_selected
+                                >= self.dashboard.unlinked_instances.len()
+                                && !self.dashboard.unlinked_instances.is_empty()
+                            {
+                                self.unlinked_selected =
+                                    self.dashboard.unlinked_instances.len() - 1;
+                            }
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("Linking error: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.error = Some(format!("Worktree discovery error: {}", e));
+                }
+            }
+        } else {
+            self.dashboard = DashboardState {
+                linked_mrs: vec![],
+                unlinked_instances: vec![],
+            };
+        }
     }
 
     fn build_groups(&mut self, panes: &[AgentPane]) {
@@ -82,24 +170,114 @@ impl App {
     }
 
     pub fn move_up(&mut self) {
-        if !self.panes.is_empty() && self.selected > 0 {
+        if self.gitlab_client.is_some() {
+            match self.selection_section {
+                SelectionSection::MergeRequests => {
+                    if self.mr_selected > 0 {
+                        self.mr_selected -= 1;
+                    }
+                }
+                SelectionSection::UnlinkedInstances => {
+                    if self.unlinked_selected > 0 {
+                        self.unlinked_selected -= 1;
+                    }
+                }
+            }
+        } else if !self.panes.is_empty() && self.selected > 0 {
             self.selected -= 1;
             self.update_detail();
         }
     }
 
     pub fn move_down(&mut self) {
-        if !self.panes.is_empty() && self.selected < self.panes.len() - 1 {
+        if self.gitlab_client.is_some() {
+            match self.selection_section {
+                SelectionSection::MergeRequests => {
+                    if !self.dashboard.linked_mrs.is_empty()
+                        && self.mr_selected < self.dashboard.linked_mrs.len() - 1
+                    {
+                        self.mr_selected += 1;
+                    }
+                }
+                SelectionSection::UnlinkedInstances => {
+                    if !self.dashboard.unlinked_instances.is_empty()
+                        && self.unlinked_selected < self.dashboard.unlinked_instances.len() - 1
+                    {
+                        self.unlinked_selected += 1;
+                    }
+                }
+            }
+        } else if !self.panes.is_empty() && self.selected < self.panes.len() - 1 {
             self.selected += 1;
             self.update_detail();
         }
     }
 
+    pub fn toggle_section(&mut self) {
+        self.selection_section = match self.selection_section {
+            SelectionSection::MergeRequests => SelectionSection::UnlinkedInstances,
+            SelectionSection::UnlinkedInstances => SelectionSection::MergeRequests,
+        };
+    }
+
     pub fn focus_selected(&self) -> anyhow::Result<()> {
-        if let Some(pane) = self.panes.get(self.selected) {
+        if self.gitlab_client.is_some() {
+            match self.selection_section {
+                SelectionSection::MergeRequests => {
+                    if let Some(linked) = self.dashboard.linked_mrs.get(self.mr_selected)
+                        && let Some(pane) = linked.tmux_pane.as_ref()
+                    {
+                        tmux::switch_to_pane(&pane.pane_id)?;
+                    }
+                }
+                SelectionSection::UnlinkedInstances => {
+                    if let Some(unlinked) = self.dashboard.unlinked_instances.get(self.unlinked_selected)
+                    {
+                        tmux::switch_to_pane(&unlinked.pane.pane_id)?;
+                    }
+                }
+            }
+        } else if let Some(pane) = self.panes.get(self.selected) {
             tmux::switch_to_pane(&pane.pane_id)?;
         }
         Ok(())
+    }
+
+    pub async fn refresh_mrs(&mut self) {
+        if let (Some(client), Some(_)) = (&self.gitlab_client, &self.gitlab_config) {
+            match client.fetch_mr_list().await {
+                Ok(mrs) => {
+                    self.cached_mrs = mrs;
+                    self.error = None;
+                }
+                Err(e) => {
+                    self.error = Some(format!("GitLab error: {}", e));
+                }
+            }
+        }
+    }
+
+    pub async fn refresh_mr_detail(&mut self) {
+        if let (Some(client), Some(config)) = (&self.gitlab_client, &self.gitlab_config)
+            && let Some(linked_mr) = self.dashboard.linked_mrs.get(self.mr_selected)
+        {
+            let iid = linked_mr.mr.iid;
+            match client.fetch_mr_detail(iid).await {
+                Ok(detail) => {
+                    self.cached_mr_detail = Some(detail);
+                    self.last_detail_refresh = Instant::now();
+                }
+                Err(e) => {
+                    self.error = Some(format!("MR detail error: {}", e));
+                }
+            }
+
+            if let (Ok(notes), Some(rs)) = (client.fetch_mr_notes(iid).await, &self.read_state) {
+                let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
+                let _ = rs.mark_notes_seen(&config.project, iid, &note_ids);
+                let _ = rs.mark_mr_viewed(&config.project, iid, notes.len() as u32);
+            }
+        }
     }
 
     pub fn seconds_since_refresh(&self) -> u64 {

@@ -23,6 +23,7 @@ use crossterm::{
 use futures::StreamExt;
 use ratatui::prelude::*;
 use std::io;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(
@@ -47,7 +48,8 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(config);
-    app.refresh();
+    app.refresh().await;
+    app.refresh_mrs().await;
 
     let result = run_loop(&mut terminal, &mut app).await;
 
@@ -60,7 +62,9 @@ async fn main() -> anyhow::Result<()> {
 async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyhow::Result<()> {
     let mut event_stream = EventStream::new();
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
+    let mut detail_interval = tokio::time::interval(Duration::from_secs(60));
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     while app.running {
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -73,10 +77,14 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                             KeyCode::Char('q') | KeyCode::Esc => app.running = false,
                             KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                            KeyCode::Tab => app.toggle_section(),
                             KeyCode::Enter => {
                                 let _ = app.focus_selected();
                             }
-                            KeyCode::Char('r') => app.refresh(),
+                            KeyCode::Char('r') => {
+                                app.refresh().await;
+                                app.refresh_mrs().await;
+                            }
                             _ => {}
                         }
                     }
@@ -86,7 +94,10 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                 }
             }
             _ = refresh_interval.tick() => {
-                app.refresh();
+                app.refresh().await;
+            }
+            _ = detail_interval.tick() => {
+                app.refresh_mr_detail().await;
             }
         }
     }
