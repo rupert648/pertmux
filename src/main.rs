@@ -85,6 +85,11 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                                 app.refresh().await;
                                 app.refresh_mrs().await;
                             }
+                            KeyCode::Char('o') => {
+                                if app.gitlab_client.is_some() {
+                                    app.open_selected_mr_in_browser();
+                                }
+                            }
                             _ => {}
                         }
                     }

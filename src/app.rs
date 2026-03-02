@@ -300,6 +300,18 @@ impl App {
             });
     }
 
+    pub fn open_selected_mr_in_browser(&self) {
+        if let Some(linked) = self.dashboard.linked_mrs.get(self.mr_selected) {
+            let url = &linked.mr.web_url;
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let _ = std::process::Command::new("open").arg(url).spawn();
+        }
+    }
+
     fn find_agent(&self, command: &str) -> Option<&dyn CodingAgent> {
         self.agents
             .iter()
