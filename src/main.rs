@@ -41,15 +41,36 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = config::load(cli.config.as_deref())?;
 
+    eprintln!("[pertmux] config loaded — gitlab: {}", if config.gitlab.is_some() { "yes" } else { "no" });
+    if let Some(ref gl) = config.gitlab {
+        eprintln!("[pertmux] token present: {}", gl.api_token().is_some());
+    }
+
+    let mut app = App::new(config);
+
+    if app.gitlab_client.is_some() {
+        let gl = app.gitlab_config.as_ref().unwrap();
+        eprintln!(
+            "[pertmux] gitlab: {} project={}",
+            gl.host, gl.project
+        );
+        app.refresh_mrs().await;
+        if let Some(ref error) = app.error {
+            anyhow::bail!("{}", error);
+        }
+        eprintln!(
+            "[pertmux] ok — {} open MRs",
+            app.cached_mrs.len()
+        );
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(config);
     app.refresh().await;
-    app.refresh_mrs().await;
 
     let result = run_loop(&mut terminal, &mut app).await;
 

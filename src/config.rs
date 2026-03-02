@@ -8,6 +8,7 @@ pub struct GitLabConfig {
     pub host: String,
     pub project: String,
     pub local_path: String,
+    pub username: Option<String>,
 }
 
 fn default_gitlab_host() -> String {
@@ -75,14 +76,18 @@ pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
             p
         }
         None => {
-            let default_path = dirs::config_dir()
-                .map(|d| d.join("pertmux").join("pertmux.toml"))
-                .unwrap_or_else(|| PathBuf::from("pertmux.toml"));
+            let xdg_path =
+                dirs::home_dir().map(|h| h.join(".config").join("pertmux").join("pertmux.toml"));
+            let native_path = dirs::config_dir().map(|d| d.join("pertmux").join("pertmux.toml"));
 
-            if !default_path.exists() {
-                return Ok(Config::default());
+            let found = xdg_path
+                .filter(|p| p.exists())
+                .or_else(|| native_path.filter(|p| p.exists()));
+
+            match found {
+                Some(p) => p,
+                None => return Ok(Config::default()),
             }
-            default_path
         }
     };
 
