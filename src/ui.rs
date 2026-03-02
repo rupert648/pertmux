@@ -400,6 +400,13 @@ fn draw_mr_list(frame: &mut Frame, app: &App, inner: Rect, area: Rect) {
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
+    // MR mode: gitlab configured → show MR detail
+    if app.gitlab_client.is_some() {
+        draw_mr_detail_panel(frame, app, area);
+        return;
+    }
+
+    // V1 mode: show opencode session detail
     let panel_title = if let Some(pane) = app.panes.get(app.selected) {
         format!(
             " {} — {}:{}.{} ",
@@ -447,6 +454,204 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     draw_detail_header(frame, detail, chunks[0]);
     draw_message_timeline(frame, detail, chunks[1]);
+}
+
+// ─── MR Detail panel ─────────────────────────────────────────────────────────
+
+fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let panel_title = if let Some(linked) = app.dashboard.linked_mrs.get(app.mr_selected) {
+        let title = truncate(&linked.mr.title, area.width.saturating_sub(10) as usize);
+        format!(" !{} {} ", linked.mr.iid, title)
+    } else {
+        " MR detail ".to_string()
+    };
+
+    let block = Block::default()
+        .title(Span::styled(
+            &panel_title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(Padding::new(1, 1, 1, 0));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(linked) = app.dashboard.linked_mrs.get(app.mr_selected) else {
+        let msg = Paragraph::new(Span::styled(
+            "  No MR selected. Press 'r' to fetch MRs.",
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(msg, inner);
+        return;
+    };
+
+    let mr = &linked.mr;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // ── Status section ──
+    lines.push(Line::from(Span::styled(
+        "  Status",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::DIM),
+    )));
+
+    let state_color = match mr.state.as_str() {
+        "opened" => Color::Green,
+        "merged" => Color::Yellow,
+        "closed" => Color::Red,
+        _ => Color::Gray,
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  state      ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&mr.state, Style::default().fg(state_color)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("  branch     ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} → {}", mr.source_branch, mr.target_branch),
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("  author     ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("@{}", mr.author.username),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("  draft      ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if mr.draft { "yes" } else { "no" },
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+
+    if let Some(ref detail) = app.cached_mr_detail {
+        if detail.iid == mr.iid {
+            if let Some(ref merge_status) = detail.detailed_merge_status {
+                lines.push(Line::from(vec![
+                    Span::styled("  status     ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(merge_status.as_str(), Style::default().fg(Color::Gray)),
+                ]));
+            }
+            if let Some(has_conflicts) = detail.has_conflicts {
+                if has_conflicts {
+                    lines.push(Line::from(vec![
+                        Span::styled("  conflicts  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("yes", Style::default().fg(Color::Red)),
+                    ]));
+                }
+            }
+            if let Some(ref pipeline) = detail.head_pipeline {
+                let pipe_color = match pipeline.status.as_str() {
+                    "success" => Color::Green,
+                    "failed" => Color::Red,
+                    "running" => Color::Cyan,
+                    "pending" => Color::Yellow,
+                    _ => Color::Gray,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("  pipeline   ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(&pipeline.status, Style::default().fg(pipe_color)),
+                ]));
+            }
+        }
+    }
+
+    // ── Links section ──
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Links",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::DIM),
+    )));
+
+    if let Some(ref wt) = linked.worktree {
+        lines.push(Line::from(vec![
+            Span::styled("  worktree   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                shorten_path(&wt.path),
+                Style::default().fg(Color::White),
+            ),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  worktree   not found",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    if let Some(ref pane) = linked.tmux_pane {
+        lines.push(Line::from(vec![
+            Span::styled("  tmux       ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}:{}.{}", pane.session_name, pane.window_index, pane.pane_index),
+                Style::default().fg(Color::White),
+            ),
+            Span::raw("  "),
+            compact_status_badge(&pane.status),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  tmux       not running",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    // ── Activity section ──
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Activity",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::DIM),
+    )));
+
+    let comments_str = if linked.has_new_activity {
+        format!("{} (● new)", mr.user_notes_count)
+    } else {
+        mr.user_notes_count.to_string()
+    };
+    let comments_color = if linked.has_new_activity {
+        Color::Yellow
+    } else {
+        Color::White
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  comments   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(comments_str, Style::default().fg(comments_color)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("  updated    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format_date(&mr.updated_at),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    let max_url_len = area.width.saturating_sub(16) as usize;
+    lines.push(Line::from(vec![
+        Span::styled("  url        ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            truncate(&mr.web_url, max_url_len),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }
 
 /// How many lines the header needs.
@@ -665,6 +870,10 @@ fn session_duration(detail: &SessionDetail) -> Option<String> {
             (elapsed_secs % 86400) / 3600
         ))
     }
+}
+
+fn format_date(iso: &str) -> &str {
+    if iso.len() >= 10 { &iso[..10] } else { iso }
 }
 
 fn truncate(s: &str, max: usize) -> String {
