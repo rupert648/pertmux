@@ -7,10 +7,11 @@ pub struct GitLabClient {
     base_url: String,
     token: String,
     project_id: String,
+    username: Option<String>,
 }
 
 impl GitLabClient {
-    pub fn new(token: String, host: &str, project: &str) -> Self {
+    pub fn new(token: String, host: &str, project: &str, username: Option<String>) -> Self {
         let base_url = format!("https://{}/api/v4", host);
         let project_id = project.replace('/', "%2F");
         let client = Client::builder()
@@ -22,13 +23,19 @@ impl GitLabClient {
             base_url,
             token,
             project_id,
+            username,
         }
     }
 
     pub async fn fetch_mr_list(&self) -> Result<Vec<MergeRequestSummary>> {
+        let author_filter = self
+            .username
+            .as_deref()
+            .map(|u| format!("&author_username={}", u))
+            .unwrap_or_default();
         let url = format!(
-            "{}/projects/{}/merge_requests?state=opened&per_page=100",
-            self.base_url, self.project_id
+            "{}/projects/{}/merge_requests?state=opened&per_page=100{}",
+            self.base_url, self.project_id, author_filter
         );
         self.client
             .get(&url)

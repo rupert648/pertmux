@@ -43,7 +43,7 @@ impl App {
         let gitlab_config = config.gitlab.clone();
         let gitlab_client = gitlab_config.as_ref().and_then(|cfg| {
             cfg.api_token()
-                .map(|token| GitLabClient::new(token, &cfg.host, &cfg.project))
+                .map(|token| GitLabClient::new(token, &cfg.host, &cfg.project, cfg.username.clone()))
         });
         let read_state = if gitlab_config.is_some() {
             ReadStateDb::open(None).ok()
@@ -81,12 +81,16 @@ impl App {
 
     pub async fn refresh(&mut self) {
         self.last_refresh = Instant::now();
-        self.error = None;
 
         let process_names: Vec<&str> = self.agents.iter().map(|a| a.process_name()).collect();
 
         let mut panes = match tmux::list_agent_panes(&process_names) {
-            Ok(p) => p,
+            Ok(p) => {
+                if self.error.as_ref().is_some_and(|e| e.starts_with("tmux")) {
+                    self.error = None;
+                }
+                p
+            }
             Err(e) => {
                 self.error = Some(format!("tmux error: {}", e));
                 return;
@@ -248,7 +252,9 @@ impl App {
             match client.fetch_mr_list().await {
                 Ok(mrs) => {
                     self.cached_mrs = mrs;
-                    self.error = None;
+                    if self.error.as_ref().is_some_and(|e| e.starts_with("GitLab")) {
+                        self.error = None;
+                    }
                 }
                 Err(e) => {
                     self.error = Some(format!("GitLab error: {}", e));
