@@ -3,6 +3,7 @@ mod coding_agent;
 mod config;
 mod db;
 mod discovery;
+mod git;
 mod tmux;
 mod types;
 mod ui;
