@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::types::{OpenCodeStatus, SessionDetail};
+use crate::types::{PaneStatus, SessionDetail};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -194,15 +194,14 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             ));
 
             // Time ago (only for idle/unknown)
-            if pane.status == OpenCodeStatus::Idle || pane.status == OpenCodeStatus::Unknown {
-                if let Some(ago) = pane.time_ago() {
+            if (pane.status == PaneStatus::Idle || pane.status == PaneStatus::Unknown)
+                && let Some(ago) = pane.time_ago() {
                     detail_parts.push(Span::styled(
                         " · ",
                         Style::default().fg(Color::Indexed(238)),
                     ));
                     detail_parts.push(Span::styled(ago, Style::default().fg(Color::DarkGray)));
                 }
-            }
 
             let mut detail_line = vec![Span::raw("          ")];
             detail_line.extend(detail_parts);
@@ -220,10 +219,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
                     };
                     lines.push(Line::from(vec![
                         Span::styled("          ▹ ", Style::default().fg(Color::Green)),
-                        Span::styled(
-                            truncated,
-                            Style::default().fg(Color::Indexed(250)),
-                        ),
+                        Span::styled(truncated, Style::default().fg(Color::Indexed(250))),
                     ]));
                 }
             }
@@ -235,7 +231,13 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     // Scroll to keep selected visible
     let visible_height = inner.height as usize;
-    let scroll = compute_scroll(&lines, app.selected, &app.groups, &app.panes, visible_height);
+    let scroll = compute_scroll(
+        &lines,
+        app.selected,
+        &app.groups,
+        &app.panes,
+        visible_height,
+    );
 
     let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
     frame.render_widget(paragraph, inner);
@@ -283,7 +285,10 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     // Split inner area: metadata header + message timeline
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(detail_header_height(detail)), Constraint::Min(3)])
+        .constraints([
+            Constraint::Length(detail_header_height(detail)),
+            Constraint::Min(3),
+        ])
         .split(inner);
 
     draw_detail_header(frame, detail, chunks[0]);
@@ -335,7 +340,10 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         ),
         Span::styled(" messages", Style::default().fg(Color::DarkGray)),
         if let Some(dur) = session_duration(detail) {
-            Span::styled(format!("  ·  {}", dur), Style::default().fg(Color::DarkGray))
+            Span::styled(
+                format!("  ·  {}", dur),
+                Style::default().fg(Color::DarkGray),
+            )
         } else {
             Span::raw("")
         },
@@ -432,7 +440,10 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
             let preview = text.lines().next().unwrap_or("");
             if !preview.is_empty() {
                 lines.push(Line::from(Span::styled(
-                    format!("          {}", truncate(preview, area.width.saturating_sub(12) as usize)),
+                    format!(
+                        "          {}",
+                        truncate(preview, area.width.saturating_sub(12) as usize)
+                    ),
                     Style::default().fg(Color::Indexed(245)),
                 )));
             }
@@ -454,11 +465,10 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn shorten_path(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if let Some(rest) = path.strip_prefix(home.to_str().unwrap_or("")) {
+    if let Some(home) = dirs::home_dir()
+        && let Some(rest) = path.strip_prefix(home.to_str().unwrap_or("")) {
             return format!("~{}", rest);
         }
-    }
     path.to_string()
 }
 
@@ -489,49 +499,58 @@ fn session_duration(detail: &SessionDetail) -> Option<String> {
     } else if elapsed_secs < 3600 {
         Some(format!("{}m", elapsed_secs / 60))
     } else if elapsed_secs < 86400 {
-        Some(format!("{}h {}m", elapsed_secs / 3600, (elapsed_secs % 3600) / 60))
+        Some(format!(
+            "{}h {}m",
+            elapsed_secs / 3600,
+            (elapsed_secs % 3600) / 60
+        ))
     } else {
-        Some(format!("{}d {}h", elapsed_secs / 86400, (elapsed_secs % 86400) / 3600))
+        Some(format!(
+            "{}d {}h",
+            elapsed_secs / 86400,
+            (elapsed_secs % 86400) / 3600
+        ))
     }
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else if max > 3 {
-        format!("{}...", &s[..max - 3])
+        let truncated: String = s.chars().take(max - 3).collect();
+        format!("{}...", truncated)
     } else {
-        s[..max].to_string()
+        s.chars().take(max).collect()
     }
 }
 
 // ─── Status badges ────────────────────────────────────────────────────────────
 
 /// Returns a styled Span with a colored background badge for the status.
-fn status_badge(status: &OpenCodeStatus) -> Span<'static> {
+fn status_badge(status: &PaneStatus) -> Span<'static> {
     match status {
-        OpenCodeStatus::Busy => Span::styled(
+        PaneStatus::Busy => Span::styled(
             " ● BUSY ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        OpenCodeStatus::Retry { .. } => Span::styled(
+        PaneStatus::Retry { .. } => Span::styled(
             " ⚠ RETRY ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        OpenCodeStatus::Idle => Span::styled(
+        PaneStatus::Idle => Span::styled(
             " ⏸ IDLE ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        OpenCodeStatus::Unknown => Span::styled(
+        PaneStatus::Unknown => Span::styled(
             " ? no server ",
             Style::default().fg(Color::DarkGray).bg(Color::Indexed(236)),
         ),
@@ -545,7 +564,7 @@ fn compute_scroll(
     lines: &[Line],
     selected: usize,
     groups: &[(String, Vec<usize>)],
-    panes: &[crate::types::OpenCodePane],
+    panes: &[crate::types::AgentPane],
     visible_height: usize,
 ) -> usize {
     // Each group: 1 header, then 2-3 lines per pane (3 if has last_response), then 1 blank
@@ -560,7 +579,11 @@ fn compute_scroll(
                 }
                 return 0;
             }
-            let pane_lines = if panes[idx].last_response.is_some() { 3 } else { 2 };
+            let pane_lines = if panes[idx].last_response.is_some() {
+                3
+            } else {
+                2
+            };
             line_idx += pane_lines;
             flat += 1;
         }

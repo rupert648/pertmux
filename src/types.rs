@@ -1,18 +1,14 @@
-use serde::Deserialize;
-use std::collections::HashMap;
-
 #[derive(Debug, Clone, PartialEq)]
-pub enum OpenCodeStatus {
+pub enum PaneStatus {
     Idle,
     Busy,
     Retry { attempt: u32, message: String },
     Unknown,
 }
 
-
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct OpenCodePane {
+pub struct AgentPane {
     pub pane_id: String,
     pub session_name: String,
     pub window_index: u32,
@@ -20,9 +16,9 @@ pub struct OpenCodePane {
     pub pane_title: String,
     pub pane_path: String,
     pub pane_pid: u32,
+    pub pane_command: String,
 
-    pub api_port: Option<u16>,
-    pub status: OpenCodeStatus,
+    pub status: PaneStatus,
 
     pub db_session_title: Option<String>,
     pub agent: Option<String>,
@@ -32,7 +28,7 @@ pub struct OpenCodePane {
     pub last_response: Option<String>,
 }
 
-impl OpenCodePane {
+impl AgentPane {
     pub fn display_title(&self) -> &str {
         if let Some(ref title) = self.db_session_title {
             title.as_str()
@@ -73,22 +69,6 @@ impl OpenCodePane {
         })
     }
 }
-
-#[derive(Debug, Deserialize)]
-pub struct SessionStatus {
-    #[serde(rename = "type")]
-    pub status_type: String,
-    pub attempt: Option<u32>,
-    pub message: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct HealthResponse {
-    pub healthy: bool,
-}
-
-pub type SessionStatusMap = HashMap<String, SessionStatus>;
 
 /// Detailed information about a session, shown in the detail panel.
 #[derive(Debug, Clone, Default)]

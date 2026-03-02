@@ -1,5 +1,5 @@
-mod api;
 mod app;
+mod coding_agent;
 mod config;
 mod db;
 mod discovery;
@@ -19,7 +19,10 @@ use std::io;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "pertmux", about = "TUI dashboard for opencode sessions in tmux")]
+#[command(
+    name = "pertmux",
+    about = "TUI dashboard for opencode sessions in tmux"
+)]
 struct Cli {
     /// Path to config file
     #[arg(short = 'c', long = "config")]
@@ -51,9 +54,9 @@ fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyhow::Res
     while app.running {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+        if event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => app.running = false,
                         KeyCode::Up | KeyCode::Char('k') => app.move_up(),
@@ -65,8 +68,6 @@ fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyhow::Res
                         _ => {}
                     }
                 }
-            }
-        }
 
         if app.should_refresh() {
             app.refresh();

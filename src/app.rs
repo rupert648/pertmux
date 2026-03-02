@@ -1,25 +1,25 @@
-use crate::config::{Config, OpencodeConfig};
-use crate::types::{OpenCodePane, SessionDetail};
-use crate::{api, db, discovery, tmux};
+use crate::coding_agent::CodingAgent;
+use crate::config::{AgentConfig, Config};
+use crate::types::{AgentPane, SessionDetail};
+use crate::{coding_agent, db, tmux};
 use std::time::{Duration, Instant};
 
 pub struct App {
-    pub panes: Vec<OpenCodePane>,
+    pub panes: Vec<AgentPane>,
     pub selected: usize,
     pub running: bool,
     pub last_refresh: Instant,
     pub refresh_interval: Duration,
-    /// (session_name, vec of indices into self.panes)
     pub groups: Vec<(String, Vec<usize>)>,
     pub error: Option<String>,
-    /// Detailed session info for the currently selected pane.
     pub detail: Option<SessionDetail>,
-    /// Optional override for the opencode database path.
-    pub opencode_config: OpencodeConfig,
+    agent_config: AgentConfig,
+    agents: Vec<Box<dyn CodingAgent>>,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let agents = coding_agent::agents_from_config(&config.agent);
         Self {
             panes: Vec::new(),
             selected: 0,
@@ -29,7 +29,8 @@ impl App {
             groups: Vec::new(),
             error: None,
             detail: None,
-            opencode_config: config.opencode,
+            agent_config: config.agent,
+            agents,
         }
     }
 
@@ -37,7 +38,9 @@ impl App {
         self.last_refresh = Instant::now();
         self.error = None;
 
-        let mut panes = match tmux::list_opencode_panes() {
+        let process_names: Vec<&str> = self.agents.iter().map(|a| a.process_name()).collect();
+
+        let mut panes = match tmux::list_agent_panes(&process_names) {
             Ok(p) => p,
             Err(e) => {
                 self.error = Some(format!("tmux error: {}", e));
@@ -46,17 +49,15 @@ impl App {
         };
 
         for pane in &mut panes {
-            // Discover HTTP port
-            pane.api_port = discovery::discover_port(pane.pane_pid);
-
-            // Query API for status
-            if let Some(port) = pane.api_port {
-                let status_map = api::get_session_status(port);
-                pane.status = api::status_from_map(&status_map);
+            if let Some(agent) = self.find_agent(&pane.pane_command) {
+                pane.status = agent.query_status(pane.pane_pid);
             }
-
-            // Enrich from DB
-            db::enrich_pane(pane, self.opencode_config.path.as_deref());
+            let db_path = self
+                .agent_config
+                .opencode
+                .as_ref()
+                .and_then(|c| c.db_path.as_deref());
+            db::enrich_pane(pane, db_path);
         }
 
         // Build groups sorted by session name
@@ -71,7 +72,7 @@ impl App {
         self.update_detail();
     }
 
-    fn build_groups(&mut self, panes: &[OpenCodePane]) {
+    fn build_groups(&mut self, panes: &[AgentPane]) {
         use std::collections::BTreeMap;
         let mut map: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (i, pane) in panes.iter().enumerate() {
@@ -115,6 +116,20 @@ impl App {
             .panes
             .get(self.selected)
             .and_then(|pane| pane.db_session_id.as_deref())
-            .and_then(|id| db::fetch_session_detail(id, self.opencode_config.as_deref()));
+            .and_then(|id| {
+                let db_path = self
+                    .agent_config
+                    .opencode
+                    .as_ref()
+                    .and_then(|c| c.db_path.as_deref());
+                db::fetch_session_detail(id, db_path)
+            });
+    }
+
+    fn find_agent(&self, command: &str) -> Option<&dyn CodingAgent> {
+        self.agents
+            .iter()
+            .find(|a| a.process_name() == command)
+            .map(|a| a.as_ref())
     }
 }

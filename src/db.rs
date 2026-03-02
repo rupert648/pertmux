@@ -1,4 +1,4 @@
-use crate::types::{MessageSummary, OpenCodePane, SessionDetail, TodoItem};
+use crate::types::{AgentPane, MessageSummary, SessionDetail, TodoItem};
 use rusqlite::Connection;
 
 const DEFAULT_DB_PATH_SUFFIX: &str = ".local/share/opencode/opencode.db";
@@ -18,11 +18,11 @@ fn open_db(db_path_override: Option<&str>) -> Option<Connection> {
     .ok()
 }
 
-pub fn enrich_pane(pane: &mut OpenCodePane, db_path: Option<&str>) {
+pub fn enrich_pane(pane: &mut AgentPane, db_path: Option<&str>) {
     let _ = try_enrich(pane, db_path);
 }
 
-fn try_enrich(pane: &mut OpenCodePane, db_path: Option<&str>) -> anyhow::Result<()> {
+fn try_enrich(pane: &mut AgentPane, db_path: Option<&str>) -> anyhow::Result<()> {
     let conn = open_db(db_path).ok_or_else(|| anyhow::anyhow!("no db"))?;
 
     let title_raw = pane

@@ -4,40 +4,44 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Refresh interval in seconds.
     pub refresh_interval: u64,
-
-    /// Database settings.
-    pub opencode: OpencodeConfig,
+    pub agent: AgentConfig,
 }
 
-#[derive(Debug, Deserialize)]
+/// Agent configuration. Each field corresponds to a coding agent.
+/// `Some(...)` = enabled, `None` = disabled.
+/// When omitted entirely from the config file, all agents are enabled with defaults.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct OpencodeConfig {
-    /// Override path to the opencode SQLite database.
-    /// Defaults to `~/.local/share/opencode/opencode.db`.
-    pub path: Option<String>,
+pub struct AgentConfig {
+    pub opencode: Option<OpenCodeAgentConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+#[derive(Default)]
+pub struct OpenCodeAgentConfig {
+    pub db_path: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             refresh_interval: 2,
-            opencode: OpencodeConfig::default(),
+            agent: AgentConfig::default(),
         }
     }
 }
 
-impl Default for OpencodeConfig {
+impl Default for AgentConfig {
     fn default() -> Self {
-        Self { path: None }
+        Self {
+            opencode: Some(OpenCodeAgentConfig::default()),
+        }
     }
 }
 
-/// Load configuration from a TOML file.
-///
-/// - If `explicit_path` is provided (via `-c`), it MUST exist or we return an error.
-/// - Otherwise, try `~/.config/pertmux/pertmux.toml`. If it doesn't exist, return defaults.
+
 pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
     let path = match explicit_path {
         Some(p) => {

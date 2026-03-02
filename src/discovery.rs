@@ -90,15 +90,14 @@ fn find_listening_port(pids: &[u32]) -> Option<u16> {
     let sockets = get_sockets_info(af_flags, proto_flags).ok()?;
 
     for socket in sockets {
-        if let ProtocolSocketInfo::Tcp(tcp) = &socket.protocol_socket_info {
-            if tcp.state == TcpState::Listen {
+        if let ProtocolSocketInfo::Tcp(tcp) = &socket.protocol_socket_info
+            && tcp.state == TcpState::Listen {
                 for &sock_pid in &socket.associated_pids {
                     if pids.contains(&sock_pid) {
                         return Some(tcp.local_port);
                     }
                 }
             }
-        }
     }
 
     None

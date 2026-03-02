@@ -1,7 +1,7 @@
-use crate::types::{OpenCodePane, OpenCodeStatus};
+use crate::types::{AgentPane, PaneStatus};
 use std::process::Command;
 
-pub fn list_opencode_panes() -> anyhow::Result<Vec<OpenCodePane>> {
+pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>> {
     let format_str = "#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_title}\t#{pane_current_path}\t#{pane_pid}\t#{pane_current_command}";
 
     let output = Command::new("tmux")
@@ -25,11 +25,11 @@ pub fn list_opencode_panes() -> anyhow::Result<Vec<OpenCodePane>> {
             continue;
         }
 
-        if fields[7] != "opencode" {
+        if !process_names.iter().any(|name| *name == fields[7]) {
             continue;
         }
 
-        panes.push(OpenCodePane {
+        panes.push(AgentPane {
             pane_id: fields[0].to_string(),
             session_name: fields[1].to_string(),
             window_index: fields[2].parse().unwrap_or(0),
@@ -37,8 +37,8 @@ pub fn list_opencode_panes() -> anyhow::Result<Vec<OpenCodePane>> {
             pane_title: fields[4].to_string(),
             pane_path: fields[5].to_string(),
             pane_pid: fields[6].parse().unwrap_or(0),
-            api_port: None,
-            status: OpenCodeStatus::Unknown,
+            pane_command: fields[7].to_string(),
+            status: PaneStatus::Unknown,
             db_session_title: None,
             agent: None,
             model: None,

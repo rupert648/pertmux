@@ -4,7 +4,12 @@
 # How often (in seconds) to poll tmux panes and refresh the dashboard.
 # refresh_interval = 2
 
-[opencode]
-# Path to the opencode SQLite database.
-# Only needed if your database is in a non-standard location.
-# path = "~/.local/share/opencode/opencode.db"
+# Agents are enabled by including their section below.
+# Remove or comment out a section to disable that agent.
+# If [agent] is omitted entirely, all agents are enabled with defaults.
+
+[agent.opencode]
+# db_path = "~/.local/share/opencode/opencode.db"
+
+# TODO: implement claude
+# [agent.claude_code]

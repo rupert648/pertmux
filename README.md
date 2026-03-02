@@ -41,10 +41,14 @@ If no `-c` flag is provided, pertmux looks for `~/.config/pertmux/pertmux.toml`.
 # Refresh interval in seconds (default: 2)
 refresh_interval = 2
 
-[opencode]
-# Override path to the opencode SQLite database
-# Default: ~/.local/share/opencode/opencode.db
-# path = "/path/to/opencode.db"
+# Agents are enabled by including their section below.
+# Remove or comment out a section to disable that agent.
+# If [agent] is omitted entirely, all agents are enabled with defaults.
+
+[agent.opencode]
+# db_path = "~/.local/share/opencode/opencode.db"
+
+# [agent.claude_code]
 ```
 
 ### Options
@@ -53,8 +57,10 @@ refresh_interval = 2
 |-----|------|---------|-------------|
 | `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes and refresh the dashboard |
 
-#### `[opencode]`
+#### `[agent.opencode]`
+
+Including this section enables the opencode agent. Omit or comment it out to disable.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database. Only needed if your database is in a non-standard location |
+| `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database. Only needed if your database is in a non-standard location |
