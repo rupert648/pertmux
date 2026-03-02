@@ -13,3 +13,11 @@
 
 # TODO: implement claude
 # [agent.claude_code]
+
+# GitLab integration (optional — remove this section to disable GitLab features)
+# When present, pertmux shows your open MRs and links them to local branches/worktrees/opencode.
+# [gitlab]
+# token = "glpat-xxxxxxxxxxxxxxxxxxxx"  # Or set PERTMUX_GITLAB_TOKEN env var
+# host = "gitlab.com"                   # Default: gitlab.com
+# project = "your-group/your-project"   # GitLab project path
+# local_path = "/path/to/local/repo"    # Absolute path to local git repo

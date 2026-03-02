@@ -1,11 +1,34 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitLabConfig {
+    pub token: Option<String>,
+    #[serde(default = "default_gitlab_host")]
+    pub host: String,
+    pub project: String,
+    pub local_path: String,
+}
+
+fn default_gitlab_host() -> String {
+    "gitlab.com".to_string()
+}
+
+impl GitLabConfig {
+    /// Resolve API token: PERTMUX_GITLAB_TOKEN env var takes priority over config token.
+    pub fn api_token(&self) -> Option<String> {
+        std::env::var("PERTMUX_GITLAB_TOKEN")
+            .ok()
+            .or_else(|| self.token.clone())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub refresh_interval: u64,
     pub agent: AgentConfig,
+    pub gitlab: Option<GitLabConfig>,
 }
 
 /// Agent configuration. Each field corresponds to a coding agent.
@@ -29,6 +52,7 @@ impl Default for Config {
         Self {
             refresh_interval: 2,
             agent: AgentConfig::default(),
+            gitlab: None,
         }
     }
 }
@@ -40,7 +64,6 @@ impl Default for AgentConfig {
         }
     }
 }
-
 
 pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
     let path = match explicit_path {
@@ -66,4 +89,49 @@ pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
     let content = std::fs::read_to_string(&path)?;
     let config: Config = toml::from_str(&content)?;
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_from_str(s: &str) -> Config {
+        toml::from_str(s).expect("parse failed")
+    }
+
+    #[test]
+    fn test_gitlab_config_present() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+token = "test-token"
+host = "gitlab.example.com"
+project = "team/project"
+local_path = "/tmp/test-repo"
+"#,
+        );
+        let gl = cfg.gitlab.expect("gitlab should be Some");
+        assert_eq!(gl.token, Some("test-token".to_string()));
+        assert_eq!(gl.host, "gitlab.example.com");
+        assert_eq!(gl.project, "team/project");
+        assert_eq!(gl.local_path, "/tmp/test-repo");
+    }
+
+    #[test]
+    fn test_gitlab_config_absent() {
+        let cfg = load_from_str("refresh_interval = 2\n");
+        assert!(cfg.gitlab.is_none());
+    }
+
+    #[test]
+    fn test_gitlab_default_host() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+project = "team/project"
+local_path = "/tmp/test-repo"
+"#,
+        );
+        assert_eq!(cfg.gitlab.unwrap().host, "gitlab.com");
+    }
 }
