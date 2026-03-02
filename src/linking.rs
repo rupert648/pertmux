@@ -136,6 +136,8 @@ mod tests {
             web_url: "https://gitlab.example.com/team/project/-/merge_requests/1".to_string(),
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
             updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            detailed_merge_status: None,
+            has_conflicts: None,
         }
     }
 

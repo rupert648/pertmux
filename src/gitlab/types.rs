@@ -27,6 +27,8 @@ pub struct MergeRequestSummary {
     pub web_url: String,
     pub created_at: String,
     pub updated_at: String,
+    pub detailed_merge_status: Option<String>,
+    pub has_conflicts: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -74,7 +76,9 @@ mod tests {
             "user_notes_count": 5,
             "web_url": "https://gitlab.example.com/team/project/-/merge_requests/42",
             "created_at": "2026-01-01T00:00:00.000Z",
-            "updated_at": "2026-01-02T00:00:00.000Z"
+            "updated_at": "2026-01-02T00:00:00.000Z",
+            "detailed_merge_status": "mergeable",
+            "has_conflicts": false
         }
     ]"#;
 
@@ -176,7 +180,9 @@ mod tests {
                 "user_notes_count": 0,
                 "web_url": "https://gitlab.example.com/team/project/-/merge_requests/55",
                 "created_at": "2026-02-01T00:00:00.000Z",
-                "updated_at": "2026-02-01T00:00:00.000Z"
+                "updated_at": "2026-02-01T00:00:00.000Z",
+                "detailed_merge_status": null,
+                "has_conflicts": null
             }
         ]"#;
         let mrs: Vec<MergeRequestSummary> = serde_json::from_str(json).unwrap();
