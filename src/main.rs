@@ -4,6 +4,10 @@ mod config;
 mod db;
 mod discovery;
 mod git;
+#[allow(unused)]
+mod gitlab;
+#[allow(unused)]
+mod read_state;
 mod tmux;
 mod types;
 mod ui;
