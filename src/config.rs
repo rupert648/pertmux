@@ -1,13 +1,21 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectSource {
+    Gitlab,
+    Github,
+}
+
 #[derive(Debug, Clone, Deserialize)]
-pub struct GitLabConfig {
-    pub token: Option<String>,
+pub struct GitLabSourceConfig {
     #[serde(default = "default_gitlab_host")]
     pub host: String,
-    pub project: String,
-    pub local_path: String,
+    pub token: Option<String>,
+    // Backwards compat: old format stored project-level fields here
+    pub project: Option<String>,
+    pub local_path: Option<String>,
     pub username: Option<String>,
 }
 
@@ -15,8 +23,7 @@ fn default_gitlab_host() -> String {
     "gitlab.com".to_string()
 }
 
-impl GitLabConfig {
-    /// Resolve API token: PERTMUX_GITLAB_TOKEN env var takes priority over config token.
+impl GitLabSourceConfig {
     pub fn api_token(&self) -> Option<String> {
         std::env::var("PERTMUX_GITLAB_TOKEN")
             .ok()
@@ -24,17 +31,24 @@ impl GitLabConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectConfig {
+    pub name: String,
+    pub source: ProjectSource,
+    pub project: String,
+    pub local_path: String,
+    pub username: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub refresh_interval: u64,
     pub agent: AgentConfig,
-    pub gitlab: Option<GitLabConfig>,
+    pub gitlab: Option<GitLabSourceConfig>,
+    pub project: Option<Vec<ProjectConfig>>,
 }
 
-/// Agent configuration. Each field corresponds to a coding agent.
-/// `Some(...)` = enabled, `None` = disabled.
-/// When omitted entirely from the config file, all agents are enabled with defaults.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
@@ -54,6 +68,7 @@ impl Default for Config {
             refresh_interval: 2,
             agent: AgentConfig::default(),
             gitlab: None,
+            project: None,
         }
     }
 }
@@ -62,6 +77,90 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             opencode: Some(OpenCodeAgentConfig::default()),
+        }
+    }
+}
+
+impl Config {
+    pub fn resolve_projects(&self) -> Vec<ProjectConfig> {
+        if let Some(ref projects) = self.project {
+            return projects.clone();
+        }
+
+        if let Some(ref gl) = self.gitlab {
+            if let (Some(project), Some(local_path)) = (&gl.project, &gl.local_path) {
+                let name = project.split('/').last().unwrap_or(project).to_string();
+                return vec![ProjectConfig {
+                    name,
+                    source: ProjectSource::Gitlab,
+                    project: project.clone(),
+                    local_path: local_path.clone(),
+                    username: gl.username.clone(),
+                }];
+            }
+        }
+
+        vec![]
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let mut errors: Vec<String> = Vec::new();
+
+        if self.project.is_some() {
+            if let Some(ref gl) = self.gitlab {
+                if gl.project.is_some() {
+                    errors.push(
+                        "config: [gitlab] has 'project' field but [[project]] is also defined.\n\
+                         hint: remove 'project' and 'local_path' from [gitlab] — use [[project]] instead."
+                            .into(),
+                    );
+                }
+            }
+        }
+
+        let projects = self.resolve_projects();
+
+        for proj in &projects {
+            match proj.source {
+                ProjectSource::Gitlab => {
+                    if self.gitlab.is_none() {
+                        errors.push(format!(
+                            "config: project '{}' has source=\"gitlab\" but no [gitlab] section.\n\
+                             hint: add a [gitlab] section with host and token.",
+                            proj.name,
+                        ));
+                    }
+                }
+                ProjectSource::Github => {
+                    errors.push(format!(
+                        "config: project '{}' has source=\"github\" which is not yet supported.",
+                        proj.name,
+                    ));
+                }
+            }
+        }
+
+        if let Some(ref gl) = self.gitlab {
+            if gl.api_token().is_none() {
+                errors.push(
+                    "config: [gitlab] has no token and PERTMUX_GITLAB_TOKEN is not set.\n\
+                     hint: add token to [gitlab] or export PERTMUX_GITLAB_TOKEN."
+                        .into(),
+                );
+            }
+        }
+
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        for (i, name) in names.iter().enumerate() {
+            if names[i + 1..].contains(name) {
+                errors.push(format!("config: duplicate project name '{}'.", name));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("{}", errors.join("\n\n"))
         }
     }
 }
@@ -105,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gitlab_config_present() {
+    fn test_old_format_backwards_compat() {
         let cfg = load_from_str(
             r#"
 [gitlab]
@@ -113,19 +212,74 @@ token = "test-token"
 host = "gitlab.example.com"
 project = "team/project"
 local_path = "/tmp/test-repo"
+username = "alice"
 "#,
         );
-        let gl = cfg.gitlab.expect("gitlab should be Some");
-        assert_eq!(gl.token, Some("test-token".to_string()));
-        assert_eq!(gl.host, "gitlab.example.com");
-        assert_eq!(gl.project, "team/project");
-        assert_eq!(gl.local_path, "/tmp/test-repo");
+        let projects = cfg.resolve_projects();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].source, ProjectSource::Gitlab);
+        assert_eq!(projects[0].project, "team/project");
+        assert_eq!(projects[0].local_path, "/tmp/test-repo");
+        assert_eq!(projects[0].username, Some("alice".to_string()));
+        assert_eq!(projects[0].name, "project");
     }
 
     #[test]
-    fn test_gitlab_config_absent() {
+    fn test_new_format_multi_project() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+
+[[project]]
+name = "Alpha"
+source = "gitlab"
+project = "team/alpha"
+local_path = "/tmp/alpha"
+
+[[project]]
+name = "Beta"
+source = "gitlab"
+project = "team/beta"
+local_path = "/tmp/beta"
+username = "bob"
+"#,
+        );
+        let projects = cfg.resolve_projects();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].name, "Alpha");
+        assert_eq!(projects[0].project, "team/alpha");
+        assert_eq!(projects[1].name, "Beta");
+        assert_eq!(projects[1].username, Some("bob".to_string()));
+    }
+
+    #[test]
+    fn test_new_format_ignores_gitlab_project_field() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+
+[[project]]
+name = "Main"
+source = "gitlab"
+project = "team/main"
+local_path = "/tmp/main"
+"#,
+        );
+        let projects = cfg.resolve_projects();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "Main");
+    }
+
+    #[test]
+    fn test_no_gitlab_no_projects() {
         let cfg = load_from_str("refresh_interval = 2\n");
         assert!(cfg.gitlab.is_none());
+        assert!(cfg.project.is_none());
+        assert!(cfg.resolve_projects().is_empty());
     }
 
     #[test]
@@ -138,5 +292,144 @@ local_path = "/tmp/test-repo"
 "#,
         );
         assert_eq!(cfg.gitlab.unwrap().host, "gitlab.com");
+    }
+
+    #[test]
+    fn test_validate_missing_gitlab_section() {
+        let cfg = load_from_str(
+            r#"
+[[project]]
+name = "Test"
+source = "gitlab"
+project = "team/test"
+local_path = "/tmp/test"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("no [gitlab] section"));
+    }
+
+    #[test]
+    fn test_validate_missing_token() {
+        if std::env::var("PERTMUX_GITLAB_TOKEN").is_ok() {
+            return;
+        }
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+project = "team/test"
+local_path = "/tmp/test"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("no token"));
+    }
+
+    #[test]
+    fn test_validate_ambiguous_old_and_new() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+project = "team/old"
+local_path = "/tmp/old"
+
+[[project]]
+name = "New"
+source = "gitlab"
+project = "team/new"
+local_path = "/tmp/new"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("[[project]] is also defined"));
+    }
+
+    #[test]
+    fn test_validate_duplicate_project_names() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+
+[[project]]
+name = "Same"
+source = "gitlab"
+project = "team/a"
+local_path = "/tmp/a"
+
+[[project]]
+name = "Same"
+source = "gitlab"
+project = "team/b"
+local_path = "/tmp/b"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate project name"));
+    }
+
+    #[test]
+    fn test_validate_github_not_supported() {
+        let cfg = load_from_str(
+            r#"
+[[project]]
+name = "GH"
+source = "github"
+project = "org/repo"
+local_path = "/tmp/gh"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("not yet supported"));
+    }
+
+    #[test]
+    fn test_validate_old_format_passes() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+project = "team/project"
+local_path = "/tmp/test-repo"
+"#,
+        );
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_new_format_passes() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+
+[[project]]
+name = "Main"
+source = "gitlab"
+project = "team/main"
+local_path = "/tmp/main"
+"#,
+        );
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_unknown_source_rejected_at_parse() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[[project]]
+name = "Bad"
+source = "bitbucket"
+project = "team/bad"
+local_path = "/tmp/bad"
+"#,
+        );
+        assert!(result.is_err());
     }
 }
