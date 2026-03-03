@@ -1,16 +1,20 @@
-use crate::app::{App, SelectionSection};
+use crate::app::{App, ProjectState, SelectionSection};
+use crate::gitlab::types::PipelineJob;
 use crate::types::{PaneStatus, SessionDetail};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, BorderType, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Tabs,
+    },
     Frame,
 };
 
 const ACCENT: Color = Color::Rgb(255, 140, 0);
+const NOTIFICATION_DURATION: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Whether the terminal is landscape (wide) or portrait (tall).
 fn is_landscape(area: Rect) -> bool {
     area.width >= area.height * 2
 }
@@ -19,7 +23,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     if is_landscape(area) {
-        // ┌─ list ─┬─ detail ─┐
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -27,8 +30,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_list_panel(frame, app, chunks[0]);
         draw_detail_panel(frame, app, chunks[1]);
     } else {
-        // ┌─ list ──┐
-        // ├─ detail ─┤
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
@@ -36,14 +37,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_list_panel(frame, app, chunks[0]);
         draw_detail_panel(frame, app, chunks[1]);
     }
+
+    draw_notification(frame, app, area);
 }
 
 // ─── List panel ───────────────────────────────────────────────────────────────
 
 fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
-    // Title bar: show MR count if gitlab configured, else pane count
-    let title_right = if app.gitlab_client.is_some() {
-        let mr_count = app.dashboard.linked_mrs.len();
+    let title_right = if let Some(proj) = app.active_project() {
+        let mr_count = proj.dashboard.linked_mrs.len();
         format!(
             " {} MR{}  {}s ago ",
             mr_count,
@@ -59,31 +61,37 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    // Bottom hint bar: add Tab and o for MR mode
-    let hint_bottom = if app.gitlab_client.is_some() {
-        Line::from(vec![
-            Span::styled(" ↑↓", Style::default().fg(ACCENT)),
+    let hint_bottom = if app.has_projects() {
+        let mut hints = vec![
+            Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
-            Span::styled(" navigate  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" nav  ", Style::default().fg(Color::DarkGray)),
             Span::styled("Tab", Style::default().fg(ACCENT)),
             Span::styled(" switch  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("⏎", Style::default().fg(ACCENT)),
+            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
             Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
             Span::styled("o", Style::default().fg(ACCENT)),
             Span::styled(" open  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("q", Style::default().fg(ACCENT)),
-            Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
-        ])
+            Span::styled("b", Style::default().fg(ACCENT)),
+            Span::styled(" branch  ", Style::default().fg(Color::DarkGray)),
+        ];
+        if app.projects.len() > 1 {
+            hints.push(Span::styled("\u{25c4}\u{25ba}", Style::default().fg(ACCENT)));
+            hints.push(Span::styled(" tab  ", Style::default().fg(Color::DarkGray)));
+        }
+        hints.push(Span::styled("q", Style::default().fg(ACCENT)));
+        hints.push(Span::styled(" quit ", Style::default().fg(Color::DarkGray)));
+        Line::from(hints)
     } else {
         Line::from(vec![
-            Span::styled(" ↑↓", Style::default().fg(ACCENT)),
+            Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" navigate  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("⏎", Style::default().fg(ACCENT)),
+            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
             Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
@@ -132,12 +140,21 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    if app.gitlab_client.is_some() {
-        draw_mr_sections(frame, app, inner);
+    if let Some(proj) = app.active_project() {
+        if app.projects.len() > 1 {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(inner);
+            draw_project_tabs(frame, app, chunks[0]);
+            draw_mr_sections(frame, proj, chunks[1]);
+        } else {
+            draw_mr_sections(frame, proj, inner);
+        }
         return;
     }
 
-    // V1 mode: no gitlab config — original pane list
+    // V1 mode: no projects — original pane list
     if app.panes.is_empty() {
         let lines = vec![
             Line::from(""),
@@ -159,9 +176,8 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     let mut flat_idx: usize = 0;
 
     for (session_name, pane_indices) in &app.groups {
-        // Session header
         lines.push(Line::from(vec![
-            Span::styled("  ▪ ", Style::default().fg(ACCENT)),
+            Span::styled("  \u{25aa} ", Style::default().fg(ACCENT)),
             Span::styled(
                 session_name.as_str(),
                 Style::default()
@@ -175,8 +191,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             let is_selected = flat_idx == app.selected;
             flat_idx += 1;
 
-            // Row 1: cursor + status badge + title
-            let cursor = if is_selected { "▸ " } else { "  " };
+            let cursor = if is_selected { "\u{25b8} " } else { "  " };
             let badge = status_badge(&pane.status);
 
             let title_color = if is_selected {
@@ -210,42 +225,34 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
 
             lines.push(Line::from(spans));
 
-            // Row 2: detail line — agent · model · time ago
             let mut detail_parts: Vec<Span> = Vec::new();
-
-            // Agent
             detail_parts.push(Span::styled(
                 pane.display_agent().to_string(),
                 Style::default().fg(Color::DarkGray),
             ));
-
-            // Separator
             detail_parts.push(Span::styled(
-                " · ",
+                " \u{00b7} ",
                 Style::default().fg(Color::Indexed(238)),
             ));
-
-            // Model
             detail_parts.push(Span::styled(
                 pane.display_model().to_string(),
                 Style::default().fg(Color::DarkGray),
             ));
 
-            // Time ago (only for idle/unknown)
             if (pane.status == PaneStatus::Idle || pane.status == PaneStatus::Unknown)
-                && let Some(ago) = pane.time_ago() {
-                    detail_parts.push(Span::styled(
-                        " · ",
-                        Style::default().fg(Color::Indexed(238)),
-                    ));
-                    detail_parts.push(Span::styled(ago, Style::default().fg(Color::DarkGray)));
-                }
+                && let Some(ago) = pane.time_ago()
+            {
+                detail_parts.push(Span::styled(
+                    " \u{00b7} ",
+                    Style::default().fg(Color::Indexed(238)),
+                ));
+                detail_parts.push(Span::styled(ago, Style::default().fg(Color::DarkGray)));
+            }
 
             let mut detail_line = vec![Span::raw("          ")];
             detail_line.extend(detail_parts);
             lines.push(Line::from(detail_line));
 
-            // Row 3: latest AI response preview
             if let Some(ref response) = pane.last_response {
                 let preview = response.lines().next().unwrap_or("");
                 if !preview.is_empty() {
@@ -256,18 +263,16 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
                         preview.to_string()
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("          ▹ ", Style::default().fg(Color::Green)),
+                        Span::styled("          \u{25b9} ", Style::default().fg(Color::Green)),
                         Span::styled(truncated, Style::default().fg(Color::Indexed(250))),
                     ]));
                 }
             }
         }
 
-        // Spacing between groups
         lines.push(Line::from(""));
     }
 
-    // Scroll to keep selected visible
     let visible_height = inner.height as usize;
     let scroll = compute_scroll(
         &lines,
@@ -281,13 +286,33 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn draw_mr_sections(frame: &mut Frame, app: &App, area: Rect) {
-    let mr_focused = matches!(app.selection_section, SelectionSection::MergeRequests);
-    let has_unlinked = !app.dashboard.unlinked_instances.is_empty();
+fn draw_project_tabs(frame: &mut Frame, app: &App, area: Rect) {
+    let titles: Vec<Line> = app
+        .projects
+        .iter()
+        .map(|p| Line::from(format!(" {} ", p.config.name)))
+        .collect();
+
+    let tabs = Tabs::new(titles)
+        .highlight_style(
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )
+        .select(app.active_project)
+        .style(Style::default().fg(Color::DarkGray))
+        .divider(Span::styled("\u{2502}", Style::default().fg(Color::Indexed(238))));
+
+    frame.render_widget(tabs, area);
+}
+
+fn draw_mr_sections(frame: &mut Frame, proj: &ProjectState, area: Rect) {
+    let mr_focused = matches!(proj.selection_section, SelectionSection::MergeRequests);
+    let has_unlinked = !proj.dashboard.unlinked_instances.is_empty();
 
     let chunks = if has_unlinked {
-        let mr_count = app.dashboard.linked_mrs.len().max(1) as u16;
-        let ul_count = app.dashboard.unlinked_instances.len().max(1) as u16;
+        let mr_count = proj.dashboard.linked_mrs.len().max(1) as u16;
+        let ul_count = proj.dashboard.unlinked_instances.len().max(1) as u16;
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -302,24 +327,24 @@ fn draw_mr_sections(frame: &mut Frame, app: &App, area: Rect) {
             .split(area)
     };
 
-    draw_mr_block(frame, app, chunks[0], mr_focused);
+    draw_mr_block(frame, proj, chunks[0], mr_focused);
 
     if has_unlinked {
-        draw_unlinked_block(frame, app, chunks[1], !mr_focused);
+        draw_unlinked_block(frame, proj, chunks[1], !mr_focused);
     }
 }
 
-fn draw_mr_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
+fn draw_mr_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
     let border_color = if focused { ACCENT } else { Color::Indexed(238) };
-    let mr_count = app.dashboard.linked_mrs.len();
+    let mr_count = proj.dashboard.linked_mrs.len();
 
     let block = Block::default()
-        .title(Line::from(vec![
-            Span::styled(
-                format!(" Merge Requests ({}) ", mr_count),
-                Style::default().fg(border_color).add_modifier(Modifier::BOLD),
-            ),
-        ]))
+        .title(Line::from(vec![Span::styled(
+            format!(" Merge Requests ({}) ", mr_count),
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        )]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -344,7 +369,7 @@ fn draw_mr_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
 
     let card_h: u16 = 4;
     let total_content = mr_count as u16 * card_h;
-    let selected_y = app.mr_selected as u16 * card_h;
+    let selected_y = proj.mr_selected as u16 * card_h;
 
     let scroll: u16 = if total_content <= section_inner.height {
         0
@@ -354,7 +379,7 @@ fn draw_mr_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
         ideal.min(max_scroll)
     };
 
-    for (i, linked) in app.dashboard.linked_mrs.iter().enumerate() {
+    for (i, linked) in proj.dashboard.linked_mrs.iter().enumerate() {
         let card_y = i as u16 * card_h;
         let sy = card_y as i32 - scroll as i32;
         if sy + card_h as i32 <= 0 || sy >= section_inner.height as i32 {
@@ -364,35 +389,37 @@ fn draw_mr_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
             continue;
         }
         let ay = section_inner.y + sy as u16;
-        let is_selected = focused && i == app.mr_selected;
+        let is_selected = focused && i == proj.mr_selected;
         let rect = Rect::new(section_inner.x, ay, section_inner.width, card_h);
         render_mr_card(frame, linked, rect, is_selected);
     }
 
     if total_content > section_inner.height {
-        let mut scrollbar_state = ScrollbarState::new(mr_count)
-            .position(app.mr_selected);
+        let mut scrollbar_state = ScrollbarState::new(mr_count).position(proj.mr_selected);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None),
-            area.inner(Margin { vertical: 1, horizontal: 0 }),
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
 }
 
-fn draw_unlinked_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
+fn draw_unlinked_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
     let border_color = if focused { ACCENT } else { Color::Indexed(238) };
-    let ul_count = app.dashboard.unlinked_instances.len();
+    let ul_count = proj.dashboard.unlinked_instances.len();
 
     let block = Block::default()
-        .title(Line::from(vec![
-            Span::styled(
-                format!(" Opencode ({}) ", ul_count),
-                Style::default().fg(border_color).add_modifier(Modifier::BOLD),
-            ),
-        ]))
+        .title(Line::from(vec![Span::styled(
+            format!(" Opencode ({}) ", ul_count),
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        )]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -406,7 +433,7 @@ fn draw_unlinked_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) 
 
     let card_h: u16 = 4;
     let total_content = ul_count as u16 * card_h;
-    let selected_y = app.unlinked_selected as u16 * card_h;
+    let selected_y = proj.unlinked_selected as u16 * card_h;
 
     let scroll: u16 = if total_content <= section_inner.height {
         0
@@ -416,7 +443,7 @@ fn draw_unlinked_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) 
         ideal.min(max_scroll)
     };
 
-    for (i, unlinked) in app.dashboard.unlinked_instances.iter().enumerate() {
+    for (i, unlinked) in proj.dashboard.unlinked_instances.iter().enumerate() {
         let card_y = i as u16 * card_h;
         let sy = card_y as i32 - scroll as i32;
         if sy + card_h as i32 <= 0 || sy >= section_inner.height as i32 {
@@ -426,19 +453,21 @@ fn draw_unlinked_block(frame: &mut Frame, app: &App, area: Rect, focused: bool) 
             continue;
         }
         let ay = section_inner.y + sy as u16;
-        let is_selected = focused && i == app.unlinked_selected;
+        let is_selected = focused && i == proj.unlinked_selected;
         let rect = Rect::new(section_inner.x, ay, section_inner.width, card_h);
         render_unlinked_card(frame, unlinked, rect, is_selected);
     }
 
     if total_content > section_inner.height {
-        let mut scrollbar_state = ScrollbarState::new(ul_count)
-            .position(app.unlinked_selected);
+        let mut scrollbar_state = ScrollbarState::new(ul_count).position(proj.unlinked_selected);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None),
-            area.inner(Margin { vertical: 1, horizontal: 0 }),
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
@@ -450,8 +479,11 @@ fn render_mr_card(
     rect: Rect,
     is_selected: bool,
 ) {
-    let border_color = if is_selected { ACCENT } else { Color::Indexed(238) };
-    let border_type = if is_selected { BorderType::Rounded } else { BorderType::Rounded };
+    let border_color = if is_selected {
+        ACCENT
+    } else {
+        Color::Indexed(238)
+    };
 
     let iid_label = format!(" !{} ", linked.mr.iid);
     let iid_style = if is_selected {
@@ -463,7 +495,7 @@ fn render_mr_card(
     let block = Block::default()
         .title(Line::from(Span::styled(iid_label, iid_style)))
         .borders(Borders::ALL)
-        .border_type(border_type)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
 
     let card_inner = block.inner(rect);
@@ -473,18 +505,22 @@ fn render_mr_card(
         return;
     }
 
-    let title_color = if is_selected { Color::White } else { Color::Gray };
+    let title_color = if is_selected {
+        Color::White
+    } else {
+        Color::Gray
+    };
     let content_w = card_inner.width as usize;
     let draft_space = if linked.mr.draft { 9 } else { 0 };
     let title = truncate(&linked.mr.title, content_w.saturating_sub(draft_space));
 
-    let mut title_spans = vec![
-        Span::styled(title, Style::default().fg(title_color)),
-    ];
+    let mut title_spans = vec![Span::styled(title, Style::default().fg(title_color))];
     if linked.mr.draft {
         title_spans.push(Span::styled(
             " [draft]",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
         ));
     }
     if is_selected {
@@ -499,15 +535,21 @@ fn render_mr_card(
     );
     let mut status_spans: Vec<Span> = vec![
         Span::styled(format!("{} {}", icon, text), Style::default().fg(color)),
-        Span::styled(" · ", Style::default().fg(Color::Indexed(238))),
+        Span::styled(" \u{00b7} ", Style::default().fg(Color::Indexed(238))),
         Span::styled(
             format!("{} comments", linked.mr.user_notes_count),
             Style::default().fg(Color::DarkGray),
         ),
     ];
     if linked.has_new_activity {
-        status_spans.push(Span::styled(" · ", Style::default().fg(Color::Indexed(238))));
-        status_spans.push(Span::styled("● new", Style::default().fg(Color::Yellow)));
+        status_spans.push(Span::styled(
+            " \u{00b7} ",
+            Style::default().fg(Color::Indexed(238)),
+        ));
+        status_spans.push(Span::styled(
+            "\u{25cf} new",
+            Style::default().fg(Color::Yellow),
+        ));
     }
     if let Some(ref pane) = linked.tmux_pane {
         status_spans.push(Span::raw(" "));
@@ -524,17 +566,26 @@ fn render_unlinked_card(
     rect: Rect,
     is_selected: bool,
 ) {
-    let border_color = if is_selected { ACCENT } else { Color::Indexed(238) };
+    let border_color = if is_selected {
+        ACCENT
+    } else {
+        Color::Indexed(238)
+    };
 
     let branch = unlinked.branch.as_deref().unwrap_or("unknown");
     let label_style = if is_selected {
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Gray)
     };
 
     let block = Block::default()
-        .title(Line::from(Span::styled(format!(" {} ", branch), label_style)))
+        .title(Line::from(Span::styled(
+            format!(" {} ", branch),
+            label_style,
+        )))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -552,7 +603,10 @@ fn render_unlinked_card(
             shorten_path(&wt.path),
             Style::default().fg(Color::DarkGray),
         ));
-        info_spans.push(Span::styled(" · ", Style::default().fg(Color::Indexed(238))));
+        info_spans.push(Span::styled(
+            " \u{00b7} ",
+            Style::default().fg(Color::Indexed(238)),
+        ));
     }
     info_spans.push(compact_status_badge(&unlinked.pane.status));
 
@@ -560,23 +614,26 @@ fn render_unlinked_card(
     frame.render_widget(Paragraph::new(content), card_inner);
 }
 
-fn merge_status_display(status: Option<&str>, has_conflicts: Option<bool>) -> (&'static str, &'static str, Color) {
+fn merge_status_display(
+    status: Option<&str>,
+    has_conflicts: Option<bool>,
+) -> (&'static str, &'static str, Color) {
     if has_conflicts == Some(true) {
-        return ("✗", "conflicts", Color::Red);
+        return ("\u{2717}", "conflicts", Color::Red);
     }
     match status {
-        Some("mergeable") => ("✓", "mergeable", Color::Green),
-        Some("not_approved") => ("○", "not approved", Color::Yellow),
-        Some("checking") => ("⧗", "checking", ACCENT),
-        Some("ci_must_pass") | Some("ci_still_running") => ("⧗", "CI running", ACCENT),
-        Some("broken_status") => ("✗", "broken", Color::Red),
-        Some("need_rebase") => ("↻", "needs rebase", Color::Yellow),
-        Some("blocked_status") => ("⊘", "blocked", Color::Red),
-        Some("discussions_not_resolved") => ("◎", "discussions open", Color::Yellow),
-        Some("draft_status") => ("◇", "draft", Color::DarkGray),
-        Some("not_open") => ("─", "closed", Color::DarkGray),
+        Some("mergeable") => ("\u{2713}", "mergeable", Color::Green),
+        Some("not_approved") => ("\u{25cb}", "not approved", Color::Yellow),
+        Some("checking") => ("\u{29d7}", "checking", ACCENT),
+        Some("ci_must_pass") | Some("ci_still_running") => ("\u{29d7}", "CI running", ACCENT),
+        Some("broken_status") => ("\u{2717}", "broken", Color::Red),
+        Some("need_rebase") => ("\u{21bb}", "needs rebase", Color::Yellow),
+        Some("blocked_status") => ("\u{2298}", "blocked", Color::Red),
+        Some("discussions_not_resolved") => ("\u{25ce}", "discussions open", Color::Yellow),
+        Some("draft_status") => ("\u{25c7}", "draft", Color::DarkGray),
+        Some("not_open") => ("\u{2500}", "closed", Color::DarkGray),
         Some(other) => ("?", leak_status(other), Color::DarkGray),
-        None => ("─", "unknown", Color::DarkGray),
+        None => ("\u{2500}", "unknown", Color::DarkGray),
     }
 }
 
@@ -584,19 +641,81 @@ fn leak_status(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
+fn render_pipeline_dots(jobs: &[PipelineJob]) -> Vec<Line<'static>> {
+    let mut stages: Vec<(String, Vec<&PipelineJob>)> = Vec::new();
+    for job in jobs {
+        if let Some(existing) = stages.iter_mut().find(|(s, _)| s == &job.stage) {
+            existing.1.push(job);
+        } else {
+            stages.push((job.stage.clone(), vec![job]));
+        }
+    }
+
+    let mut spans: Vec<Span> = vec![Span::styled(
+        "  jobs       ",
+        Style::default().fg(Color::DarkGray),
+    )];
+    for (i, (_stage, stage_jobs)) in stages.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default()));
+        }
+        for job in stage_jobs {
+            spans.push(Span::styled(
+                "\u{25cf}",
+                Style::default().fg(job_status_color(&job.status)),
+            ));
+        }
+    }
+
+    let mut lines = vec![Line::from(spans)];
+
+    let failed: Vec<&PipelineJob> = jobs
+        .iter()
+        .filter(|j| j.status == "failed" && !j.allow_failure)
+        .collect();
+    if !failed.is_empty() {
+        let names: String = failed
+            .iter()
+            .map(|j| j.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(Line::from(vec![
+            Span::styled(
+                "             \u{2717} ",
+                Style::default().fg(Color::Red),
+            ),
+            Span::styled(names, Style::default().fg(Color::Red)),
+        ]));
+    }
+
+    lines
+}
+
+fn job_status_color(status: &str) -> Color {
+    match status {
+        "success" => Color::Green,
+        "failed" => Color::Red,
+        "running" => ACCENT,
+        "pending" | "preparing" | "waiting_for_resource" => Color::Yellow,
+        "manual" => Color::Rgb(128, 90, 213),
+        "canceled" | "canceling" | "skipped" => Color::DarkGray,
+        "created" => Color::Gray,
+        _ => Color::Gray,
+    }
+}
+
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
-    // MR mode: gitlab configured → show MR detail
-    if app.gitlab_client.is_some() {
-        draw_mr_detail_panel(frame, app, area);
+    if let Some(proj) = app.active_project() {
+        draw_mr_detail_panel(frame, proj, area);
         return;
     }
 
     // V1 mode: show opencode session detail
     let panel_title = if let Some(pane) = app.panes.get(app.selected) {
         format!(
-            " {} — {}:{}.{} ",
+            " {} \u{2014} {}:{}.{} ",
             pane.display_title(),
             pane.session_name,
             pane.window_index,
@@ -630,7 +749,6 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    // Split inner area: metadata header + message timeline
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -645,8 +763,8 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
 
 // ─── MR Detail panel ─────────────────────────────────────────────────────────
 
-fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let panel_title = if let Some(linked) = app.dashboard.linked_mrs.get(app.mr_selected) {
+fn draw_mr_detail_panel(frame: &mut Frame, proj: &ProjectState, area: Rect) {
+    let panel_title = if let Some(linked) = proj.dashboard.linked_mrs.get(proj.mr_selected) {
         let title = truncate(&linked.mr.title, area.width.saturating_sub(10) as usize);
         format!(" !{} {} ", linked.mr.iid, title)
     } else {
@@ -668,7 +786,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let Some(linked) = app.dashboard.linked_mrs.get(app.mr_selected) else {
+    let Some(linked) = proj.dashboard.linked_mrs.get(proj.mr_selected) else {
         let msg = Paragraph::new(Span::styled(
             "  No MR selected. Press 'r' to fetch MRs.",
             Style::default().fg(Color::DarkGray),
@@ -680,7 +798,6 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     let mr = &linked.mr;
     let mut lines: Vec<Line> = Vec::new();
 
-    // ── Status section ──
     lines.push(Line::from(Span::styled(
         "  Status",
         Style::default()
@@ -702,7 +819,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(vec![
         Span::styled("  branch     ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            format!("{} → {}", mr.source_branch, mr.target_branch),
+            format!("{} \u{2192} {}", mr.source_branch, mr.target_branch),
             Style::default().fg(Color::Gray),
         ),
     ]));
@@ -723,7 +840,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]));
 
-    if let Some(ref detail) = app.cached_mr_detail {
+    if let Some(ref detail) = proj.cached_mr_detail {
         if detail.iid == mr.iid {
             if let Some(ref merge_status) = detail.detailed_merge_status {
                 lines.push(Line::from(vec![
@@ -752,10 +869,13 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
                     Span::styled(&pipeline.status, Style::default().fg(pipe_color)),
                 ]));
             }
+
+            if !proj.cached_pipeline_jobs.is_empty() {
+                lines.extend(render_pipeline_dots(&proj.cached_pipeline_jobs));
+            }
         }
     }
 
-    // ── Links section ──
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Links",
@@ -783,7 +903,10 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled("  tmux       ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!("{}:{}.{}", pane.session_name, pane.window_index, pane.pane_index),
+                format!(
+                    "{}:{}.{}",
+                    pane.session_name, pane.window_index, pane.pane_index
+                ),
                 Style::default().fg(Color::White),
             ),
             Span::raw("  "),
@@ -796,7 +919,6 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    // ── Activity section ──
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Activity",
@@ -806,7 +928,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     )));
 
     let comments_str = if linked.has_new_activity {
-        format!("{} (● new)", mr.user_notes_count)
+        format!("{} (\u{25cf} new)", mr.user_notes_count)
     } else {
         mr.user_notes_count.to_string()
     };
@@ -841,11 +963,10 @@ fn draw_mr_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-/// How many lines the header needs.
 fn detail_header_height(detail: &SessionDetail) -> u16 {
-    let mut h: u16 = 5; // directory + tokens + messages + changes + blank separator
+    let mut h: u16 = 5;
     if !detail.todos.is_empty() {
-        h += 1 + detail.todos.len().min(6) as u16; // header + items (cap at 6)
+        h += 1 + detail.todos.len().min(6) as u16;
     }
     h
 }
@@ -853,7 +974,6 @@ fn detail_header_height(detail: &SessionDetail) -> u16 {
 fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    // Directory
     lines.push(Line::from(vec![
         Span::styled("  dir  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -862,7 +982,6 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         ),
     ]));
 
-    // Tokens
     lines.push(Line::from(vec![
         Span::styled("  tok  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -877,7 +996,6 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         Span::styled(" out", Style::default().fg(Color::DarkGray)),
     ]));
 
-    // Messages
     lines.push(Line::from(vec![
         Span::styled("  msg  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -887,7 +1005,7 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         Span::styled(" messages", Style::default().fg(Color::DarkGray)),
         if let Some(dur) = session_duration(detail) {
             Span::styled(
-                format!("  ·  {}", dur),
+                format!("  \u{00b7}  {}", dur),
                 Style::default().fg(Color::DarkGray),
             )
         } else {
@@ -895,10 +1013,9 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         },
     ]));
 
-    // File changes summary
     if detail.summary_files.unwrap_or(0) > 0 {
         lines.push(Line::from(vec![
-            Span::styled("  Δ    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  \u{0394}    ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{} files", detail.summary_files.unwrap_or(0)),
                 Style::default().fg(Color::White),
@@ -916,15 +1033,14 @@ fn draw_detail_header(frame: &mut Frame, detail: &SessionDetail, area: Rect) {
         ]));
     }
 
-    // Todos
     if !detail.todos.is_empty() {
         lines.push(Line::from(""));
         for todo in detail.todos.iter().take(6) {
             let (icon, color) = match todo.status.as_str() {
-                "completed" => ("✓", Color::Green),
-                "in_progress" => ("▸", ACCENT),
-                "cancelled" => ("✗", Color::DarkGray),
-                _ => ("○", Color::DarkGray),
+                "completed" => ("\u{2713}", Color::Green),
+                "in_progress" => ("\u{25b8}", ACCENT),
+                "cancelled" => ("\u{2717}", Color::DarkGray),
+                _ => ("\u{25cb}", Color::DarkGray),
             };
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", icon), Style::default().fg(color)),
@@ -950,18 +1066,17 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Section header
     lines.push(Line::from(Span::styled(
-        "  ── messages ──",
+        "  \u{2500}\u{2500} messages \u{2500}\u{2500}",
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(""));
 
     for msg in &detail.messages {
         let (role_label, role_color) = match msg.role.as_str() {
-            "user" => ("▸ you", ACCENT),
-            "assistant" => ("◂ ai ", Color::Green),
-            _ => ("  ···", Color::DarkGray),
+            "user" => ("\u{25b8} you", ACCENT),
+            "assistant" => ("\u{25c2} ai ", Color::Green),
+            _ => ("  \u{00b7}\u{00b7}\u{00b7}", Color::DarkGray),
         };
 
         let time = format_timestamp(msg.timestamp);
@@ -971,7 +1086,6 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
             Span::styled(format!("  {}", time), Style::default().fg(Color::DarkGray)),
         ];
 
-        // Show token count for assistant messages
         if msg.role == "assistant" && msg.output_tokens > 0 {
             spans.push(Span::styled(
                 format!("  {}tok", format_tokens(msg.output_tokens)),
@@ -981,7 +1095,6 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
 
         lines.push(Line::from(spans));
 
-        // Text preview on next line (if available)
         if let Some(ref text) = msg.text_preview {
             let preview = text.lines().next().unwrap_or("");
             if !preview.is_empty() {
@@ -996,7 +1109,6 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
         }
     }
 
-    // Scroll to show most recent messages (bottom)
     let visible = area.height as usize;
     let scroll = if lines.len() > visible {
         (lines.len() - visible) as u16
@@ -1008,13 +1120,44 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
     frame.render_widget(paragraph, area);
 }
 
+// ─── Notification toast ───────────────────────────────────────────────────────
+
+fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
+    let Some((ref msg, at)) = app.notification else {
+        return;
+    };
+    if at.elapsed() > NOTIFICATION_DURATION {
+        return;
+    }
+
+    let width = (msg.len() as u16 + 4).min(area.width.saturating_sub(4));
+    let x = area.width.saturating_sub(width).saturating_sub(2);
+    let y = area.height.saturating_sub(3);
+    let rect = Rect::new(x, y, width, 3);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let text = Paragraph::new(Line::from(Span::styled(
+        truncate(msg, width.saturating_sub(2) as usize),
+        Style::default().fg(Color::White),
+    )))
+    .block(block);
+
+    frame.render_widget(Clear, rect);
+    frame.render_widget(text, rect);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn shorten_path(path: &str) -> String {
     if let Some(home) = dirs::home_dir()
-        && let Some(rest) = path.strip_prefix(home.to_str().unwrap_or("")) {
-            return format!("~{}", rest);
-        }
+        && let Some(rest) = path.strip_prefix(home.to_str().unwrap_or(""))
+    {
+        return format!("~{}", rest);
+    }
     path.to_string()
 }
 
@@ -1029,7 +1172,6 @@ fn format_tokens(tokens: u64) -> String {
 }
 
 fn format_timestamp(ts_ms: i64) -> String {
-    // Convert epoch ms to HH:MM
     let secs = ts_ms / 1000;
     let hours = (secs % 86400) / 3600;
     let mins = (secs % 3600) / 60;
@@ -1060,7 +1202,11 @@ fn session_duration(detail: &SessionDetail) -> Option<String> {
 }
 
 fn format_date(iso: &str) -> &str {
-    if iso.len() >= 10 { &iso[..10] } else { iso }
+    if iso.len() >= 10 {
+        &iso[..10]
+    } else {
+        iso
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1076,25 +1222,24 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ─── Status badges ────────────────────────────────────────────────────────────
 
-/// Returns a styled Span with a colored background badge for the status.
 fn status_badge(status: &PaneStatus) -> Span<'static> {
     match status {
         PaneStatus::Busy => Span::styled(
-            " ● BUSY ",
+            " \u{25cf} BUSY ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
         PaneStatus::Retry { .. } => Span::styled(
-            " ⚠ RETRY ",
+            " \u{26a0} RETRY ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
         PaneStatus::Idle => Span::styled(
-            " ⏸ IDLE ",
+            " \u{23f8} IDLE ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
@@ -1102,23 +1247,42 @@ fn status_badge(status: &PaneStatus) -> Span<'static> {
         ),
         PaneStatus::Unknown => Span::styled(
             " ? no server ",
-            Style::default().fg(Color::DarkGray).bg(Color::Indexed(236)),
+            Style::default()
+                .fg(Color::DarkGray)
+                .bg(Color::Indexed(236)),
         ),
     }
 }
 
 fn compact_status_badge(status: &PaneStatus) -> Span<'static> {
     match status {
-        PaneStatus::Busy => Span::styled(" B ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        PaneStatus::Retry { .. } => Span::styled(" R ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        PaneStatus::Idle => Span::styled(" I ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        PaneStatus::Busy => Span::styled(
+            " B ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        PaneStatus::Retry { .. } => Span::styled(
+            " R ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        PaneStatus::Idle => Span::styled(
+            " I ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         PaneStatus::Unknown => Span::styled("   ", Style::default()),
     }
 }
 
 // ─── Scroll ───────────────────────────────────────────────────────────────────
 
-/// Compute scroll offset to keep the selected pane visible.
 fn compute_scroll(
     lines: &[Line],
     selected: usize,
@@ -1126,11 +1290,10 @@ fn compute_scroll(
     panes: &[crate::types::AgentPane],
     visible_height: usize,
 ) -> usize {
-    // Each group: 1 header, then 2-3 lines per pane (3 if has last_response), then 1 blank
     let mut line_idx = 0;
     let mut flat = 0;
     for (_, pane_indices) in groups {
-        line_idx += 1; // header
+        line_idx += 1;
         for &idx in pane_indices {
             if flat == selected {
                 if line_idx + 3 > visible_height {
@@ -1146,7 +1309,7 @@ fn compute_scroll(
             line_idx += pane_lines;
             flat += 1;
         }
-        line_idx += 1; // spacing
+        line_idx += 1;
     }
     if lines.len() > visible_height {
         lines.len() - visible_height

@@ -31,7 +31,6 @@ use std::time::Duration;
     about = "TUI dashboard for opencode sessions in tmux"
 )]
 struct Cli {
-    /// Path to config file
     #[arg(short = 'c', long = "config")]
     config: Option<String>,
 }
@@ -41,26 +40,32 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = config::load(cli.config.as_deref())?;
 
-    eprintln!("[pertmux] config loaded — gitlab: {}", if config.gitlab.is_some() { "yes" } else { "no" });
-    if let Some(ref gl) = config.gitlab {
-        eprintln!("[pertmux] token present: {}", gl.api_token().is_some());
+    let projects = config.resolve_projects();
+    eprintln!(
+        "[pertmux] config loaded \u{2014} {} project{}",
+        projects.len(),
+        if projects.len() == 1 { "" } else { "s" }
+    );
+
+    if !projects.is_empty() {
+        config.validate()?;
+        for p in &projects {
+            eprintln!("[pertmux] project: {} ({})", p.name, p.project);
+        }
     }
 
     let mut app = App::new(config);
 
-    if app.gitlab_client.is_some() {
-        let gl = app.gitlab_config.as_ref().unwrap();
-        eprintln!(
-            "[pertmux] gitlab: {} project={}",
-            gl.host, gl.project
-        );
+    if app.has_projects() {
         app.refresh_mrs().await;
         if let Some(ref error) = app.error {
             anyhow::bail!("{}", error);
         }
+        let total_mrs: usize = app.projects.iter().map(|p| p.cached_mrs.len()).sum();
         eprintln!(
-            "[pertmux] ok — {} open MRs",
-            app.cached_mrs.len()
+            "[pertmux] ok \u{2014} {} open MR{}",
+            total_mrs,
+            if total_mrs == 1 { "" } else { "s" }
         );
     }
 
@@ -98,6 +103,8 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                             KeyCode::Char('q') | KeyCode::Esc => app.running = false,
                             KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                            KeyCode::Left => app.prev_project(),
+                            KeyCode::Right => app.next_project(),
                             KeyCode::Tab => app.toggle_section(),
                             KeyCode::Enter => {
                                 let _ = app.focus_selected();
@@ -107,8 +114,13 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                                 app.refresh_mrs().await;
                             }
                             KeyCode::Char('o') => {
-                                if app.gitlab_client.is_some() {
+                                if app.has_projects() {
                                     app.open_selected_mr_in_browser();
+                                }
+                            }
+                            KeyCode::Char('b') => {
+                                if app.has_projects() {
+                                    app.copy_selected_branch();
                                 }
                             }
                             _ => {}
