@@ -74,6 +74,30 @@ impl GitLabClient {
             ))
     }
 
+    pub async fn fetch_pipeline_jobs(&self, pipeline_id: u64) -> Result<Vec<PipelineJob>> {
+        let url = format!(
+            "{}/projects/{}/pipelines/{}/jobs?per_page=100",
+            self.base_url, self.project_id, pipeline_id
+        );
+        self.client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .context(format!("Failed to fetch pipeline jobs from {}", url))?
+            .error_for_status()
+            .context(format!(
+                "GitLab API returned error for pipeline {} jobs",
+                pipeline_id
+            ))?
+            .json::<Vec<PipelineJob>>()
+            .await
+            .context(format!(
+                "Failed to parse pipeline jobs for pipeline {}",
+                pipeline_id
+            ))
+    }
+
     pub async fn fetch_mr_notes(&self, mr_iid: u64) -> Result<Vec<MergeRequestNote>> {
         let url = format!(
             "{}/projects/{}/merge_requests/{}/notes?per_page=100",

@@ -60,6 +60,18 @@ pub struct MergeRequestNote {
     pub system: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PipelineJob {
+    pub id: u64,
+    pub name: String,
+    pub stage: String,
+    pub status: String,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub allow_failure: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +208,70 @@ mod tests {
     fn test_mr_notes_empty_list() {
         let notes: Vec<MergeRequestNote> = serde_json::from_str("[]").unwrap();
         assert!(notes.is_empty());
+    }
+
+    const PIPELINE_JOBS_JSON: &str = r#"[
+        {
+            "id": 1001,
+            "name": "lint",
+            "stage": "build",
+            "status": "success",
+            "duration": 45.2,
+            "allow_failure": false
+        },
+        {
+            "id": 1002,
+            "name": "compile",
+            "stage": "build",
+            "status": "success",
+            "duration": 120.5,
+            "allow_failure": false
+        },
+        {
+            "id": 1003,
+            "name": "unit-tests",
+            "stage": "test",
+            "status": "failed",
+            "duration": 89.1,
+            "allow_failure": false
+        },
+        {
+            "id": 1004,
+            "name": "integration-tests",
+            "stage": "test",
+            "status": "running",
+            "duration": null,
+            "allow_failure": true
+        }
+    ]"#;
+
+    #[test]
+    fn test_pipeline_jobs_deserializes() {
+        let jobs: Vec<PipelineJob> = serde_json::from_str(PIPELINE_JOBS_JSON).unwrap();
+        assert_eq!(jobs.len(), 4);
+        assert_eq!(jobs[0].name, "lint");
+        assert_eq!(jobs[0].stage, "build");
+        assert_eq!(jobs[0].status, "success");
+        assert!(jobs[0].duration.is_some());
+        assert!(!jobs[0].allow_failure);
+        assert_eq!(jobs[2].status, "failed");
+        assert!(!jobs[2].allow_failure);
+        assert!(jobs[3].allow_failure);
+        assert!(jobs[3].duration.is_none());
+    }
+
+    #[test]
+    fn test_pipeline_jobs_missing_optional_fields() {
+        let json = r#"[{
+            "id": 1,
+            "name": "deploy",
+            "stage": "deploy",
+            "status": "created"
+        }]"#;
+        let jobs: Vec<PipelineJob> = serde_json::from_str(json).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].duration.is_none());
+        assert!(!jobs[0].allow_failure);
     }
 
     #[test]
