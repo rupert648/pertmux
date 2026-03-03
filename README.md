@@ -57,6 +57,10 @@ refresh_interval = 2
 |-----|------|---------|-------------|
 | `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes and refresh the dashboard |
 
+### Pipeline Visualization
+
+The pipeline job status dots in the MR detail panel are inspired by [glim](https://github.com/junkdog/glim). Each CI/CD job is rendered as a colored dot (`●`) for a compact at-a-glance view of pipeline health, grouped by stage.
+
 #### `[agent.opencode]`
 
 Including this section enables the opencode agent. Omit or comment it out to disable.
