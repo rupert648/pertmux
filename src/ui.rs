@@ -304,10 +304,23 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_project_tabs(frame: &mut Frame, app: &App, area: Rect) {
+    let n = app.projects.len();
+    let dividers = n.saturating_sub(1);
+    let max_per_tab = (area.width as usize).saturating_sub(dividers) / n.max(1);
+
     let titles: Vec<Line> = app
         .projects
         .iter()
-        .map(|p| Line::from(format!(" {} ", p.config.name)))
+        .map(|p| {
+            let name = &p.config.name;
+            let pad = 2;
+            let max_name = max_per_tab.saturating_sub(pad);
+            if name.len() > max_name && max_name > 2 {
+                Line::from(format!(" {}\u{2026}", &name[..max_name - 1]))
+            } else {
+                Line::from(format!(" {} ", name))
+            }
+        })
         .collect();
 
     let tabs = Tabs::new(titles)
