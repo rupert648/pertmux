@@ -6,7 +6,7 @@ This document provides a technical overview of the pertmux codebase for AI agent
 pertmux is a Rust TUI unified SWE dashboard that links GitLab MRs to local branches/worktrees, tmux sessions, and Claude instances. It provides a real-time view of session status, resource usage, and progress with integrated GitLab merge request tracking. The bottom panel provides worktrunk-powered worktree management with create/remove/merge actions. The architecture is pluggable — new coding agents (Claude, Claude Code, etc.) can be added by implementing the `CodingAgent` trait.
 
 ## Architecture
-The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sync), MR list on manual refresh, selected MR detail every 60s, and worktrees every 30s (all async via tokio).
+The project uses a non-blocking refresh architecture. All network/CLI operations (GitLab API, `wt list`) are spawned as background tokio tasks that send results back via `mpsc` channel. The UI renders immediately on startup and populates as data arrives. Refresh cadence: tmux/Claude polling every 2s (sync), MR list on manual 'r', selected MR detail every 60s, worktrees every 30s.
 
 ### Data Flow
 1. **tmux discovery**: List all tmux panes running registered coding agent processes.
@@ -19,7 +19,7 @@ The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sy
 8. **TUI render**: Display the aggregated data in a responsive layout with MR-first list and detail panels.
 
 ## Module Guide
-- **main.rs**: Entry point. Handles terminal initialization (raw mode, alternate screen) and the main event loop (200ms poll for input, 2s refresh). Routes keyboard input to popup state or normal navigation.
+- **main.rs**: Entry point. Handles terminal initialization (raw mode, alternate screen) and the main event loop (200ms poll for input, 2s refresh). Routes keyboard input to popup state or normal navigation. Uses `tokio::select!` on event stream, mpsc channel, and timer intervals.
 - **app.rs**: Owns the `App` struct, which holds the entire application state. Manages the refresh cycle, selection logic, popup state (`PopupState` enum for create/remove/merge worktree dialogs), and grouping of panes by tmux session.
 - **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. To add a new agent, implement the trait and register it here.
 - **coding_agent/Claude.rs**: Claude implementation of `CodingAgent`. Handles Claude-specific HTTP API communication and status interpretation.
@@ -49,7 +49,7 @@ The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sy
 - **Tiered refresh**: tmux/Claude every 2s (sync), MR list on manual 'r', selected MR detail every 60s (async reqwest), worktrees every 30s + manual 'r'.
 - **Backwards compatibility**: No `[gitlab]` config = v1 behavior unchanged.
 - **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send).
-- **dtach Persistence**: Recommended tmux integration uses `dtach` to keep pertmux running between popup invocations. Ctrl+\ detaches (preserves state), q fully quits.
+- **dtach Persistence**: Recommended tmux integration uses `dtach` to keep pertmux running between popup invocations. `prefix+a` toggles the popup (open/close). Closing the popup detaches dtach (preserves state). `q`/`Esc` fully quits.
 
 ## Dependencies
 - **ratatui**: TUI framework for rendering.
