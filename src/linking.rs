@@ -81,11 +81,14 @@ pub fn link_all(
         let worktree = canonicalize_path(&pane.pane_path)
             .and_then(|path| worktree_by_canonical_path.get(&path).copied());
 
-        unlinked_instances.push(UnlinkedInstance {
-            pane: pane.clone(),
-            worktree: worktree.cloned(),
-            branch: worktree.and_then(|wt| wt.branch.clone()),
-        });
+        // Only include panes whose path matches a worktree for this project
+        if let Some(wt) = worktree {
+            unlinked_instances.push(UnlinkedInstance {
+                pane: pane.clone(),
+                worktree: Some(wt.clone()),
+                branch: wt.branch.clone(),
+            });
+        }
     }
 
     Ok(DashboardState {
@@ -270,7 +273,8 @@ mod tests {
         let linked = &state.linked_mrs[0];
         assert!(linked.worktree.is_some());
         assert!(linked.tmux_pane.is_none());
-        assert_eq!(state.unlinked_instances.len(), 1);
+        // Pane at /var doesn't match any worktree for this project, so it's excluded
+        assert_eq!(state.unlinked_instances.len(), 0);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -328,8 +332,8 @@ mod tests {
         assert_eq!(state.linked_mrs.len(), 1);
         assert!(state.linked_mrs[0].worktree.is_some());
         assert!(state.linked_mrs[0].tmux_pane.is_none());
-        assert_eq!(state.unlinked_instances.len(), 1);
-        assert!(state.unlinked_instances[0].worktree.is_none());
+        // Non-canonicalizable path can't match any worktree, so pane is excluded
+        assert_eq!(state.unlinked_instances.len(), 0);
 
         let _ = std::fs::remove_file(db_path);
     }
