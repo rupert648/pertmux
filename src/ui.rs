@@ -79,7 +79,9 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(" branch  ", Style::default().fg(Color::DarkGray)),
         ];
         if app.projects.len() > 1 {
-            hints.push(Span::styled("\u{25c4}\u{25ba}", Style::default().fg(ACCENT)));
+            hints.push(Span::styled("h", Style::default().fg(ACCENT)));
+            hints.push(Span::styled("/", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled("l", Style::default().fg(ACCENT)));
             hints.push(Span::styled(" tab  ", Style::default().fg(Color::DarkGray)));
         }
         hints.push(Span::styled("q", Style::default().fg(ACCENT)));

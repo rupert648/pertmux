@@ -103,8 +103,8 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                             KeyCode::Char('q') | KeyCode::Esc => app.running = false,
                             KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                            KeyCode::Left => app.prev_project(),
-                            KeyCode::Right => app.next_project(),
+                            KeyCode::Left | KeyCode::Char('h') => app.prev_project(),
+                            KeyCode::Right | KeyCode::Char('l') => app.next_project(),
                             KeyCode::Tab => app.toggle_section(),
                             KeyCode::Enter => {
                                 let _ = app.focus_selected();
