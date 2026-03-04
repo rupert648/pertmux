@@ -2,13 +2,36 @@ use crate::coding_agent::CodingAgent;
 use crate::config::{AgentConfig, Config, ProjectConfig, ProjectSource};
 use crate::git::discover_worktrees;
 use crate::gitlab::client::GitLabClient;
-use crate::gitlab::types::{MergeRequestDetail, MergeRequestSummary, PipelineJob};
+use crate::gitlab::types::{
+    MergeRequestDetail, MergeRequestNote, MergeRequestSummary, PipelineJob,
+};
 use crate::linking::{link_all, DashboardState};
 use crate::read_state::ReadStateDb;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
 use crate::{coding_agent, db, tmux};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+
+pub enum RefreshMsg {
+    MrList {
+        project_idx: usize,
+        result: Result<Vec<MergeRequestSummary>, String>,
+    },
+    MrDetail {
+        project_idx: usize,
+        detail: MergeRequestDetail,
+        jobs: Vec<PipelineJob>,
+        notes: Vec<MergeRequestNote>,
+    },
+    MrDetailError {
+        error: String,
+    },
+    Worktrees {
+        project_idx: usize,
+        result: Result<Vec<WtWorktree>, String>,
+    },
+}
 
 pub enum SelectionSection {
     MergeRequests,
@@ -52,6 +75,7 @@ pub struct App {
     pub read_state: Option<ReadStateDb>,
     pub notification: Option<(String, Instant)>,
     pub popup: PopupState,
+    pub pending_refreshes: u32,
 }
 
 impl App {
@@ -112,6 +136,7 @@ impl App {
             read_state,
             notification: None,
             popup: PopupState::None,
+            pending_refreshes: 0,
         }
     }
 
@@ -301,97 +326,158 @@ impl App {
         Ok(())
     }
 
-    pub async fn refresh_mrs(&mut self) {
-        let mut last_error: Option<String> = None;
-        let mut had_success = false;
-
-        for proj in &mut self.projects {
-            match proj.client.fetch_mr_list().await {
-                Ok(mrs) => {
-                    proj.cached_mrs = mrs;
-                    had_success = true;
-                }
-                Err(e) => {
-                    last_error =
-                        Some(format!("GitLab error ({}): {}", proj.config.name, e));
-                }
-            }
-        }
-
-        if had_success && self.error.as_ref().is_some_and(|e| e.starts_with("GitLab")) {
-            self.error = None;
-        }
-        if let Some(e) = last_error {
-            self.error = Some(e);
+    pub fn spawn_refresh_mrs(&mut self, tx: &mpsc::UnboundedSender<RefreshMsg>) {
+        for (idx, proj) in self.projects.iter().enumerate() {
+            let client = proj.client.clone();
+            let tx = tx.clone();
+            self.pending_refreshes += 1;
+            tokio::spawn(async move {
+                let result = client
+                    .fetch_mr_list()
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(RefreshMsg::MrList {
+                    project_idx: idx,
+                    result,
+                });
+            });
         }
     }
 
-    pub async fn refresh_mr_detail(&mut self) {
-        let Some(proj) = self.projects.get_mut(self.active_project) else {
+    pub fn spawn_refresh_mr_detail(&mut self, tx: &mpsc::UnboundedSender<RefreshMsg>) {
+        let Some(proj) = self.projects.get(self.active_project) else {
             return;
         };
-
         let Some(linked_mr) = proj.dashboard.linked_mrs.get(proj.mr_selected) else {
             return;
         };
 
         let iid = linked_mr.mr.iid;
+        let client = proj.client.clone();
+        let project_idx = self.active_project;
+        let tx = tx.clone();
+        self.pending_refreshes += 1;
 
-        match proj.client.fetch_mr_detail(iid).await {
-            Ok(detail) => {
-                proj.cached_mr_detail = Some(detail);
-                proj.last_detail_refresh = Instant::now();
-            }
-            Err(e) => {
-                self.error = Some(format!("MR detail error: {}", e));
-                return;
-            }
-        }
-
-        // API returns id desc — reverse to get stage order
-        let pipeline_id = proj
-            .cached_mr_detail
-            .as_ref()
-            .and_then(|d| d.head_pipeline.as_ref())
-            .map(|p| p.id);
-
-        if let Some(pid) = pipeline_id {
-            match proj.client.fetch_pipeline_jobs(pid).await {
-                Ok(mut jobs) => {
-                    jobs.reverse();
-                    proj.cached_pipeline_jobs = jobs;
+        tokio::spawn(async move {
+            let detail = match client.fetch_mr_detail(iid).await {
+                Ok(d) => d,
+                Err(e) => {
+                    let _ = tx.send(RefreshMsg::MrDetailError {
+                        error: format!("MR detail error: {}", e),
+                    });
+                    return;
                 }
-                Err(_) => {
-                    proj.cached_pipeline_jobs = vec![];
-                }
-            }
-        } else {
-            proj.cached_pipeline_jobs = vec![];
-        }
+            };
 
-        if let Some(ref read_state) = self.read_state {
-            if let Ok(notes) = proj.client.fetch_mr_notes(iid).await {
-                let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
-                let _ = read_state.mark_notes_seen(&proj.config.project, iid, &note_ids);
-                let _ = read_state.mark_mr_viewed(&proj.config.project, iid, notes.len() as u32);
-            }
+            let pipeline_id = detail.head_pipeline.as_ref().map(|p| p.id);
+            let mut jobs = if let Some(pid) = pipeline_id {
+                client.fetch_pipeline_jobs(pid).await.unwrap_or_default()
+            } else {
+                vec![]
+            };
+            jobs.reverse();
+
+            let notes = client.fetch_mr_notes(iid).await.unwrap_or_default();
+
+            let _ = tx.send(RefreshMsg::MrDetail {
+                project_idx,
+                detail,
+                jobs,
+                notes,
+            });
+        });
+    }
+
+    pub fn spawn_refresh_worktrees(&mut self, tx: &mpsc::UnboundedSender<RefreshMsg>) {
+        for (idx, proj) in self.projects.iter().enumerate() {
+            let path = proj.config.local_path.clone();
+            let tx = tx.clone();
+            self.pending_refreshes += 1;
+            tokio::spawn(async move {
+                let result = worktrunk::fetch_worktrees(&path)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(RefreshMsg::Worktrees {
+                    project_idx: idx,
+                    result,
+                });
+            });
         }
     }
 
-    pub async fn refresh_worktrees(&mut self) {
-        for proj in &mut self.projects {
-            match worktrunk::fetch_worktrees(&proj.config.local_path).await {
-                Ok(wts) => {
-                    proj.cached_worktrees = wts;
-                    if proj.worktree_selected >= proj.cached_worktrees.len()
-                        && !proj.cached_worktrees.is_empty()
-                    {
-                        proj.worktree_selected = proj.cached_worktrees.len() - 1;
+    pub fn apply_refresh_msg(&mut self, msg: RefreshMsg) {
+        self.pending_refreshes = self.pending_refreshes.saturating_sub(1);
+        match msg {
+            RefreshMsg::MrList { project_idx, result } => {
+                if let Some(proj) = self.projects.get_mut(project_idx) {
+                    match result {
+                        Ok(mrs) => {
+                            proj.cached_mrs = mrs;
+                            if self.error.as_ref().is_some_and(|e| e.starts_with("GitLab")) {
+                                self.error = None;
+                            }
+                        }
+                        Err(e) => {
+                            self.error =
+                                Some(format!("GitLab error ({}): {}", proj.config.name, e));
+                        }
                     }
                 }
-                Err(e) => {
-                    eprintln!("[pertmux] worktrunk error ({}): {}", proj.config.name, e);
-                    proj.cached_worktrees = vec![];
+            }
+            RefreshMsg::MrDetail {
+                project_idx,
+                detail,
+                jobs,
+                notes,
+            } => {
+                if let Some(proj) = self.projects.get_mut(project_idx) {
+                    proj.cached_mr_detail = Some(detail);
+                    proj.cached_pipeline_jobs = jobs;
+                    proj.last_detail_refresh = Instant::now();
+
+                    if let Some(ref read_state) = self.read_state {
+                        let iid = proj
+                            .dashboard
+                            .linked_mrs
+                            .get(proj.mr_selected)
+                            .map(|l| l.mr.iid);
+                        if let Some(iid) = iid {
+                            let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
+                            let _ = read_state.mark_notes_seen(
+                                &proj.config.project,
+                                iid,
+                                &note_ids,
+                            );
+                            let _ = read_state.mark_mr_viewed(
+                                &proj.config.project,
+                                iid,
+                                notes.len() as u32,
+                            );
+                        }
+                    }
+                }
+            }
+            RefreshMsg::MrDetailError { error } => {
+                self.error = Some(error);
+            }
+            RefreshMsg::Worktrees { project_idx, result } => {
+                if let Some(proj) = self.projects.get_mut(project_idx) {
+                    match result {
+                        Ok(wts) => {
+                            proj.cached_worktrees = wts;
+                            if proj.worktree_selected >= proj.cached_worktrees.len()
+                                && !proj.cached_worktrees.is_empty()
+                            {
+                                proj.worktree_selected = proj.cached_worktrees.len() - 1;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[pertmux] worktrunk error ({}): {}",
+                                proj.config.name, e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -533,7 +619,7 @@ impl App {
         }
     }
 
-    pub async fn confirm_popup_action(&mut self) {
+    pub async fn confirm_popup_action(&mut self, tx: &mpsc::UnboundedSender<RefreshMsg>) {
         let popup = std::mem::replace(&mut self.popup, PopupState::None);
         let local_path = self
             .projects
@@ -550,7 +636,7 @@ impl App {
                     match worktrunk::create_worktree(lp, &branch).await {
                         Ok(msg) => {
                             self.notification = Some((msg, Instant::now()));
-                            self.refresh_worktrees().await;
+                            self.spawn_refresh_worktrees(tx);
                         }
                         Err(e) => {
                             self.notification =
@@ -564,7 +650,7 @@ impl App {
                     match worktrunk::remove_worktree(lp, branch).await {
                         Ok(msg) => {
                             self.notification = Some((msg, Instant::now()));
-                            self.refresh_worktrees().await;
+                            self.spawn_refresh_worktrees(tx);
                         }
                         Err(e) => {
                             self.notification =
@@ -582,7 +668,7 @@ impl App {
                         format!("Merged {} into default branch", branch),
                         Instant::now(),
                     ));
-                    self.refresh_worktrees().await;
+                    self.spawn_refresh_worktrees(tx);
                 }
                 Err(e) => {
                     self.notification = Some((format!("Merge failed: {}", e), Instant::now()));

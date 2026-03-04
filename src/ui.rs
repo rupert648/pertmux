@@ -39,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_detail_panel(frame, app, chunks[1]);
     }
 
+    draw_refreshing_indicator(frame, app, area);
     draw_notification(frame, app, area);
     draw_popup(frame, app, area);
 }
@@ -1180,6 +1181,19 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
 }
 
 // ─── Notification toast ───────────────────────────────────────────────────────
+
+fn draw_refreshing_indicator(frame: &mut Frame, app: &App, area: Rect) {
+    if app.pending_refreshes == 0 {
+        return;
+    }
+    let text = " \u{21bb} refreshing\u{2026} ";
+    let w = text.len() as u16;
+    let x = area.width.saturating_sub(w).saturating_sub(1);
+    let y = area.height.saturating_sub(1);
+    let rect = Rect::new(x, y, w, 1);
+    let span = Span::styled(text, Style::default().fg(Color::DarkGray));
+    frame.render_widget(span, rect);
+}
 
 fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
     let Some((ref msg, at)) = app.notification else {
