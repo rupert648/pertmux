@@ -1,34 +1,59 @@
 # pertmux
 
-pertmux ([ru]-pert multiplexer) is a highly personally and opinionated rust tui dashboard
-for monitoring opencode (https://github.com/sst/opencode) instances running inside tmux.
-It auto discovers every opencode instance across all tmux panes, queries their state via HTTP API +
-SQLite database, and renders a live dashboard with session details.
+pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs to local branches/worktrees, tmux sessions, and coding agent instances. It provides a real-time view of merge request status, pipeline health, worktree management, and session progress — all from a single TUI.
+
+## Features
+
+- **GitLab MR tracking** — open MRs with pipeline dots, comments, and unread indicators
+- **Worktree management** — list, create, remove, and merge worktrees via [worktrunk](https://github.com/max-sixty/worktrunk)
+- **Multi-project support** — tab between projects with `h`/`l` keys
+- **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
+- **Coding agent monitoring** — track Claude/opencode instances across tmux panes
+- **Persistent popup** — runs as a tmux popup overlay via `dtach`, instant re-open
 
 ## Setup
 
 ### Prerequisites
-* [opencode](https://github.com/sst/opencode)
-* [worktrunk](https://github.com/max-sixty/worktrunk) (optional) — enables the worktree management panel. Install with `cargo install worktrunk` and ensure `wt` is on your PATH.
 
-You should configure opencode to start its server alongside so that pertmux can query status.
-The easiest way to do this is by aliasing the opencode command:
+- [tmux](https://github.com/tmux/tmux) 3.2+ (for popup support)
+- [worktrunk](https://github.com/max-sixty/worktrunk) (optional) — enables the worktree management panel. Install with `cargo install worktrunk` and ensure `wt` is on your PATH.
+- [dtach](https://github.com/crigler/dtach) (optional) — keeps pertmux running between popup invocations. `brew install dtach`.
+
+### Install
+
+```sh
+cargo install --path .
 ```
-alias opencode='command opencode --port 0'
+
+Or build manually:
+
+```sh
+cargo build --release
+# Binary at target/release/pertmux
 ```
-`--port 0` tells opencode to use a random port. This allows you to have multiple opencode sessions and pertmux
-does the hard work of finding their pids & ports.
 
+### tmux Integration
 
-### Install: 
+Add to your `~/.tmux.conf` for a popup overlay (recommended):
 
-TODO
+```tmux
+# pertmux dashboard popup (prefix + P)
+bind-key P display-popup -h 80% -w 80% -E "dtach -A /tmp/pertmux.sock pertmux"
+```
+
+- First open: pertmux starts and fetches data
+- Subsequent opens: instant reattach (dtach keeps it running)
+- `Ctrl+\` detaches (preserves state), `q` fully quits
+
+Without dtach, replace with:
+
+```tmux
+bind-key P display-popup -h 80% -w 80% -E "pertmux"
+```
 
 ## Configuration
 
-pertmux works out of the box with zero configuration. All settings have sensible defaults.
-
-To customize behavior, create a TOML config file:
+pertmux works out of the box with zero configuration for basic agent monitoring. For GitLab MR tracking and multi-project support, create a TOML config file.
 
 ```
 pertmux -c ./path/to/config.toml
@@ -36,31 +61,70 @@ pertmux -c ./path/to/config.toml
 
 If no `-c` flag is provided, pertmux looks for `~/.config/pertmux/pertmux.toml`. If that file doesn't exist, defaults are used.
 
-### Config file format
+### Multi-project config (recommended)
 
 ```toml
-# Refresh interval in seconds (default: 2)
-refresh_interval = 2
+[gitlab]
+host = "gitlab.example.com"
+token = "glpat-your-token-here"
 
-# Agents are enabled by including their section below.
-# Remove or comment out a section to disable that agent.
-# If [agent] is omitted entirely, all agents are enabled with defaults.
+[[project]]
+name = "My App"
+source = "gitlab"
+project = "team/my-app"
+local_path = "/home/user/repos/my-app"
+username = "youruser"
+
+[[project]]
+name = "API Service"
+source = "gitlab"
+project = "team/api-service"
+local_path = "/home/user/repos/api-service"
+username = "youruser"
+```
+
+### Single-project config (backwards compatible)
+
+```toml
+[gitlab]
+host = "gitlab.example.com"
+token = "glpat-your-token-here"
+project = "team/my-app"
+local_path = "/home/user/repos/my-app"
+username = "youruser"
+```
+
+### Agent-only config (no GitLab)
+
+```toml
+refresh_interval = 2
 
 [agent.opencode]
 # db_path = "~/.local/share/opencode/opencode.db"
-
-# [agent.claude_code]
 ```
 
-### Options
+### Config reference
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes and refresh the dashboard |
+| `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes |
 
-### Pipeline Visualization
+#### `[gitlab]`
 
-The pipeline job status dots in the MR detail panel are inspired by [glim](https://github.com/junkdog/glim). Each CI/CD job is rendered as a colored dot (`●`) for a compact at-a-glance view of pipeline health, grouped by stage.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `host` | string | `gitlab.com` | GitLab instance hostname |
+| `token` | string | — | Personal access token (or set `PERTMUX_GITLAB_TOKEN` env var) |
+
+#### `[[project]]`
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `name` | string | yes | Display name (shown in tabs) |
+| `source` | string | yes | `"gitlab"` (github planned) |
+| `project` | string | yes | Full project path (e.g. `team/app`) |
+| `local_path` | string | yes | Absolute path to local repo (validated at startup) |
+| `username` | string | no | Your username (for "mine" vs "reviewing" MR grouping) |
 
 #### `[agent.opencode]`
 
@@ -68,4 +132,31 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database. Only needed if your database is in a non-standard location |
+| `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
+
+## Keybindings
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` or `↑`/`↓` | Navigate list |
+| `h`/`l` or `��`/`→` | Switch project tab |
+| `Tab` | Toggle between MR list and worktree panel |
+| `Enter` | Focus selected pane/worktree in tmux |
+| `r` | Refresh all data |
+
+### Actions
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `o` | MR selected | Open MR in browser |
+| `b` | Any | Copy selected branch name |
+| `c` | Worktree panel | Create new worktree |
+| `d` | Worktree panel | Delete selected worktree |
+| `m` | Worktree panel | Merge selected worktree into default branch |
+| `q` | Global | Quit (or detach if using dtach) |
+
+### Pipeline Visualization
+
+The pipeline job status dots in the MR detail panel are inspired by [glim](https://github.com/junkdog/glim). Each CI/CD job is rendered as a colored dot for a compact at-a-glance view of pipeline health, grouped by stage.
