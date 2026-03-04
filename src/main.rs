@@ -118,7 +118,7 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                             }
                         } else {
                             match key.code {
-                                KeyCode::Char('q') => app.running = false,
+                                KeyCode::Char('q') | KeyCode::Esc => app.running = false,
                                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                                 KeyCode::Left | KeyCode::Char('h') => app.prev_project(),
