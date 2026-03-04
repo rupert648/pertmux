@@ -121,6 +121,14 @@ impl Config {
         let projects = self.resolve_projects();
 
         for proj in &projects {
+            if !std::path::Path::new(&proj.local_path).is_dir() {
+                errors.push(format!(
+                    "config: project '{}' local_path does not exist: {}\n\
+                     hint: create the directory or fix the path in your config.",
+                    proj.name, proj.local_path,
+                ));
+            }
+
             match proj.source {
                 ProjectSource::Gitlab => {
                     if self.gitlab.is_none() {
@@ -395,7 +403,7 @@ local_path = "/tmp/gh"
 host = "gitlab.example.com"
 token = "test-token"
 project = "team/project"
-local_path = "/tmp/test-repo"
+local_path = "/tmp"
 "#,
         );
         assert!(cfg.validate().is_ok());
@@ -413,10 +421,29 @@ token = "test-token"
 name = "Main"
 source = "gitlab"
 project = "team/main"
-local_path = "/tmp/main"
+local_path = "/tmp"
 "#,
         );
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_bad_local_path() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+
+[[project]]
+name = "Bad"
+source = "gitlab"
+project = "team/bad"
+local_path = "/nonexistent/path/here"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("local_path does not exist"));
     }
 
     #[test]
