@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct WtCommit {
     pub sha: String,
     pub short_sha: String,
@@ -14,6 +15,7 @@ pub struct WtCommit {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct WtDiff {
     #[serde(default)]
     pub added: u64,
@@ -22,6 +24,7 @@ pub struct WtDiff {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct WtWorkingTree {
     #[serde(default)]
     pub staged: bool,
@@ -46,6 +49,7 @@ pub struct WtMain {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct WtRemote {
     #[serde(default)]
     pub name: String,
@@ -58,6 +62,7 @@ pub struct WtRemote {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct WtWorktreeState {
     #[serde(default)]
     pub state: Option<String>,
@@ -66,6 +71,7 @@ pub struct WtWorktreeState {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct WtWorktree {
     pub branch: Option<String>,
     #[serde(default)]
@@ -116,6 +122,66 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
 
     let all: Vec<WtWorktree> = serde_json::from_str(&stdout)?;
     Ok(all.into_iter().filter(|w| w.kind == "worktree").collect())
+}
+
+pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
+    let output = Command::new("wt")
+        .args([
+            "-C",
+            local_path,
+            "switch",
+            "--create",
+            branch,
+            "--no-cd",
+            "-y",
+            "--no-verify",
+        ])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim());
+    }
+
+    Ok(format!("Created worktree: {}", branch))
+}
+
+pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
+    let output = Command::new("wt")
+        .args([
+            "-C",
+            local_path,
+            "remove",
+            branch,
+            "-y",
+            "-f",
+            "--foreground",
+            "--no-verify",
+        ])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim());
+    }
+
+    Ok(format!("Removed worktree: {}", branch))
+}
+
+pub async fn merge_worktree(worktree_path: &str) -> Result<String> {
+    let output = Command::new("wt")
+        .args(["-C", worktree_path, "merge", "-y", "--no-verify"])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim());
+    }
+
+    Ok("Merged and cleaned up".to_string())
 }
 
 pub fn format_age(timestamp: i64) -> String {

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WorktreeInfo {
     pub path: String,              // Absolute, canonicalized filesystem path
     pub branch: Option<String>,    // Branch name (None if detached HEAD or bare)

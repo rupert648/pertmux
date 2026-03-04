@@ -16,6 +16,7 @@ mod worktrunk;
 
 use app::App;
 use clap::Parser;
+use app::PopupState;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
     execute,
@@ -103,32 +104,49 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
             maybe_event = event_stream.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => app.running = false,
-                            KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                            KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                            KeyCode::Left | KeyCode::Char('h') => app.prev_project(),
-                            KeyCode::Right | KeyCode::Char('l') => app.next_project(),
-                            KeyCode::Tab => app.toggle_section(),
-                            KeyCode::Enter => {
-                                let _ = app.focus_selected();
-                            }
-                            KeyCode::Char('r') => {
-                                app.refresh().await;
-                                app.refresh_mrs().await;
-                                app.refresh_worktrees().await;
-                            }
-                            KeyCode::Char('o') => {
-                                if app.has_projects() {
-                                    app.open_selected_mr_in_browser();
+                        if app.has_popup() {
+                            match key.code {
+                                KeyCode::Esc => app.close_popup(),
+                                KeyCode::Enter => app.confirm_popup_action().await,
+                                KeyCode::Backspace => app.popup_input_pop(),
+                                KeyCode::Char(ch) => {
+                                    if matches!(app.popup, PopupState::CreateWorktree { .. }) {
+                                        app.popup_input_push(ch);
+                                    }
                                 }
+                                _ => {}
                             }
-                            KeyCode::Char('b') => {
-                                if app.has_projects() {
-                                    app.copy_selected_branch();
+                        } else {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => app.running = false,
+                                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
+                                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                                KeyCode::Left | KeyCode::Char('h') => app.prev_project(),
+                                KeyCode::Right | KeyCode::Char('l') => app.next_project(),
+                                KeyCode::Tab => app.toggle_section(),
+                                KeyCode::Enter => {
+                                    let _ = app.focus_selected();
                                 }
+                                KeyCode::Char('r') => {
+                                    app.refresh().await;
+                                    app.refresh_mrs().await;
+                                    app.refresh_worktrees().await;
+                                }
+                                KeyCode::Char('o') => {
+                                    if app.has_projects() {
+                                        app.open_selected_mr_in_browser();
+                                    }
+                                }
+                                KeyCode::Char('b') => {
+                                    if app.has_projects() {
+                                        app.copy_selected_branch();
+                                    }
+                                }
+                                KeyCode::Char('c') => app.open_create_popup(),
+                                KeyCode::Char('d') => app.open_remove_popup(),
+                                KeyCode::Char('m') => app.open_merge_popup(),
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
                     Some(Ok(_)) => {}
