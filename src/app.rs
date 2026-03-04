@@ -15,6 +15,13 @@ pub enum SelectionSection {
     Worktrees,
 }
 
+pub enum PopupState {
+    None,
+    CreateWorktree { input: String },
+    ConfirmRemove { branch: String },
+    ConfirmMerge { branch: String, worktree_path: String },
+}
+
 pub struct ProjectState {
     pub config: ProjectConfig,
     pub client: GitLabClient,
@@ -44,6 +51,7 @@ pub struct App {
     pub active_project: usize,
     pub read_state: Option<ReadStateDb>,
     pub notification: Option<(String, Instant)>,
+    pub popup: PopupState,
 }
 
 impl App {
@@ -103,6 +111,7 @@ impl App {
             active_project: 0,
             read_state,
             notification: None,
+            popup: PopupState::None,
         }
     }
 
@@ -114,6 +123,7 @@ impl App {
         self.projects.get(self.active_project)
     }
 
+    #[allow(dead_code)]
     pub fn active_project_mut(&mut self) -> Option<&mut ProjectState> {
         self.projects.get_mut(self.active_project)
     }
@@ -451,6 +461,134 @@ impl App {
             let _ = std::process::Command::new("xdg-open").arg(url).spawn();
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let _ = std::process::Command::new("open").arg(url).spawn();
+        }
+    }
+
+    pub fn has_popup(&self) -> bool {
+        !matches!(self.popup, PopupState::None)
+    }
+
+    pub fn open_create_popup(&mut self) {
+        if let Some(proj) = self.projects.get(self.active_project) {
+            if matches!(proj.selection_section, SelectionSection::Worktrees) {
+                self.popup = PopupState::CreateWorktree {
+                    input: String::new(),
+                };
+            }
+        }
+    }
+
+    pub fn open_remove_popup(&mut self) {
+        if let Some(proj) = self.projects.get(self.active_project) {
+            if matches!(proj.selection_section, SelectionSection::Worktrees) {
+                if let Some(wt) = proj.cached_worktrees.get(proj.worktree_selected) {
+                    if wt.is_main {
+                        self.notification =
+                            Some(("Cannot remove main worktree".into(), Instant::now()));
+                        return;
+                    }
+                    if let Some(ref branch) = wt.branch {
+                        self.popup = PopupState::ConfirmRemove {
+                            branch: branch.clone(),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn open_merge_popup(&mut self) {
+        if let Some(proj) = self.projects.get(self.active_project) {
+            if matches!(proj.selection_section, SelectionSection::Worktrees) {
+                if let Some(wt) = proj.cached_worktrees.get(proj.worktree_selected) {
+                    if wt.is_main {
+                        self.notification =
+                            Some(("Cannot merge main worktree".into(), Instant::now()));
+                        return;
+                    }
+                    if let (Some(branch), Some(path)) = (&wt.branch, &wt.path) {
+                        self.popup = PopupState::ConfirmMerge {
+                            branch: branch.clone(),
+                            worktree_path: path.clone(),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn close_popup(&mut self) {
+        self.popup = PopupState::None;
+    }
+
+    pub fn popup_input_push(&mut self, ch: char) {
+        if let PopupState::CreateWorktree { ref mut input } = self.popup {
+            input.push(ch);
+        }
+    }
+
+    pub fn popup_input_pop(&mut self) {
+        if let PopupState::CreateWorktree { ref mut input } = self.popup {
+            input.pop();
+        }
+    }
+
+    pub async fn confirm_popup_action(&mut self) {
+        let popup = std::mem::replace(&mut self.popup, PopupState::None);
+        let local_path = self
+            .projects
+            .get(self.active_project)
+            .map(|p| p.config.local_path.clone());
+
+        match popup {
+            PopupState::CreateWorktree { ref input } => {
+                let branch = input.trim().to_string();
+                if branch.is_empty() {
+                    return;
+                }
+                if let Some(ref lp) = local_path {
+                    match worktrunk::create_worktree(lp, &branch).await {
+                        Ok(msg) => {
+                            self.notification = Some((msg, Instant::now()));
+                            self.refresh_worktrees().await;
+                        }
+                        Err(e) => {
+                            self.notification =
+                                Some((format!("Create failed: {}", e), Instant::now()));
+                        }
+                    }
+                }
+            }
+            PopupState::ConfirmRemove { ref branch } => {
+                if let Some(ref lp) = local_path {
+                    match worktrunk::remove_worktree(lp, branch).await {
+                        Ok(msg) => {
+                            self.notification = Some((msg, Instant::now()));
+                            self.refresh_worktrees().await;
+                        }
+                        Err(e) => {
+                            self.notification =
+                                Some((format!("Remove failed: {}", e), Instant::now()));
+                        }
+                    }
+                }
+            }
+            PopupState::ConfirmMerge {
+                ref branch,
+                ref worktree_path,
+            } => match worktrunk::merge_worktree(worktree_path).await {
+                Ok(_) => {
+                    self.notification = Some((
+                        format!("Merged {} into default branch", branch),
+                        Instant::now(),
+                    ));
+                    self.refresh_worktrees().await;
+                }
+                Err(e) => {
+                    self.notification = Some((format!("Merge failed: {}", e), Instant::now()));
+                }
+            },
+            PopupState::None => {}
         }
     }
 

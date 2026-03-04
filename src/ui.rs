@@ -1,4 +1,4 @@
-use crate::app::{App, ProjectState, SelectionSection};
+use crate::app::{App, PopupState, ProjectState, SelectionSection};
 use crate::gitlab::types::PipelineJob;
 use crate::types::{PaneStatus, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
@@ -40,6 +40,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     draw_notification(frame, app, area);
+    draw_popup(frame, app, area);
 }
 
 // ─── List panel ───────────────────────────────────────────────────────────────
@@ -62,6 +63,10 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         )
     };
 
+    let in_worktrees = app
+        .active_project()
+        .is_some_and(|p| matches!(p.selection_section, SelectionSection::Worktrees));
+
     let hint_bottom = if app.has_projects() {
         let mut hints = vec![
             Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
@@ -74,11 +79,20 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("o", Style::default().fg(ACCENT)),
-            Span::styled(" open  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("b", Style::default().fg(ACCENT)),
-            Span::styled(" branch  ", Style::default().fg(Color::DarkGray)),
         ];
+        if in_worktrees {
+            hints.push(Span::styled("c", Style::default().fg(ACCENT)));
+            hints.push(Span::styled("reate  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled("d", Style::default().fg(ACCENT)));
+            hints.push(Span::styled("el  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled("m", Style::default().fg(ACCENT)));
+            hints.push(Span::styled("erge  ", Style::default().fg(Color::DarkGray)));
+        } else {
+            hints.push(Span::styled("o", Style::default().fg(ACCENT)));
+            hints.push(Span::styled(" open  ", Style::default().fg(Color::DarkGray)));
+        }
+        hints.push(Span::styled("b", Style::default().fg(ACCENT)));
+        hints.push(Span::styled(" branch  ", Style::default().fg(Color::DarkGray)));
         if app.projects.len() > 1 {
             hints.push(Span::styled("h", Style::default().fg(ACCENT)));
             hints.push(Span::styled("/", Style::default().fg(Color::DarkGray)));
@@ -1180,6 +1194,111 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(Clear, rect);
     frame.render_widget(text, rect);
+}
+
+// ─── Popup ────────────────────────────────────────────────────────────────────
+
+fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
+    let (title, body_lines, show_cursor) = match &app.popup {
+        PopupState::None => return,
+        PopupState::CreateWorktree { input } => {
+            let lines = vec![
+                Line::from(Span::styled(
+                    "Branch name:",
+                    Style::default().fg(Color::Gray),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {}", input),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Enter confirm \u{00b7} Esc cancel",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            (" Create Worktree ", lines, true)
+        }
+        PopupState::ConfirmRemove { branch } => {
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled("Remove worktree ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        branch.as_str(),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("?", Style::default().fg(Color::Gray)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Branch will be deleted if merged.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Enter confirm \u{00b7} Esc cancel",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            (" Remove Worktree ", lines, false)
+        }
+        PopupState::ConfirmMerge { branch, .. } => {
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled("Merge ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        branch.as_str(),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" into default branch?", Style::default().fg(Color::Gray)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Squash + rebase, then remove worktree.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Enter confirm \u{00b7} Esc cancel",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            (" Merge Worktree ", lines, false)
+        }
+    };
+
+    let popup_w = 50u16.min(area.width.saturating_sub(4));
+    let popup_h = (body_lines.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let paragraph = Paragraph::new(body_lines).block(block);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(paragraph, rect);
+
+    let _ = show_cursor;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
