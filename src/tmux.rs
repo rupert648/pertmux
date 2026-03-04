@@ -52,7 +52,7 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
     Ok(panes)
 }
 
-pub fn find_or_create_pane(path: &str) -> anyhow::Result<()> {
+pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()> {
     let canonical_target =
         std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
 
@@ -62,11 +62,13 @@ pub fn find_or_create_pane(path: &str) -> anyhow::Result<()> {
 
     let our_session = get_own_session().unwrap_or_default();
 
-    let target_session = if let Some(other_tty) = find_other_client(&our_session) {
-        session_for_client(&other_tty).unwrap_or(our_session.clone())
-    } else {
-        our_session.clone()
-    };
+    let target_session = find_session_by_name(project_name).unwrap_or_else(|| {
+        if let Some(other_tty) = find_other_client(&our_session) {
+            session_for_client(&other_tty).unwrap_or(our_session.clone())
+        } else {
+            our_session.clone()
+        }
+    });
 
     let output = Command::new("tmux")
         .args([
@@ -165,6 +167,22 @@ fn session_for_client(client_tty: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn find_session_by_name(name: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lower_name = name.to_lowercase();
+    stdout
+        .lines()
+        .find(|s| s.to_lowercase() == lower_name)
+        .map(|s| s.to_string())
 }
 
 fn find_other_client(our_session: &str) -> Option<String> {

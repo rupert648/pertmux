@@ -291,7 +291,7 @@ impl App {
                     if let Some(wt) = proj.cached_worktrees.get(proj.worktree_selected)
                         && let Some(ref path) = wt.path
                     {
-                        tmux::find_or_create_pane(path)?;
+                        tmux::find_or_create_pane(path, &proj.config.name)?;
                     }
                 }
             }
