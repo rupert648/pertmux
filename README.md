@@ -37,18 +37,19 @@ cargo build --release
 Add to your `~/.tmux.conf` for a popup overlay (recommended):
 
 ```tmux
-# pertmux dashboard popup (prefix + P)
-bind-key P display-popup -h 80% -w 80% -E "dtach -A /tmp/pertmux.sock pertmux"
+# pertmux dashboard popup (prefix+a toggles open/close)
+bind-key a display-popup -h 80% -w 80% -E "dtach -A /tmp/pertmux.sock pertmux"
 ```
 
-- First open: pertmux starts and fetches data
-- Subsequent opens: instant reattach (dtach keeps it running)
-- `Ctrl+\` detaches (preserves state), `q` fully quits
+- `prefix+a` opens the dashboard as a popup overlay
+- `prefix+a` again closes it (dtach detaches, pertmux keeps running)
+- Next open is instant — dtach reattaches to the running process
+- `q`/`Esc` fully quits (next open restarts)
 
 Without dtach, replace with:
 
 ```tmux
-bind-key P display-popup -h 80% -w 80% -E "pertmux"
+bind-key a display-popup -h 80% -w 80% -E "pertmux"
 ```
 
 ## Configuration
@@ -155,7 +156,8 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 | `c` | Worktree panel | Create new worktree |
 | `d` | Worktree panel | Delete selected worktree |
 | `m` | Worktree panel | Merge selected worktree into default branch |
-| `q` | Global | Quit (or detach if using dtach) |
+| `q`/`Esc` | Global | Quit pertmux |
+| `prefix+a` | tmux | Toggle dashboard popup (dtach detaches, preserves state) |
 
 ### Pipeline Visualization
 
