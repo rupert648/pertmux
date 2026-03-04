@@ -16,13 +16,12 @@ mod worktrunk;
 
 use app::App;
 use clap::Parser;
-use app::{PopupState, RefreshMsg};
+use app::PopupState;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use tokio::sync::mpsc;
 use futures::StreamExt;
 use ratatui::prelude::*;
 use std::io;
@@ -59,7 +58,18 @@ async fn main() -> anyhow::Result<()> {
 
     let mut app = App::new(config);
 
-    let (tx, rx) = mpsc::unbounded_channel::<RefreshMsg>();
+    if app.has_projects() {
+        app.refresh_mrs().await;
+        if let Some(ref error) = app.error {
+            anyhow::bail!("{}", error);
+        }
+        let total_mrs: usize = app.projects.iter().map(|p| p.cached_mrs.len()).sum();
+        eprintln!(
+            "[pertmux] ok \u{2014} {} open MR{}",
+            total_mrs,
+            if total_mrs == 1 { "" } else { "s" }
+        );
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -68,12 +78,9 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     app.refresh().await;
-    if app.has_projects() {
-        app.spawn_refresh_mrs(&tx);
-        app.spawn_refresh_worktrees(&tx);
-    }
+    app.refresh_worktrees().await;
 
-    let result = run_loop(&mut terminal, &mut app, tx, rx).await;
+    let result = run_loop(&mut terminal, &mut app).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -81,12 +88,7 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn run_loop(
-    terminal: &mut Terminal<impl Backend>,
-    app: &mut App,
-    tx: mpsc::UnboundedSender<RefreshMsg>,
-    mut rx: mpsc::UnboundedReceiver<RefreshMsg>,
-) -> anyhow::Result<()> {
+async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyhow::Result<()> {
     let mut event_stream = EventStream::new();
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
     let mut detail_interval = tokio::time::interval(Duration::from_secs(60));
@@ -105,7 +107,7 @@ async fn run_loop(
                         if app.has_popup() {
                             match key.code {
                                 KeyCode::Esc => app.close_popup(),
-                                KeyCode::Enter => app.confirm_popup_action(&tx).await,
+                                KeyCode::Enter => app.confirm_popup_action().await,
                                 KeyCode::Backspace => app.popup_input_pop(),
                                 KeyCode::Char(ch) => {
                                     if matches!(app.popup, PopupState::CreateWorktree { .. }) {
@@ -127,8 +129,8 @@ async fn run_loop(
                                 }
                                 KeyCode::Char('r') => {
                                     app.refresh().await;
-                                    app.spawn_refresh_mrs(&tx);
-                                    app.spawn_refresh_worktrees(&tx);
+                                    app.refresh_mrs().await;
+                                    app.refresh_worktrees().await;
                                 }
                                 KeyCode::Char('o') => {
                                     if app.has_projects() {
@@ -152,17 +154,14 @@ async fn run_loop(
                     None => break,
                 }
             }
-            Some(msg) = rx.recv() => {
-                app.apply_refresh_msg(msg);
-            }
             _ = refresh_interval.tick() => {
                 app.refresh().await;
             }
             _ = detail_interval.tick() => {
-                app.spawn_refresh_mr_detail(&tx);
+                app.refresh_mr_detail().await;
             }
             _ = worktree_interval.tick() => {
-                app.spawn_refresh_worktrees(&tx);
+                app.refresh_worktrees().await;
             }
         }
     }

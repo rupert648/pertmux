@@ -2,7 +2,6 @@ use crate::gitlab::types::*;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-#[derive(Clone)]
 pub struct GitLabClient {
     client: Client,
     base_url: String,
