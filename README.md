@@ -9,6 +9,7 @@ SQLite database, and renders a live dashboard with session details.
 
 ### Prerequisites
 * [opencode](https://github.com/sst/opencode)
+* [worktrunk](https://github.com/max-sixty/worktrunk) (optional) — enables the worktree management panel. Install with `cargo install worktrunk` and ensure `wt` is on your PATH.
 
 You should configure opencode to start its server alongside so that pertmux can query status.
 The easiest way to do this is by aliasing the opencode command:

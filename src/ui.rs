@@ -1,6 +1,7 @@
 use crate::app::{App, ProjectState, SelectionSection};
 use crate::gitlab::types::PipelineJob;
 use crate::types::{PaneStatus, SessionDetail};
+use crate::worktrunk::{self, WtWorktree};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -310,30 +311,19 @@ fn draw_project_tabs(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_mr_sections(frame: &mut Frame, proj: &ProjectState, area: Rect) {
     let mr_focused = matches!(proj.selection_section, SelectionSection::MergeRequests);
-    let has_unlinked = !proj.dashboard.unlinked_instances.is_empty();
+    let mr_count = proj.dashboard.linked_mrs.len().max(1) as u16;
+    let wt_count = proj.cached_worktrees.len().max(1) as u16;
 
-    let chunks = if has_unlinked {
-        let mr_count = proj.dashboard.linked_mrs.len().max(1) as u16;
-        let ul_count = proj.dashboard.unlinked_instances.len().max(1) as u16;
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Ratio(mr_count as u32, mr_count as u32 + ul_count as u32),
-                Constraint::Ratio(ul_count as u32, mr_count as u32 + ul_count as u32),
-            ])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100), Constraint::Min(0)])
-            .split(area)
-    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Ratio(mr_count as u32, mr_count as u32 + wt_count as u32),
+            Constraint::Ratio(wt_count as u32, mr_count as u32 + wt_count as u32),
+        ])
+        .split(area);
 
     draw_mr_block(frame, proj, chunks[0], mr_focused);
-
-    if has_unlinked {
-        draw_unlinked_block(frame, proj, chunks[1], !mr_focused);
-    }
+    draw_worktree_block(frame, proj, chunks[1], !mr_focused);
 }
 
 fn draw_mr_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
@@ -411,13 +401,13 @@ fn draw_mr_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bo
     }
 }
 
-fn draw_unlinked_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
+fn draw_worktree_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
     let border_color = if focused { ACCENT } else { Color::Indexed(238) };
-    let ul_count = proj.dashboard.unlinked_instances.len();
+    let wt_count = proj.cached_worktrees.len();
 
     let block = Block::default()
         .title(Line::from(vec![Span::styled(
-            format!(" Opencode ({}) ", ul_count),
+            format!(" Worktrees ({}) ", wt_count),
             Style::default()
                 .fg(border_color)
                 .add_modifier(Modifier::BOLD),
@@ -429,13 +419,24 @@ fn draw_unlinked_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focus
     let section_inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if section_inner.height == 0 || section_inner.width == 0 || ul_count == 0 {
+    if section_inner.height == 0 || section_inner.width == 0 {
+        return;
+    }
+
+    if wt_count == 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Install worktrunk (wt) for worktree listing",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            section_inner,
+        );
         return;
     }
 
     let card_h: u16 = 4;
-    let total_content = ul_count as u16 * card_h;
-    let selected_y = proj.unlinked_selected as u16 * card_h;
+    let total_content = wt_count as u16 * card_h;
+    let selected_y = proj.worktree_selected as u16 * card_h;
 
     let scroll: u16 = if total_content <= section_inner.height {
         0
@@ -445,7 +446,7 @@ fn draw_unlinked_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focus
         ideal.min(max_scroll)
     };
 
-    for (i, unlinked) in proj.dashboard.unlinked_instances.iter().enumerate() {
+    for (i, wt) in proj.cached_worktrees.iter().enumerate() {
         let card_y = i as u16 * card_h;
         let sy = card_y as i32 - scroll as i32;
         if sy + card_h as i32 <= 0 || sy >= section_inner.height as i32 {
@@ -455,13 +456,14 @@ fn draw_unlinked_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focus
             continue;
         }
         let ay = section_inner.y + sy as u16;
-        let is_selected = focused && i == proj.unlinked_selected;
+        let is_selected = focused && i == proj.worktree_selected;
         let rect = Rect::new(section_inner.x, ay, section_inner.width, card_h);
-        render_unlinked_card(frame, unlinked, rect, is_selected);
+        render_worktree_card(frame, wt, rect, is_selected);
     }
 
     if total_content > section_inner.height {
-        let mut scrollbar_state = ScrollbarState::new(ul_count).position(proj.unlinked_selected);
+        let mut scrollbar_state =
+            ScrollbarState::new(wt_count).position(proj.worktree_selected);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -562,9 +564,9 @@ fn render_mr_card(
     frame.render_widget(Paragraph::new(content), card_inner);
 }
 
-fn render_unlinked_card(
+fn render_worktree_card(
     frame: &mut Frame,
-    unlinked: &crate::linking::UnlinkedInstance,
+    wt: &WtWorktree,
     rect: Rect,
     is_selected: bool,
 ) {
@@ -574,20 +576,38 @@ fn render_unlinked_card(
         Color::Indexed(238)
     };
 
-    let branch = unlinked.branch.as_deref().unwrap_or("unknown");
+    let branch = wt.branch.as_deref().unwrap_or("(detached)");
     let label_style = if is_selected {
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD)
+    } else if wt.is_main {
+        Style::default().fg(Color::DarkGray)
     } else {
         Style::default().fg(Color::Gray)
     };
 
+    let mut title_spans = vec![Span::styled(format!(" {} ", branch), label_style)];
+
+    if let Some(ref main) = wt.main {
+        if main.ahead > 0 {
+            title_spans.push(Span::styled(
+                format!("\u{2191}{}", main.ahead),
+                Style::default().fg(Color::Green),
+            ));
+            title_spans.push(Span::raw(" "));
+        }
+        if main.behind > 0 {
+            title_spans.push(Span::styled(
+                format!("\u{2193}{}", main.behind),
+                Style::default().fg(Color::Red),
+            ));
+            title_spans.push(Span::raw(" "));
+        }
+    }
+
     let block = Block::default()
-        .title(Line::from(Span::styled(
-            format!(" {} ", branch),
-            label_style,
-        )))
+        .title(Line::from(title_spans))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
@@ -599,20 +619,30 @@ fn render_unlinked_card(
         return;
     }
 
-    let mut info_spans: Vec<Span> = Vec::new();
-    if let Some(ref wt) = unlinked.worktree {
-        info_spans.push(Span::styled(
-            shorten_path(&wt.path),
-            Style::default().fg(Color::DarkGray),
-        ));
-        info_spans.push(Span::styled(
-            " \u{00b7} ",
-            Style::default().fg(Color::Indexed(238)),
-        ));
+    let mut line1_spans: Vec<Span> = Vec::new();
+    if let Some(ref symbols) = wt.symbols {
+        if !symbols.is_empty() {
+            line1_spans.push(Span::styled(
+                format!("{} ", symbols),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
     }
-    info_spans.push(compact_status_badge(&unlinked.pane.status));
+    let msg = &wt.commit.message;
+    let truncated = if msg.len() > card_inner.width as usize - 4 {
+        format!("{}\u{2026}", &msg[..card_inner.width as usize - 5])
+    } else {
+        msg.clone()
+    };
+    line1_spans.push(Span::styled(truncated, Style::default().fg(Color::Gray)));
 
-    let content = vec![Line::from(vec![]), Line::from(info_spans)];
+    let age = worktrunk::format_age(wt.commit.timestamp);
+    let line2 = Line::from(vec![Span::styled(
+        age,
+        Style::default().fg(Color::DarkGray),
+    )]);
+
+    let content = vec![Line::from(line1_spans), line2];
     frame.render_widget(Paragraph::new(content), card_inner);
 }
 

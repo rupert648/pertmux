@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::WorktreeInfo;
@@ -15,16 +15,8 @@ pub struct LinkedMergeRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct UnlinkedInstance {
-    pub pane: AgentPane,
-    pub worktree: Option<WorktreeInfo>,
-    pub branch: Option<String>,
-}
-
-#[derive(Debug, Clone)]
 pub struct DashboardState {
     pub linked_mrs: Vec<LinkedMergeRequest>,
-    pub unlinked_instances: Vec<UnlinkedInstance>,
 }
 
 pub fn link_all(
@@ -44,12 +36,6 @@ pub fn link_all(
         .filter_map(|pane| canonicalize_path(&pane.pane_path).map(|path| (path, pane)))
         .collect();
 
-    let worktree_by_canonical_path: HashMap<PathBuf, &WorktreeInfo> = worktrees
-        .iter()
-        .filter_map(|wt| canonicalize_path(&wt.path).map(|path| (path, wt)))
-        .collect();
-
-    let mut matched_pane_ids = HashSet::new();
     let mut linked_mrs = Vec::with_capacity(mrs.len());
 
     for mr in mrs {
@@ -57,10 +43,6 @@ pub fn link_all(
         let pane = worktree
             .and_then(|wt| canonicalize_path(&wt.path))
             .and_then(|path| pane_by_canonical_path.get(&path).copied());
-
-        if let Some(found_pane) = pane {
-            matched_pane_ids.insert(found_pane.pane_id.clone());
-        }
 
         let has_new_activity = read_state.has_new_activity(project, mr.iid, mr.user_notes_count)?;
 
@@ -72,29 +54,7 @@ pub fn link_all(
         });
     }
 
-    let mut unlinked_instances = Vec::new();
-    for pane in panes {
-        if matched_pane_ids.contains(&pane.pane_id) {
-            continue;
-        }
-
-        let worktree = canonicalize_path(&pane.pane_path)
-            .and_then(|path| worktree_by_canonical_path.get(&path).copied());
-
-        // Only include panes whose path matches a worktree for this project
-        if let Some(wt) = worktree {
-            unlinked_instances.push(UnlinkedInstance {
-                pane: pane.clone(),
-                worktree: Some(wt.clone()),
-                branch: wt.branch.clone(),
-            });
-        }
-    }
-
-    Ok(DashboardState {
-        linked_mrs,
-        unlinked_instances,
-    })
+    Ok(DashboardState { linked_mrs })
 }
 
 fn canonicalize_path(path: &str) -> Option<PathBuf> {
@@ -187,7 +147,6 @@ mod tests {
             .expect("link_all should succeed");
 
         assert_eq!(state.linked_mrs.len(), 1);
-        assert_eq!(state.unlinked_instances.len(), 0);
 
         let linked = &state.linked_mrs[0];
         assert_eq!(linked.mr.iid, 42);
@@ -199,8 +158,8 @@ mod tests {
     }
 
     #[test]
-    fn test_unlinked_pane() {
-        let db_path = test_db_path("unlinked_pane");
+    fn test_no_mrs_returns_empty() {
+        let db_path = test_db_path("no_mrs");
         let read_state = ReadStateDb::open(Some(&db_path)).expect("Should open test read-state DB");
 
         let worktree = make_worktree("/tmp", Some("feat/solo"));
@@ -209,13 +168,7 @@ mod tests {
         let state = link_all(&[], &[worktree], &[pane], &read_state, "group/project")
             .expect("link_all should succeed");
 
-        assert_eq!(state.linked_mrs.len(), 0);
-        assert_eq!(state.unlinked_instances.len(), 1);
-
-        let unlinked = &state.unlinked_instances[0];
-        assert_eq!(unlinked.pane.pane_id, "%2");
-        assert!(unlinked.worktree.is_some());
-        assert_eq!(unlinked.branch.as_deref(), Some("feat/solo"));
+        assert!(state.linked_mrs.is_empty());
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -229,7 +182,6 @@ mod tests {
             .expect("Empty inputs should not fail");
 
         assert!(state.linked_mrs.is_empty());
-        assert!(state.unlinked_instances.is_empty());
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -252,8 +204,6 @@ mod tests {
         assert!(linked.worktree.is_none());
         assert!(linked.tmux_pane.is_none());
 
-        assert_eq!(state.unlinked_instances.len(), 1);
-
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -273,8 +223,6 @@ mod tests {
         let linked = &state.linked_mrs[0];
         assert!(linked.worktree.is_some());
         assert!(linked.tmux_pane.is_none());
-        // Pane at /var doesn't match any worktree for this project, so it's excluded
-        assert_eq!(state.unlinked_instances.len(), 0);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -301,7 +249,6 @@ mod tests {
         .expect("link_all should succeed");
 
         assert_eq!(state.linked_mrs.len(), 2);
-        assert_eq!(state.unlinked_instances.len(), 0);
 
         assert_eq!(state.linked_mrs[0].mr.iid, 10);
         assert_eq!(
@@ -332,8 +279,6 @@ mod tests {
         assert_eq!(state.linked_mrs.len(), 1);
         assert!(state.linked_mrs[0].worktree.is_some());
         assert!(state.linked_mrs[0].tmux_pane.is_none());
-        // Non-canonicalizable path can't match any worktree, so pane is excluded
-        assert_eq!(state.unlinked_instances.len(), 0);
 
         let _ = std::fs::remove_file(db_path);
     }

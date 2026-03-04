@@ -6,12 +6,13 @@ use crate::gitlab::types::{MergeRequestDetail, MergeRequestSummary, PipelineJob}
 use crate::linking::{link_all, DashboardState};
 use crate::read_state::ReadStateDb;
 use crate::types::{AgentPane, SessionDetail};
+use crate::worktrunk::{self, WtWorktree};
 use crate::{coding_agent, db, tmux};
 use std::time::{Duration, Instant};
 
 pub enum SelectionSection {
     MergeRequests,
-    UnlinkedInstances,
+    Worktrees,
 }
 
 pub struct ProjectState {
@@ -20,9 +21,10 @@ pub struct ProjectState {
     pub cached_mrs: Vec<MergeRequestSummary>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
     pub cached_pipeline_jobs: Vec<PipelineJob>,
+    pub cached_worktrees: Vec<WtWorktree>,
     pub dashboard: DashboardState,
     pub mr_selected: usize,
-    pub unlinked_selected: usize,
+    pub worktree_selected: usize,
     pub selection_section: SelectionSection,
     pub last_detail_refresh: Instant,
 }
@@ -72,12 +74,12 @@ impl App {
                     cached_mrs: vec![],
                     cached_mr_detail: None,
                     cached_pipeline_jobs: vec![],
+                    cached_worktrees: vec![],
                     dashboard: DashboardState {
                         linked_mrs: vec![],
-                        unlinked_instances: vec![],
                     },
                     mr_selected: 0,
-                    unlinked_selected: 0,
+                    worktree_selected: 0,
                     selection_section: SelectionSection::MergeRequests,
                     last_detail_refresh: Instant::now() - Duration::from_secs(120),
                 })
@@ -174,13 +176,6 @@ impl App {
                                 {
                                     proj.mr_selected = proj.dashboard.linked_mrs.len() - 1;
                                 }
-                                if proj.unlinked_selected
-                                    >= proj.dashboard.unlinked_instances.len()
-                                    && !proj.dashboard.unlinked_instances.is_empty()
-                                {
-                                    proj.unlinked_selected =
-                                        proj.dashboard.unlinked_instances.len() - 1;
-                                }
                             }
                             Err(e) => {
                                 link_error = Some(format!("Linking error: {}", e));
@@ -215,9 +210,9 @@ impl App {
                         proj.mr_selected -= 1;
                     }
                 }
-                SelectionSection::UnlinkedInstances => {
-                    if proj.unlinked_selected > 0 {
-                        proj.unlinked_selected -= 1;
+                SelectionSection::Worktrees => {
+                    if proj.worktree_selected > 0 {
+                        proj.worktree_selected -= 1;
                     }
                 }
             }
@@ -237,11 +232,11 @@ impl App {
                         proj.mr_selected += 1;
                     }
                 }
-                SelectionSection::UnlinkedInstances => {
-                    if !proj.dashboard.unlinked_instances.is_empty()
-                        && proj.unlinked_selected < proj.dashboard.unlinked_instances.len() - 1
+                SelectionSection::Worktrees => {
+                    if !proj.cached_worktrees.is_empty()
+                        && proj.worktree_selected < proj.cached_worktrees.len() - 1
                     {
-                        proj.unlinked_selected += 1;
+                        proj.worktree_selected += 1;
                     }
                 }
             }
@@ -254,8 +249,8 @@ impl App {
     pub fn toggle_section(&mut self) {
         if let Some(proj) = self.projects.get_mut(self.active_project) {
             proj.selection_section = match proj.selection_section {
-                SelectionSection::MergeRequests => SelectionSection::UnlinkedInstances,
-                SelectionSection::UnlinkedInstances => SelectionSection::MergeRequests,
+                SelectionSection::MergeRequests => SelectionSection::Worktrees,
+                SelectionSection::Worktrees => SelectionSection::MergeRequests,
             };
         }
     }
@@ -282,11 +277,11 @@ impl App {
                         tmux::switch_to_pane(&pane.pane_id)?;
                     }
                 }
-                SelectionSection::UnlinkedInstances => {
-                    if let Some(unlinked) =
-                        proj.dashboard.unlinked_instances.get(proj.unlinked_selected)
+                SelectionSection::Worktrees => {
+                    if let Some(wt) = proj.cached_worktrees.get(proj.worktree_selected)
+                        && let Some(ref path) = wt.path
                     {
-                        tmux::switch_to_pane(&unlinked.pane.pane_id)?;
+                        tmux::find_or_create_pane(path)?;
                     }
                 }
             }
@@ -373,6 +368,25 @@ impl App {
         }
     }
 
+    pub async fn refresh_worktrees(&mut self) {
+        for proj in &mut self.projects {
+            match worktrunk::fetch_worktrees(&proj.config.local_path).await {
+                Ok(wts) => {
+                    proj.cached_worktrees = wts;
+                    if proj.worktree_selected >= proj.cached_worktrees.len()
+                        && !proj.cached_worktrees.is_empty()
+                    {
+                        proj.worktree_selected = proj.cached_worktrees.len() - 1;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[pertmux] worktrunk error ({}): {}", proj.config.name, e);
+                    proj.cached_worktrees = vec![];
+                }
+            }
+        }
+    }
+
     pub fn seconds_since_refresh(&self) -> u64 {
         self.last_refresh.elapsed().as_secs()
     }
@@ -400,11 +414,10 @@ impl App {
                     .linked_mrs
                     .get(proj.mr_selected)
                     .map(|l| l.mr.source_branch.clone()),
-                SelectionSection::UnlinkedInstances => proj
-                    .dashboard
-                    .unlinked_instances
-                    .get(proj.unlinked_selected)
-                    .and_then(|u| u.branch.clone()),
+                SelectionSection::Worktrees => proj
+                    .cached_worktrees
+                    .get(proj.worktree_selected)
+                    .and_then(|wt| wt.branch.clone()),
             }
         } else {
             None

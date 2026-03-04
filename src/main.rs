@@ -12,6 +12,7 @@ mod read_state;
 mod tmux;
 mod types;
 mod ui;
+mod worktrunk;
 
 use app::App;
 use clap::Parser;
@@ -76,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     app.refresh().await;
+    app.refresh_worktrees().await;
 
     let result = run_loop(&mut terminal, &mut app).await;
 
@@ -89,8 +91,10 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
     let mut event_stream = EventStream::new();
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
     let mut detail_interval = tokio::time::interval(Duration::from_secs(60));
+    let mut worktree_interval = tokio::time::interval(Duration::from_secs(30));
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    worktree_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     while app.running {
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -112,6 +116,7 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
                             KeyCode::Char('r') => {
                                 app.refresh().await;
                                 app.refresh_mrs().await;
+                                app.refresh_worktrees().await;
                             }
                             KeyCode::Char('o') => {
                                 if app.has_projects() {
@@ -136,6 +141,9 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> anyho
             }
             _ = detail_interval.tick() => {
                 app.refresh_mr_detail().await;
+            }
+            _ = worktree_interval.tick() => {
+                app.refresh_worktrees().await;
             }
         }
     }
