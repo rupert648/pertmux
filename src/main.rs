@@ -22,21 +22,28 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "pertmux",
-    about = "TUI dashboard for coding agent sessions in tmux"
+    about = "TUI dashboard for coding agent sessions in tmux",
+    version,
+    subcommand_required = true,
+    arg_required_else_help = true,
 )]
 struct Cli {
-    #[arg(short = 'c', long = "config")]
+    #[arg(short = 'c', long = "config", global = true)]
     config: Option<String>,
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Run as background daemon")]
+    #[command(about = "Start the background daemon")]
     Serve,
+    #[command(about = "Connect TUI client to running daemon")]
+    Connect,
     #[command(about = "Stop the running daemon")]
     Stop,
+    #[command(about = "Show daemon status and socket info")]
+    Status,
 }
 
 #[tokio::main]
@@ -44,11 +51,15 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Serve) => {
+        Commands::Serve => {
             let config = config::load(cli.config.as_deref())?;
             daemon::run(config).await
         }
-        Some(Commands::Stop) => client::stop().await,
-        None => client::run(cli.config.as_deref()).await,
+        Commands::Connect => client::run().await,
+        Commands::Stop => client::stop().await,
+        Commands::Status => {
+            client::status();
+            Ok(())
+        }
     }
 }

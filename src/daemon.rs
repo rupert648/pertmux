@@ -156,7 +156,10 @@ async fn accept_loop(
                 let latest_snapshot = Arc::clone(&latest_snapshot);
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, snapshot_rx, cmd_tx, latest_snapshot).await {
-                        eprintln!("[pertmux-daemon] client error: {}", e);
+                        let msg = e.to_string();
+                        if !msg.contains("Broken pipe") && !msg.contains("Connection reset") {
+                            eprintln!("[pertmux-daemon] client error: {}", e);
+                        }
                     }
                 });
             }

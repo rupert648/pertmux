@@ -6,7 +6,7 @@ This document provides a technical overview of the pertmux codebase for AI agent
 pertmux is a Rust TUI unified SWE dashboard that links GitLab MRs to local branches/worktrees, tmux sessions, and Claude instances. It provides a real-time view of session status, resource usage, and progress with integrated GitLab merge request tracking. The bottom panel provides worktrunk-powered worktree management with create/remove/merge actions. The architecture is pluggable — new coding agents (Claude, Claude Code, etc.) can be added by implementing the `CodingAgent` trait.
 
 ## Architecture
-The project uses a **daemon/client architecture** with Unix socket IPC. A background daemon (`pertmux serve`) owns all data fetching and state, while a lightweight TUI client (`pertmux` with no subcommand) connects to render the UI. This replaces the previous dtach-based persistence approach.
+The project uses a **daemon/client architecture** with Unix socket IPC. A background daemon (`pertmux serve`) owns all data fetching and state, while a lightweight TUI client (`pertmux connect`) connects to render the UI.
 
 ### Daemon/Client Split
 - **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on timers: tmux/agent every 2s, MR detail every 60s, worktrees every 30s. Listens on `/tmp/pertmux-{USER}.sock`.
@@ -16,14 +16,14 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 ### Data Flow
 1. **Daemon startup**: Loads config, validates projects, creates `App`, performs initial fetch of MRs + tmux + worktrees.
 2. **Refresh loops**: Daemon runs tiered timers (2s tmux, 60s MR detail, 30s worktrees). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
-3. **Client connect**: Auto-starts daemon if socket missing (`Command::new(current_exe()).arg("serve")`), retry with exponential backoff. Receives initial snapshot immediately.
+3. **Client connect**: Connects to daemon socket. Fails with clear error if daemon not running. Receives initial snapshot immediately.
 4. **Client commands**: User actions (refresh, worktree create/remove/merge, MR selection) are sent as `ClientMsg` to daemon. Daemon processes, refreshes relevant data, broadcasts updated snapshot.
 5. **tmux actions**: `switch_to_pane()` and `find_or_create_pane()` run client-side — they only need data from the snapshot, not daemon state.
 
 ## Module Guide
-- **main.rs**: Entry point. Uses clap for subcommands: `None` → `client::run()`, `serve` → `daemon::run()`, `stop` → `client::stop()`. Minimal dispatch logic only.
+- **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemon::run()`, `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`. Requires explicit subcommand (no bare `pertmux`).
 - **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals.
-- **client.rs**: TUI client. Connects to daemon (auto-starts if needed), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/h/l/Tab) with no round-trip.
+- **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/h/l/Tab) with no round-trip. Also provides `stop()` and `status()` commands.
 - **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
 - **app.rs**: Owns the `App` struct, which holds data state (panes, projects, MRs, worktrees). Manages refresh cycle, linking, and `snapshot()` method to produce `DashboardSnapshot`. UI-related methods (selection, popup) have moved to `ClientState` in `client.rs`.
 - **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. To add a new agent, implement the trait and register it here.
@@ -54,7 +54,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **Tiered refresh**: Daemon runs timers — tmux/agent every 2s, MR detail every 60s, worktrees every 30s. MR list refreshed on manual 'r' or daemon startup.
 - **Backwards compatibility**: No `[gitlab]` config = v1 behavior unchanged (agent-only mode).
 - **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send) — daemon keeps `App` on main task.
-- **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client auto-starts daemon on first connect.
+- **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client requires daemon to be running (no auto-start).
 - **Socket path**: `/tmp/pertmux-{USER}.sock`. Stale socket cleaned up on daemon startup.
 - **Daemon lifecycle**: Runs until killed or `pertmux stop`. No idle timeout. Single daemon per user.
 
@@ -67,7 +67,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **sysinfo**: Process management and tree traversal.
 - **netstat2**: Socket-to-process mapping.
 - **dirs**: Cross-platform path resolution for the database location.
-- **clap**: CLI argument parsing (subcommands: serve, stop).
+- **clap**: CLI argument parsing (subcommands: serve, connect, stop, status).
 - **toml**: Configuration file parsing.
 - **anyhow**: Error handling.
 - **tokio**: Async runtime (full features). Used for daemon event loop and client I/O.
@@ -78,9 +78,10 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 
 ## Build & Run
 - **Build**: `cargo build --release`
-- **Run client**: `pertmux` (auto-starts daemon if not running)
-- **Run daemon**: `pertmux serve` (or auto-started by client)
+- **Start daemon**: `pertmux serve`
+- **Connect client**: `pertmux connect` (daemon must be running)
 - **Stop daemon**: `pertmux stop`
+- **Check status**: `pertmux status`
 - **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. opencode) to be running in other tmux panes to display data.
 - **Edition**: Rust 2024.
 

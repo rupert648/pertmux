@@ -13,7 +13,6 @@ use crossterm::{
 use futures::{SinkExt, StreamExt};
 use ratatui::prelude::*;
 use std::io;
-use std::path::Path;
 use std::time::Instant;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -314,9 +313,15 @@ impl ClientState {
     }
 }
 
-pub async fn run(config_path: Option<&str>) -> Result<()> {
+pub async fn run() -> Result<()> {
     let sock_path = daemon::socket_path();
-    let stream = connect_or_start_daemon(&sock_path, config_path).await?;
+    let stream = match UnixStream::connect(&sock_path).await {
+        Ok(s) => s,
+        Err(_) => {
+            show_connection_error(&sock_path);
+            return Ok(());
+        }
+    };
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     let handshake = ClientMsg::Handshake {
@@ -345,43 +350,36 @@ pub async fn run(config_path: Option<&str>) -> Result<()> {
 
 pub async fn stop() -> Result<()> {
     let sock_path = daemon::socket_path();
-    let stream = UnixStream::connect(&sock_path).await?;
+    let stream = UnixStream::connect(&sock_path).await.map_err(|_| {
+        anyhow::anyhow!("no daemon running at {}", sock_path.display())
+    })?;
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
+
+    // Drain the initial snapshot the daemon sends on connect,
+    // otherwise our Stop message is never read.
+    let _ = framed.next().await;
+
     let msg = ClientMsg::Stop;
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
+    println!("daemon stopped");
     Ok(())
 }
 
-async fn connect_or_start_daemon(sock_path: &Path, config_path: Option<&str>) -> Result<UnixStream> {
-    if let Ok(stream) = UnixStream::connect(sock_path).await {
-        return Ok(stream);
+pub fn status() {
+    let sock_path = daemon::socket_path();
+    println!("socket: {}", sock_path.display());
+    println!("log:    /tmp/pertmux-daemon.log");
+
+    if !sock_path.exists() {
+        println!("daemon: not running (no socket)");
+        return;
     }
 
-    eprintln!("[pertmux] starting daemon...");
-    let exe = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("serve");
-    if let Some(p) = config_path {
-        cmd.args(["-c", p]);
+    let probe = std::os::unix::net::UnixStream::connect(&sock_path);
+    match probe {
+        Ok(_) => println!("daemon: running"),
+        Err(_) => println!("daemon: stale socket (not responding)"),
     }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/pertmux-daemon.log")?,
-        ));
-    cmd.spawn()?;
-
-    for delay_ms in &[100, 200, 400, 800, 1600] {
-        tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
-        if let Ok(stream) = UnixStream::connect(sock_path).await {
-            return Ok(stream);
-        }
-    }
-
-    anyhow::bail!("failed to connect to daemon after starting it")
 }
 
 async fn wait_for_initial_snapshot(
@@ -609,4 +607,69 @@ fn focus_selected(state: &ClientState) -> Result<()> {
 async fn send_msg(framed: &mut Framed<UnixStream, LengthDelimitedCodec>, msg: ClientMsg) -> Result<()> {
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
     Ok(())
+}
+
+fn show_connection_error(sock_path: &std::path::Path) {
+    use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::layout::{Alignment, Constraint, Layout};
+
+    let _ = enable_raw_mode();
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(stdout);
+    let Ok(mut terminal) = Terminal::new(backend) else { return };
+
+    let _ = terminal.draw(|frame| {
+        let area = frame.area();
+        let vertical = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(9),
+            Constraint::Fill(1),
+        ]).split(area);
+        let horizontal = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(52),
+            Constraint::Fill(1),
+        ]).split(vertical[1]);
+        let rect = horizontal[1];
+
+        let accent = Color::Rgb(255, 140, 0);
+        let block = Block::default()
+            .title(Line::from(Span::styled(
+                " pertmux ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            )))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(accent));
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "daemon is not running",
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("start with: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("pertmux serve", Style::default().fg(accent)),
+            ]),
+            Line::from(Span::styled(
+                format!("socket:     {}", sock_path.display()),
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("press any key to close", Style::default().fg(Color::DarkGray))),
+        ];
+
+        let paragraph = Paragraph::new(lines).block(block).alignment(Alignment::Center);
+        frame.render_widget(paragraph, rect);
+    });
+
+    let _ = crossterm::event::read();
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
 }

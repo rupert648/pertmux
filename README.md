@@ -11,6 +11,33 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs
 - **Coding agent monitoring** — track Claude/opencode instances across tmux panes
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    pertmux serve                        │
+│                     (daemon)                            │
+│                                                         │
+│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
+│  │  tmux   │  │  GitLab  │  │ worktrunk│  │  agent  │ │
+│  │  poll   │  │   API    │  │   CLI    │  │  status │ │
+│  │  (2s)   │  │  (60s)   │  │  (30s)   │  │  (2s)   │ │
+│  └────┬────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
+│       └─────────┬──┴─────────────┴──────────────┘      │
+│                 ▼                                        │
+│         DashboardSnapshot                               │
+│                 │                                        │
+│    Unix socket  │  /tmp/pertmux-{USER}.sock             │
+└─────────────────┼───────────────────────────────────────┘
+                  │  broadcast (multi-client)
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │ connect │ │ connect │ │ connect │
+   │ (TUI)   │ │ (TUI)   │ │ (TUI)   │
+   └─────────�� └─────────┘ └─────────┘
+```
+
 ## Setup
 
 ### Prerequisites
@@ -37,36 +64,32 @@ Add to your `~/.tmux.conf` for a popup overlay (recommended):
 
 ```tmux
 # pertmux dashboard popup (prefix+a toggles open/close)
-bind-key a display-popup -h 80% -w 80% -E "pertmux"
+bind-key a display-popup -h 80% -w 80% -E "pertmux connect"
 ```
 
-- `prefix+a` opens the TUI client as a popup overlay
-- A background daemon starts automatically on first connect (or use `pertmux serve` to start manually)
-- The daemon keeps all data fresh — the client connects instantly with zero startup delay
-- `prefix+a` again closes the popup; next open reconnects to the running daemon
+- `prefix+a` opens the TUI client, connecting to the running daemon
+- `prefix+a` again closes the popup; next open reconnects instantly
 - `q`/`Esc` quits the client (daemon keeps running)
 
-### Daemon management
+### Commands
 
 ```sh
-# Start the daemon explicitly (normally auto-started by the client)
-pertmux serve
-
-# Stop a running daemon
-pertmux stop
-
-# Start with a specific config file
-pertmux -c ./path/to/config.toml serve
+pertmux serve              # start the background daemon
+pertmux connect            # open TUI client (connects to running daemon)
+pertmux stop               # stop the daemon
+pertmux status             # show socket path, daemon state
+pertmux --version          # show version
+pertmux -c config.toml serve  # start daemon with specific config
 ```
 
-The daemon logs to `/tmp/pertmux-daemon.log` and listens on `/tmp/pertmux-{USER}.sock`.
+The daemon must be started before connecting. It logs to `/tmp/pertmux-daemon.log` and listens on `/tmp/pertmux-{USER}.sock`.
 
 ## Configuration
 
 pertmux works out of the box with zero configuration for basic agent monitoring. For GitLab MR tracking and multi-project support, create a TOML config file.
 
 ```
-pertmux -c ./path/to/config.toml
+pertmux -c ./path/to/config.toml serve
 ```
 
 If no `-c` flag is provided, pertmux looks for `~/.config/pertmux/pertmux.toml`. If that file doesn't exist, defaults are used.
