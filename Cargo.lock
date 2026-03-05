@@ -1423,6 +1423,7 @@ name = "pertmux"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "crossterm",
  "dirs",
@@ -1435,6 +1436,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+ "tokio-util",
  "toml",
  "ureq",
 ]

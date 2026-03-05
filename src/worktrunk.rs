@@ -1,9 +1,9 @@
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WtCommit {
     pub sha: String,
@@ -14,7 +14,7 @@ pub struct WtCommit {
     pub timestamp: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct WtDiff {
     #[serde(default)]
@@ -23,7 +23,7 @@ pub struct WtDiff {
     pub deleted: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct WtWorkingTree {
     #[serde(default)]
@@ -40,7 +40,7 @@ pub struct WtWorkingTree {
     pub diff: Option<WtDiff>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WtMain {
     #[serde(default)]
     pub ahead: u64,
@@ -48,7 +48,7 @@ pub struct WtMain {
     pub behind: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct WtRemote {
     #[serde(default)]
@@ -61,7 +61,7 @@ pub struct WtRemote {
     pub behind: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct WtWorktreeState {
     #[serde(default)]
@@ -70,7 +70,7 @@ pub struct WtWorktreeState {
     pub detached: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WtWorktree {
     pub branch: Option<String>,

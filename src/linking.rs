@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +7,7 @@ use crate::gitlab::types::MergeRequestSummary;
 use crate::read_state::ReadStateDb;
 use crate::types::AgentPane;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkedMergeRequest {
     pub mr: MergeRequestSummary,
     pub worktree: Option<WorktreeInfo>,
@@ -14,7 +15,7 @@ pub struct LinkedMergeRequest {
     pub has_new_activity: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardState {
     pub linked_mrs: Vec<LinkedMergeRequest>,
 }

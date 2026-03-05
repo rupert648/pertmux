@@ -9,7 +9,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs
 - **Multi-project support** — tab between projects with `h`/`l` keys
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
 - **Coding agent monitoring** — track Claude/opencode instances across tmux panes
-- **Persistent popup** — runs as a tmux popup overlay via `dtach`, instant re-open
+- **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
 ## Setup
 
@@ -17,7 +17,6 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs
 
 - [tmux](https://github.com/tmux/tmux) 3.2+ (for popup support)
 - [worktrunk](https://github.com/max-sixty/worktrunk) (optional) — enables the worktree management panel. Install with `cargo install worktrunk` and ensure `wt` is on your PATH.
-- [dtach](https://github.com/crigler/dtach) (optional) — keeps pertmux running between popup invocations. `brew install dtach`.
 
 ### Install
 
@@ -37,19 +36,30 @@ cargo build --release
 Add to your `~/.tmux.conf` for a popup overlay (recommended):
 
 ```tmux
-# pertmux dashboard popup (prefix + P)
-bind-key P display-popup -h 80% -w 80% -E "dtach -A /tmp/pertmux.sock pertmux"
+# pertmux dashboard popup (prefix+a toggles open/close)
+bind-key a display-popup -h 80% -w 80% -E "pertmux"
 ```
 
-- First open: pertmux starts and fetches data
-- Subsequent opens: instant reattach (dtach keeps it running)
-- `Ctrl+\` detaches (preserves state), `q` fully quits
+- `prefix+a` opens the TUI client as a popup overlay
+- A background daemon starts automatically on first connect (or use `pertmux serve` to start manually)
+- The daemon keeps all data fresh — the client connects instantly with zero startup delay
+- `prefix+a` again closes the popup; next open reconnects to the running daemon
+- `q`/`Esc` quits the client (daemon keeps running)
 
-Without dtach, replace with:
+### Daemon management
 
-```tmux
-bind-key P display-popup -h 80% -w 80% -E "pertmux"
+```sh
+# Start the daemon explicitly (normally auto-started by the client)
+pertmux serve
+
+# Stop a running daemon
+pertmux stop
+
+# Start with a specific config file
+pertmux -c ./path/to/config.toml serve
 ```
+
+The daemon logs to `/tmp/pertmux-daemon.log` and listens on `/tmp/pertmux-{USER}.sock`.
 
 ## Configuration
 
@@ -155,7 +165,8 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 | `c` | Worktree panel | Create new worktree |
 | `d` | Worktree panel | Delete selected worktree |
 | `m` | Worktree panel | Merge selected worktree into default branch |
-| `q` | Global | Quit (or detach if using dtach) |
+| `q`/`Esc` | Global | Quit client (daemon keeps running) |
+| `prefix+a` | tmux | Toggle dashboard popup |
 
 ### Pipeline Visualization
 

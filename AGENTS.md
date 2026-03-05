@@ -6,21 +6,26 @@ This document provides a technical overview of the pertmux codebase for AI agent
 pertmux is a Rust TUI unified SWE dashboard that links GitLab MRs to local branches/worktrees, tmux sessions, and Claude instances. It provides a real-time view of session status, resource usage, and progress with integrated GitLab merge request tracking. The bottom panel provides worktrunk-powered worktree management with create/remove/merge actions. The architecture is pluggable — new coding agents (Claude, Claude Code, etc.) can be added by implementing the `CodingAgent` trait.
 
 ## Architecture
-The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sync), MR list on manual refresh, selected MR detail every 60s, and worktrees every 30s (all async via tokio).
+The project uses a **daemon/client architecture** with Unix socket IPC. A background daemon (`pertmux serve`) owns all data fetching and state, while a lightweight TUI client (`pertmux` with no subcommand) connects to render the UI. This replaces the previous dtach-based persistence approach.
+
+### Daemon/Client Split
+- **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on timers: tmux/agent every 2s, MR detail every 60s, worktrees every 30s. Listens on `/tmp/pertmux-{USER}.sock`.
+- **Client** (`client.rs`): Lightweight TUI. Owns all UI state (`ClientState`: selection indices, popup state, notifications). Connects to daemon via Unix socket, receives `DashboardSnapshot` updates, sends commands (`Refresh`, `CreateWorktree`, etc.). Navigation is instant with no daemon round-trip.
+- **Protocol** (`protocol.rs`): Defines `DashboardSnapshot`, `ProjectSnapshot`, `ClientMsg`, `DaemonMsg`. Framed with `LengthDelimitedCodec` + `serde_json`. Multi-client via `tokio::sync::broadcast`.
 
 ### Data Flow
-1. **tmux discovery**: List all tmux panes running registered coding agent processes.
-2. **Agent status query**: Each agent handles its own port detection and API communication via the `CodingAgent` trait.
-3. **GitLab fetch**: Query GitLab API for open merge requests, detail, and notes (async reqwest).
-4. **Worktree fetch**: Query worktrunk CLI (`wt list --format=json`) for worktree status per project (async, 30s timer + manual 'r').
-5. **Linking**: `link_all()` connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude instances.
-6. **DB enrichment**: Query the local Claude SQLite database for session metadata (directory, tokens, messages).
-7. **Read state**: Track per-comment read/unread status via local SQLite DB.
-8. **TUI render**: Display the aggregated data in a responsive layout with MR-first list and detail panels.
+1. **Daemon startup**: Loads config, validates projects, creates `App`, performs initial fetch of MRs + tmux + worktrees.
+2. **Refresh loops**: Daemon runs tiered timers (2s tmux, 60s MR detail, 30s worktrees). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
+3. **Client connect**: Auto-starts daemon if socket missing (`Command::new(current_exe()).arg("serve")`), retry with exponential backoff. Receives initial snapshot immediately.
+4. **Client commands**: User actions (refresh, worktree create/remove/merge, MR selection) are sent as `ClientMsg` to daemon. Daemon processes, refreshes relevant data, broadcasts updated snapshot.
+5. **tmux actions**: `switch_to_pane()` and `find_or_create_pane()` run client-side — they only need data from the snapshot, not daemon state.
 
 ## Module Guide
-- **main.rs**: Entry point. Handles terminal initialization (raw mode, alternate screen) and the main event loop (200ms poll for input, 2s refresh). Routes keyboard input to popup state or normal navigation.
-- **app.rs**: Owns the `App` struct, which holds the entire application state. Manages the refresh cycle, selection logic, popup state (`PopupState` enum for create/remove/merge worktree dialogs), and grouping of panes by tmux session.
+- **main.rs**: Entry point. Uses clap for subcommands: `None` → `client::run()`, `serve` → `daemon::run()`, `stop` → `client::stop()`. Minimal dispatch logic only.
+- **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals.
+- **client.rs**: TUI client. Connects to daemon (auto-starts if needed), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/h/l/Tab) with no round-trip.
+- **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
+- **app.rs**: Owns the `App` struct, which holds data state (panes, projects, MRs, worktrees). Manages refresh cycle, linking, and `snapshot()` method to produce `DashboardSnapshot`. UI-related methods (selection, popup) have moved to `ClientState` in `client.rs`.
 - **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. To add a new agent, implement the trait and register it here.
 - **coding_agent/Claude.rs**: Claude implementation of `CodingAgent`. Handles Claude-specific HTTP API communication and status interpretation.
 - **tmux.rs**: Wraps tmux CLI commands. Responsible for identifying coding agent panes (filtered by registered process names), switching focus between them, and `find_or_create_pane()` which searches all sessions for matching paths before creating new windows (prefers project-named sessions).
@@ -28,7 +33,7 @@ The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sy
 - **config.rs**: Defines `Config`, `AgentConfig`, `ProjectConfig`, `ProjectSource` enum, and per-agent config structs. Loads from TOML with `-c`/`--config` CLI flag or `~/.config/pertmux/pertmux.toml`. Validates local_path existence, source configuration, and project name uniqueness at startup.
 - **db.rs**: Manages read-only access to the Claude SQLite database. Fetches session details and enriches pane information.
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
-- **ui.rs**: Contains all `ratatui` rendering logic. Separates the UI layout into a list panel (left) and a detail panel (right). Includes popup overlay rendering for worktree actions, notification toasts, and adaptive tab truncation for many projects.
+- **ui.rs**: Contains all `ratatui` rendering logic. Entry point is `draw_client(frame, &ClientState)`. Uses `ProjectRenderData` adapter to bridge `ProjectSnapshot` data to shared rendering functions. Includes popup overlay, notification toasts, and adaptive tab truncation.
 - **worktrunk.rs**: Serde types for `wt list --format=json` output (`WtWorktree`, `WtCommit`, `WtMain`, etc.). Async functions: `fetch_worktrees()`, `create_worktree()`, `remove_worktree()`, `merge_worktree()`. Includes `format_age()` helper and 9 unit tests.
 - **linking.rs**: Defines `DashboardState`, `LinkedMergeRequest`. Implements `link_all()` which connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude.
 - **gitlab/mod.rs**, **gitlab/client.rs**, **gitlab/types.rs**: GitLab API client. `GitLabClient` fetches MR list, detail, and notes via reqwest. DTOs: `MergeRequestSummary`, `MergeRequestDetail`, `MergeRequestNote`.
@@ -46,40 +51,49 @@ The project uses a tiered refresh architecture: tmux/Claude polling every 2s (sy
 - **Responsive Layout**: The UI adapts to landscape and portrait terminal dimensions.
 - **Process Tree Walking**: Port discovery relies on finding the specific child process of the tmux pane that owns the API socket.
 - **MR-first layout**: When `[gitlab]` is configured, the primary list entity is open GitLab MRs. Worktrees appear in a dedicated bottom section with navigation and actions.
-- **Tiered refresh**: tmux/Claude every 2s (sync), MR list on manual 'r', selected MR detail every 60s (async reqwest), worktrees every 30s + manual 'r'.
-- **Backwards compatibility**: No `[gitlab]` config = v1 behavior unchanged.
-- **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send).
-- **dtach Persistence**: Recommended tmux integration uses `dtach` to keep pertmux running between popup invocations. Ctrl+\ detaches (preserves state), q fully quits.
+- **Tiered refresh**: Daemon runs timers — tmux/agent every 2s, MR detail every 60s, worktrees every 30s. MR list refreshed on manual 'r' or daemon startup.
+- **Backwards compatibility**: No `[gitlab]` config = v1 behavior unchanged (agent-only mode).
+- **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send) — daemon keeps `App` on main task.
+- **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client auto-starts daemon on first connect.
+- **Socket path**: `/tmp/pertmux-{USER}.sock`. Stale socket cleaned up on daemon startup.
+- **Daemon lifecycle**: Runs until killed or `pertmux stop`. No idle timeout. Single daemon per user.
 
 ## Dependencies
 - **ratatui**: TUI framework for rendering.
 - **crossterm**: Terminal abstraction for raw mode and event handling.
-- **ureq**: Minimal, synchronous HTTP client for API calls.
+- **ureq**: Minimal, synchronous HTTP client for agent API calls.
 - **rusqlite**: SQLite bindings (using the `bundled` feature).
-- **serde / serde_json**: Serialization for API responses and worktrunk JSON.
+- **serde / serde_json**: Serialization for API responses, worktrunk JSON, and daemon/client IPC.
 - **sysinfo**: Process management and tree traversal.
 - **netstat2**: Socket-to-process mapping.
 - **dirs**: Cross-platform path resolution for the database location.
-- **clap**: CLI argument parsing.
+- **clap**: CLI argument parsing (subcommands: serve, stop).
 - **toml**: Configuration file parsing.
 - **anyhow**: Error handling.
-- **tokio**: Async runtime (full features).
+- **tokio**: Async runtime (full features). Used for daemon event loop and client I/O.
+- **tokio-util**: `LengthDelimitedCodec` for daemon/client IPC framing.
+- **bytes**: Byte buffer for IPC messages.
 - **reqwest**: Async HTTP client for GitLab API (json feature).
-- **futures**: StreamExt for crossterm EventStream.
+- **futures**: StreamExt for crossterm EventStream and IPC streams.
 
 ## Build & Run
 - **Build**: `cargo build --release`
-- **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. Claude) to be running in other tmux panes to display data.
+- **Run client**: `pertmux` (auto-starts daemon if not running)
+- **Run daemon**: `pertmux serve` (or auto-started by client)
+- **Stop daemon**: `pertmux stop`
+- **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. opencode) to be running in other tmux panes to display data.
 - **Edition**: Rust 2024.
 
 ## Important Paths & Endpoints
-- **Database**: `~/.local/share/Claude/Claude.db`
+- **Daemon socket**: `/tmp/pertmux-{USER}.sock`
+- **Daemon log**: `/tmp/pertmux-daemon.log`
+- **Database**: `~/.local/share/opencode/opencode.db`
 - **API Endpoint**: `http://127.0.0.1:{port}/session/status`
 - **GitLab API**: `https://{host}/api/v4/projects/{project}/merge_requests`
 - **Read state DB**: `~/.local/share/pertmux/read_state.db`
 
 ## Conventions
-- All application state must reside in the `App` struct.
+- Data state (panes, projects, MRs) resides in the `App` struct (daemon-side). UI state (selection, popup, notification) resides in `ClientState` (client-side).
 - UI rendering logic in `ui.rs` should be pure and not trigger side effects.
 - Status priority for display: Busy > Retry > Idle > Unknown.
 - `link_all()` is pure logic — receives pre-fetched data, no I/O except read_state queries.

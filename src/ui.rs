@@ -1,5 +1,8 @@
-use crate::app::{App, PopupState, ProjectState, SelectionSection};
-use crate::gitlab::types::PipelineJob;
+use crate::app::{PopupState, SelectionSection};
+use crate::client::ClientState;
+use crate::gitlab::types::{MergeRequestDetail, PipelineJob};
+use crate::linking::DashboardState;
+use crate::protocol::ProjectSnapshot;
 use crate::types::{PaneStatus, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
 use ratatui::{
@@ -16,11 +19,40 @@ use ratatui::{
 const ACCENT: Color = Color::Rgb(255, 140, 0);
 const NOTIFICATION_DURATION: std::time::Duration = std::time::Duration::from_secs(2);
 
+struct ProjectRenderData<'a> {
+    dashboard: &'a DashboardState,
+    cached_worktrees: &'a [WtWorktree],
+    cached_mr_detail: Option<&'a MergeRequestDetail>,
+    cached_pipeline_jobs: &'a [PipelineJob],
+    mr_selected: usize,
+    worktree_selected: usize,
+    mr_focused: bool,
+}
+
+impl<'a> ProjectRenderData<'a> {
+    fn from_snapshot(
+        proj: &'a ProjectSnapshot,
+        mr_selected: usize,
+        worktree_selected: usize,
+        section: &'a SelectionSection,
+    ) -> Self {
+        Self {
+            dashboard: &proj.dashboard,
+            cached_worktrees: &proj.cached_worktrees,
+            cached_mr_detail: proj.cached_mr_detail.as_ref(),
+            cached_pipeline_jobs: &proj.cached_pipeline_jobs,
+            mr_selected,
+            worktree_selected,
+            mr_focused: matches!(section, SelectionSection::MergeRequests),
+        }
+    }
+}
+
 fn is_landscape(area: Rect) -> bool {
     area.width >= area.height * 2
 }
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw_client(frame: &mut Frame, state: &ClientState) {
     let area = frame.area();
 
     if is_landscape(area) {
@@ -28,54 +60,61 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(area);
-        draw_list_panel(frame, app, chunks[0]);
-        draw_detail_panel(frame, app, chunks[1]);
+        draw_list_panel_client(frame, state, chunks[0]);
+        draw_detail_panel_client(frame, state, chunks[1]);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
             .split(area);
-        draw_list_panel(frame, app, chunks[0]);
-        draw_detail_panel(frame, app, chunks[1]);
+        draw_list_panel_client(frame, state, chunks[0]);
+        draw_detail_panel_client(frame, state, chunks[1]);
     }
 
-    draw_notification(frame, app, area);
-    draw_popup(frame, app, area);
+    draw_notification_client(frame, state, area);
+    draw_popup_client(frame, state, area);
 }
 
 // ─── List panel ───────────────────────────────────────────────────────────────
 
-fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let title_right = if let Some(proj) = app.active_project() {
+fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let title_right = if let Some(proj) = state.snapshot.projects.get(state.active_project) {
         let mr_count = proj.dashboard.linked_mrs.len();
         format!(
             " {} MR{}  {}s ago ",
             mr_count,
             if mr_count == 1 { "" } else { "s" },
-            app.seconds_since_refresh(),
+            state.snapshot.seconds_since_refresh,
         )
     } else {
         format!(
             " {} pane{}  {}s ago ",
-            app.panes.len(),
-            if app.panes.len() == 1 { "" } else { "s" },
-            app.seconds_since_refresh(),
+            state.snapshot.panes.len(),
+            if state.snapshot.panes.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            state.snapshot.seconds_since_refresh,
         )
     };
 
-    let in_worktrees = app
-        .active_project()
-        .is_some_and(|p| matches!(p.selection_section, SelectionSection::Worktrees));
+    let in_worktrees = state.snapshot.projects.get(state.active_project).is_some_and(|_| {
+        matches!(
+            state.selection_section.get(state.active_project),
+            Some(SelectionSection::Worktrees)
+        )
+    });
 
-    let hint_bottom = if app.has_projects() {
+    let hint_bottom = if !state.snapshot.projects.is_empty() {
         let mut hints = vec![
-            Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
+            Span::styled(" ↑↓", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" nav  ", Style::default().fg(Color::DarkGray)),
             Span::styled("Tab", Style::default().fg(ACCENT)),
             Span::styled(" switch  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
+            Span::styled("⏎", Style::default().fg(ACCENT)),
             Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
@@ -93,7 +132,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         }
         hints.push(Span::styled("b", Style::default().fg(ACCENT)));
         hints.push(Span::styled(" branch  ", Style::default().fg(Color::DarkGray)));
-        if app.projects.len() > 1 {
+        if state.snapshot.projects.len() > 1 {
             hints.push(Span::styled("h", Style::default().fg(ACCENT)));
             hints.push(Span::styled("/", Style::default().fg(Color::DarkGray)));
             hints.push(Span::styled("l", Style::default().fg(ACCENT)));
@@ -104,11 +143,11 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(hints)
     } else {
         Line::from(vec![
-            Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
+            Span::styled(" ↑↓", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" navigate  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
+            Span::styled("⏎", Style::default().fg(ACCENT)),
             Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
             Span::styled("r", Style::default().fg(ACCENT)),
             Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
@@ -121,9 +160,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         .title(Line::from(vec![
             Span::styled(
                 " pert",
-                Style::default()
-                    .fg(ACCENT)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "mux ",
@@ -148,7 +185,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if let Some(ref error) = app.error {
+    if let Some(ref error) = state.snapshot.error {
         let msg = Paragraph::new(Line::from(Span::styled(
             error.as_str(),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -157,22 +194,43 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    if let Some(proj) = app.active_project() {
-        if app.projects.len() > 1 {
+    if let Some(proj) = state.snapshot.projects.get(state.active_project) {
+        if state.snapshot.projects.len() > 1 {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)])
                 .split(inner);
-            draw_project_tabs(frame, app, chunks[0]);
-            draw_mr_sections(frame, proj, chunks[1]);
+            draw_project_tabs_client(frame, state, chunks[0]);
+            let section = state
+                .selection_section
+                .get(state.active_project)
+                .unwrap_or(&SelectionSection::MergeRequests);
+            draw_mr_sections_client(
+                frame,
+                proj,
+                *state.mr_selected.get(state.active_project).unwrap_or(&0),
+                *state.worktree_selected.get(state.active_project).unwrap_or(&0),
+                section,
+                chunks[1],
+            );
         } else {
-            draw_mr_sections(frame, proj, inner);
+            let section = state
+                .selection_section
+                .get(state.active_project)
+                .unwrap_or(&SelectionSection::MergeRequests);
+            draw_mr_sections_client(
+                frame,
+                proj,
+                *state.mr_selected.get(state.active_project).unwrap_or(&0),
+                *state.worktree_selected.get(state.active_project).unwrap_or(&0),
+                section,
+                inner,
+            );
         }
         return;
     }
 
-    // V1 mode: no projects — original pane list
-    if app.panes.is_empty() {
+    if state.snapshot.panes.is_empty() {
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -192,46 +250,33 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let mut flat_idx: usize = 0;
 
-    for (session_name, pane_indices) in &app.groups {
+    for (session_name, pane_indices) in &state.snapshot.groups {
         lines.push(Line::from(vec![
-            Span::styled("  \u{25aa} ", Style::default().fg(ACCENT)),
+            Span::styled("  ▪ ", Style::default().fg(ACCENT)),
             Span::styled(
                 session_name.as_str(),
-                Style::default()
-                    .fg(ACCENT)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
         ]));
 
         for &idx in pane_indices {
-            let pane = &app.panes[idx];
-            let is_selected = flat_idx == app.selected;
+            let pane = &state.snapshot.panes[idx];
+            let is_selected = flat_idx == state.selected;
             flat_idx += 1;
 
-            let cursor = if is_selected { "\u{25b8} " } else { "  " };
+            let cursor = if is_selected { "▸ " } else { "  " };
             let badge = status_badge(&pane.status);
 
-            let title_color = if is_selected {
-                Color::White
-            } else {
-                Color::Gray
-            };
+            let title_color = if is_selected { Color::White } else { Color::Gray };
 
             let mut spans = vec![
                 Span::styled(
                     format!("    {}", cursor),
-                    Style::default().fg(if is_selected {
-                        ACCENT
-                    } else {
-                        Color::DarkGray
-                    }),
+                    Style::default().fg(if is_selected { ACCENT } else { Color::DarkGray }),
                 ),
                 badge,
                 Span::raw(" "),
-                Span::styled(
-                    pane.display_title().to_string(),
-                    Style::default().fg(title_color),
-                ),
+                Span::styled(pane.display_title().to_string(), Style::default().fg(title_color)),
             ];
 
             if is_selected {
@@ -247,10 +292,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
                 pane.display_agent().to_string(),
                 Style::default().fg(Color::DarkGray),
             ));
-            detail_parts.push(Span::styled(
-                " \u{00b7} ",
-                Style::default().fg(Color::Indexed(238)),
-            ));
+            detail_parts.push(Span::styled(" · ", Style::default().fg(Color::Indexed(238))));
             detail_parts.push(Span::styled(
                 pane.display_model().to_string(),
                 Style::default().fg(Color::DarkGray),
@@ -259,10 +301,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
             if (pane.status == PaneStatus::Idle || pane.status == PaneStatus::Unknown)
                 && let Some(ago) = pane.time_ago()
             {
-                detail_parts.push(Span::styled(
-                    " \u{00b7} ",
-                    Style::default().fg(Color::Indexed(238)),
-                ));
+                detail_parts.push(Span::styled(" · ", Style::default().fg(Color::Indexed(238))));
                 detail_parts.push(Span::styled(ago, Style::default().fg(Color::DarkGray)));
             }
 
@@ -280,7 +319,7 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
                         preview.to_string()
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("          \u{25b9} ", Style::default().fg(Color::Green)),
+                        Span::styled("          ▹ ", Style::default().fg(Color::Green)),
                         Span::styled(truncated, Style::default().fg(Color::Indexed(250))),
                     ]));
                 }
@@ -293,9 +332,9 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     let visible_height = inner.height as usize;
     let scroll = compute_scroll(
         &lines,
-        app.selected,
-        &app.groups,
-        &app.panes,
+        state.selected,
+        &state.snapshot.groups,
+        &state.snapshot.panes,
         visible_height,
     );
 
@@ -303,20 +342,21 @@ fn draw_list_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn draw_project_tabs(frame: &mut Frame, app: &App, area: Rect) {
-    let n = app.projects.len();
+fn draw_project_tabs_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let n = state.snapshot.projects.len();
     let dividers = n.saturating_sub(1);
     let max_per_tab = (area.width as usize).saturating_sub(dividers) / n.max(1);
 
-    let titles: Vec<Line> = app
+    let titles: Vec<Line> = state
+        .snapshot
         .projects
         .iter()
         .map(|p| {
-            let name = &p.config.name;
+            let name = &p.name;
             let pad = 2;
             let max_name = max_per_tab.saturating_sub(pad);
             if name.len() > max_name && max_name > 2 {
-                Line::from(format!(" {}\u{2026}", &name[..max_name - 1]))
+                Line::from(format!(" {}…", &name[..max_name - 1]))
             } else {
                 Line::from(format!(" {} ", name))
             }
@@ -329,15 +369,26 @@ fn draw_project_tabs(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         )
-        .select(app.active_project)
+        .select(state.active_project)
         .style(Style::default().fg(Color::DarkGray))
-        .divider(Span::styled("\u{2502}", Style::default().fg(Color::Indexed(238))));
+        .divider(Span::styled("│", Style::default().fg(Color::Indexed(238))));
 
     frame.render_widget(tabs, area);
 }
 
-fn draw_mr_sections(frame: &mut Frame, proj: &ProjectState, area: Rect) {
-    let mr_focused = matches!(proj.selection_section, SelectionSection::MergeRequests);
+fn draw_mr_sections_client(
+    frame: &mut Frame,
+    proj: &ProjectSnapshot,
+    mr_selected: usize,
+    worktree_selected: usize,
+    section: &SelectionSection,
+    area: Rect,
+) {
+    let render = ProjectRenderData::from_snapshot(proj, mr_selected, worktree_selected, section);
+    draw_mr_sections_render(frame, &render, area);
+}
+
+fn draw_mr_sections_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, area: Rect) {
     let mr_count = proj.dashboard.linked_mrs.len().max(1) as u16;
     let wt_count = proj.cached_worktrees.len().max(1) as u16;
 
@@ -349,11 +400,16 @@ fn draw_mr_sections(frame: &mut Frame, proj: &ProjectState, area: Rect) {
         ])
         .split(area);
 
-    draw_mr_block(frame, proj, chunks[0], mr_focused);
-    draw_worktree_block(frame, proj, chunks[1], !mr_focused);
+    draw_mr_block_render(frame, proj, chunks[0], proj.mr_focused);
+    draw_worktree_block_render(frame, proj, chunks[1], !proj.mr_focused);
 }
 
-fn draw_mr_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
+fn draw_mr_block_render(
+    frame: &mut Frame,
+    proj: &ProjectRenderData<'_>,
+    area: Rect,
+    focused: bool,
+) {
     let border_color = if focused { ACCENT } else { Color::Indexed(238) };
     let mr_count = proj.dashboard.linked_mrs.len();
 
@@ -428,7 +484,12 @@ fn draw_mr_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bo
     }
 }
 
-fn draw_worktree_block(frame: &mut Frame, proj: &ProjectState, area: Rect, focused: bool) {
+fn draw_worktree_block_render(
+    frame: &mut Frame,
+    proj: &ProjectRenderData<'_>,
+    area: Rect,
+    focused: bool,
+) {
     let border_color = if focused { ACCENT } else { Color::Indexed(238) };
     let wt_count = proj.cached_worktrees.len();
 
@@ -765,16 +826,26 @@ fn job_status_color(status: &str) -> Color {
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
-fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
-    if let Some(proj) = app.active_project() {
-        draw_mr_detail_panel(frame, proj, area);
+fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    if let Some(proj) = state.snapshot.projects.get(state.active_project) {
+        let section = state
+            .selection_section
+            .get(state.active_project)
+            .unwrap_or(&SelectionSection::MergeRequests);
+        draw_mr_detail_panel_client(
+            frame,
+            proj,
+            *state.mr_selected.get(state.active_project).unwrap_or(&0),
+            *state.worktree_selected.get(state.active_project).unwrap_or(&0),
+            section,
+            area,
+        );
         return;
     }
 
-    // V1 mode: show opencode session detail
-    let panel_title = if let Some(pane) = app.panes.get(app.selected) {
+    let panel_title = if let Some(pane) = state.snapshot.panes.get(state.selected) {
         format!(
-            " {} \u{2014} {}:{}.{} ",
+            " {} — {}:{}.{} ",
             pane.display_title(),
             pane.session_name,
             pane.window_index,
@@ -799,7 +870,7 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let Some(detail) = &app.detail else {
+    let Some(detail) = &state.snapshot.detail else {
         let msg = Paragraph::new(Span::styled(
             "  No session data available.",
             Style::default().fg(Color::DarkGray),
@@ -822,7 +893,19 @@ fn draw_detail_panel(frame: &mut Frame, app: &App, area: Rect) {
 
 // ─── MR Detail panel ─────────────────────────────────────────────────────────
 
-fn draw_mr_detail_panel(frame: &mut Frame, proj: &ProjectState, area: Rect) {
+fn draw_mr_detail_panel_client(
+    frame: &mut Frame,
+    proj: &ProjectSnapshot,
+    mr_selected: usize,
+    worktree_selected: usize,
+    section: &SelectionSection,
+    area: Rect,
+) {
+    let render = ProjectRenderData::from_snapshot(proj, mr_selected, worktree_selected, section);
+    draw_mr_detail_panel_render(frame, &render, area);
+}
+
+fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, area: Rect) {
     let panel_title = if let Some(linked) = proj.dashboard.linked_mrs.get(proj.mr_selected) {
         let title = truncate(&linked.mr.title, area.width.saturating_sub(10) as usize);
         format!(" !{} {} ", linked.mr.iid, title)
@@ -899,7 +982,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, proj: &ProjectState, area: Rect) {
         ),
     ]));
 
-    if let Some(ref detail) = proj.cached_mr_detail {
+    if let Some(detail) = proj.cached_mr_detail {
         if detail.iid == mr.iid {
             if let Some(ref merge_status) = detail.detailed_merge_status {
                 lines.push(Line::from(vec![
@@ -930,7 +1013,7 @@ fn draw_mr_detail_panel(frame: &mut Frame, proj: &ProjectState, area: Rect) {
             }
 
             if !proj.cached_pipeline_jobs.is_empty() {
-                lines.extend(render_pipeline_dots(&proj.cached_pipeline_jobs));
+                lines.extend(render_pipeline_dots(proj.cached_pipeline_jobs));
             }
         }
     }
@@ -1181,8 +1264,8 @@ fn draw_message_timeline(frame: &mut Frame, detail: &SessionDetail, area: Rect) 
 
 // ─── Notification toast ───────────────────────────────────────────────────────
 
-fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
-    let Some((ref msg, at)) = app.notification else {
+fn draw_notification_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let Some((ref msg, at)) = state.notification else {
         return;
     };
     if at.elapsed() > NOTIFICATION_DURATION {
@@ -1211,15 +1294,12 @@ fn draw_notification(frame: &mut Frame, app: &App, area: Rect) {
 
 // ─── Popup ────────────────────────────────────────────────────────────────────
 
-fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
-    let (title, body_lines, show_cursor) = match &app.popup {
+fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None => return,
         PopupState::CreateWorktree { input } => {
             let lines = vec![
-                Line::from(Span::styled(
-                    "Branch name:",
-                    Style::default().fg(Color::Gray),
-                )),
+                Line::from(Span::styled("Branch name:", Style::default().fg(Color::Gray))),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled(
@@ -1228,11 +1308,11 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+                    Span::styled("█", Style::default().fg(ACCENT)),
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Enter confirm \u{00b7} Esc cancel",
+                    "Enter confirm · Esc cancel",
                     Style::default().fg(Color::DarkGray),
                 )),
             ];
@@ -1257,7 +1337,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Enter confirm \u{00b7} Esc cancel",
+                    "Enter confirm · Esc cancel",
                     Style::default().fg(Color::DarkGray),
                 )),
             ];
@@ -1282,7 +1362,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Enter confirm \u{00b7} Esc cancel",
+                    "Enter confirm · Esc cancel",
                     Style::default().fg(Color::DarkGray),
                 )),
             ];
@@ -1299,9 +1379,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(Line::from(Span::styled(
             title,
-            Style::default()
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

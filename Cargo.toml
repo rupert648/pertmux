@@ -19,3 +19,5 @@ sysinfo = "0.33"
 netstat2 = "0.11"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"

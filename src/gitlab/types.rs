@@ -1,20 +1,20 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabUser {
     pub id: u64,
     pub username: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineInfo {
     pub id: u64,
     pub status: String,
     pub web_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestSummary {
     pub iid: u64,
     pub title: String,
@@ -31,7 +31,7 @@ pub struct MergeRequestSummary {
     pub has_conflicts: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestDetail {
     pub iid: u64,
     pub title: String,
@@ -51,7 +51,7 @@ pub struct MergeRequestDetail {
     pub head_pipeline: Option<PipelineInfo>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestNote {
     pub id: u64,
     pub body: String,
@@ -60,7 +60,7 @@ pub struct MergeRequestNote {
     pub system: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineJob {
     pub id: u64,
     pub name: String,

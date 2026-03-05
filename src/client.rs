@@ -1,0 +1,612 @@
+use crate::app::{PopupState, SelectionSection};
+use crate::daemon;
+use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION};
+use crate::tmux;
+use crate::ui;
+use anyhow::Result;
+use bytes::Bytes;
+use crossterm::{
+    event::{Event, EventStream, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use futures::{SinkExt, StreamExt};
+use ratatui::prelude::*;
+use std::io;
+use std::path::Path;
+use std::time::Instant;
+use tokio::net::UnixStream;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+pub struct ClientState {
+    pub snapshot: DashboardSnapshot,
+    pub active_project: usize,
+    pub mr_selected: Vec<usize>,
+    pub worktree_selected: Vec<usize>,
+    pub selection_section: Vec<SelectionSection>,
+    pub selected: usize,
+    pub popup: PopupState,
+    pub notification: Option<(String, Instant)>,
+    pub running: bool,
+}
+
+impl ClientState {
+    fn from_snapshot(snapshot: DashboardSnapshot) -> Self {
+        let n = snapshot.projects.len();
+        Self {
+            snapshot,
+            active_project: 0,
+            mr_selected: vec![0; n],
+            worktree_selected: vec![0; n],
+            selection_section: (0..n).map(|_| SelectionSection::MergeRequests).collect(),
+            selected: 0,
+            popup: PopupState::None,
+            notification: None,
+            running: true,
+        }
+    }
+
+    fn update_snapshot(&mut self, snapshot: DashboardSnapshot) {
+        while self.mr_selected.len() < snapshot.projects.len() {
+            self.mr_selected.push(0);
+            self.worktree_selected.push(0);
+            self.selection_section.push(SelectionSection::MergeRequests);
+        }
+
+        for (i, proj) in snapshot.projects.iter().enumerate() {
+            if self.mr_selected[i] >= proj.dashboard.linked_mrs.len()
+                && !proj.dashboard.linked_mrs.is_empty()
+            {
+                self.mr_selected[i] = proj.dashboard.linked_mrs.len() - 1;
+            }
+            if self.worktree_selected[i] >= proj.cached_worktrees.len()
+                && !proj.cached_worktrees.is_empty()
+            {
+                self.worktree_selected[i] = proj.cached_worktrees.len() - 1;
+            }
+        }
+
+        if self.active_project >= snapshot.projects.len() && !snapshot.projects.is_empty() {
+            self.active_project = snapshot.projects.len() - 1;
+        }
+        if self.selected >= snapshot.panes.len() && !snapshot.panes.is_empty() {
+            self.selected = snapshot.panes.len() - 1;
+        }
+
+        self.snapshot = snapshot;
+    }
+
+    fn has_projects(&self) -> bool {
+        !self.snapshot.projects.is_empty()
+    }
+
+    fn active_project(&self) -> Option<&crate::protocol::ProjectSnapshot> {
+        self.snapshot.projects.get(self.active_project)
+    }
+
+    fn has_popup(&self) -> bool {
+        !matches!(self.popup, PopupState::None)
+    }
+
+    fn move_up(&mut self) {
+        if let Some(proj) = self.snapshot.projects.get(self.active_project) {
+            match self
+                .selection_section
+                .get(self.active_project)
+                .unwrap_or(&SelectionSection::MergeRequests)
+            {
+                SelectionSection::MergeRequests => {
+                    if self.mr_selected[self.active_project] > 0 {
+                        self.mr_selected[self.active_project] -= 1;
+                    }
+                }
+                SelectionSection::Worktrees => {
+                    if self.worktree_selected[self.active_project] > 0 {
+                        self.worktree_selected[self.active_project] -= 1;
+                    }
+                }
+            }
+
+            if self.mr_selected[self.active_project] >= proj.dashboard.linked_mrs.len()
+                && !proj.dashboard.linked_mrs.is_empty()
+            {
+                self.mr_selected[self.active_project] = proj.dashboard.linked_mrs.len() - 1;
+            }
+        } else if !self.snapshot.panes.is_empty() && self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if let Some(proj) = self.snapshot.projects.get(self.active_project) {
+            match self
+                .selection_section
+                .get(self.active_project)
+                .unwrap_or(&SelectionSection::MergeRequests)
+            {
+                SelectionSection::MergeRequests => {
+                    if !proj.dashboard.linked_mrs.is_empty()
+                        && self.mr_selected[self.active_project] < proj.dashboard.linked_mrs.len() - 1
+                    {
+                        self.mr_selected[self.active_project] += 1;
+                    }
+                }
+                SelectionSection::Worktrees => {
+                    if !proj.cached_worktrees.is_empty()
+                        && self.worktree_selected[self.active_project] < proj.cached_worktrees.len() - 1
+                    {
+                        self.worktree_selected[self.active_project] += 1;
+                    }
+                }
+            }
+        } else if !self.snapshot.panes.is_empty() && self.selected < self.snapshot.panes.len() - 1 {
+            self.selected += 1;
+        }
+    }
+
+    fn toggle_section(&mut self) {
+        if self.snapshot.projects.get(self.active_project).is_some() {
+            let section = self
+                .selection_section
+                .get_mut(self.active_project)
+                .expect("selection section exists for project");
+            *section = match section {
+                SelectionSection::MergeRequests => SelectionSection::Worktrees,
+                SelectionSection::Worktrees => SelectionSection::MergeRequests,
+            };
+        }
+    }
+
+    fn next_project(&mut self) {
+        if !self.snapshot.projects.is_empty() && self.active_project < self.snapshot.projects.len() - 1 {
+            self.active_project += 1;
+        }
+    }
+
+    fn prev_project(&mut self) {
+        if self.active_project > 0 {
+            self.active_project -= 1;
+        }
+    }
+
+    fn current_mr_iid(&self) -> Option<u64> {
+        let proj = self.active_project()?;
+        if !matches!(
+            self.selection_section.get(self.active_project),
+            Some(SelectionSection::MergeRequests)
+        ) {
+            return None;
+        }
+        proj.dashboard
+            .linked_mrs
+            .get(*self.mr_selected.get(self.active_project).unwrap_or(&0))
+            .map(|l| l.mr.iid)
+    }
+
+    fn open_selected_mr_in_browser(&self) {
+        if let Some(proj) = self.snapshot.projects.get(self.active_project)
+            && let Some(linked) = proj
+                .dashboard
+                .linked_mrs
+                .get(*self.mr_selected.get(self.active_project).unwrap_or(&0))
+        {
+            let url = &linked.mr.web_url;
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let _ = std::process::Command::new("open").arg(url).spawn();
+        }
+    }
+
+    fn copy_selected_branch(&mut self) {
+        let branch = if let Some(proj) = self.snapshot.projects.get(self.active_project) {
+            match self
+                .selection_section
+                .get(self.active_project)
+                .unwrap_or(&SelectionSection::MergeRequests)
+            {
+                SelectionSection::MergeRequests => proj
+                    .dashboard
+                    .linked_mrs
+                    .get(*self.mr_selected.get(self.active_project).unwrap_or(&0))
+                    .map(|l| l.mr.source_branch.clone()),
+                SelectionSection::Worktrees => proj
+                    .cached_worktrees
+                    .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+                    .and_then(|wt| wt.branch.clone()),
+            }
+        } else {
+            None
+        };
+
+        if let Some(branch) = branch {
+            let ok = std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    if let Some(ref mut stdin) = child.stdin {
+                        stdin.write_all(branch.as_bytes())?;
+                    }
+                    child.wait()
+                })
+                .is_ok();
+            if ok {
+                self.notification = Some((format!("Copied: {}", branch), Instant::now()));
+            }
+        }
+    }
+
+    fn open_create_popup(&mut self) {
+        if let Some(_proj) = self.snapshot.projects.get(self.active_project)
+            && matches!(
+                self.selection_section.get(self.active_project),
+                Some(SelectionSection::Worktrees)
+            )
+        {
+            self.popup = PopupState::CreateWorktree {
+                input: String::new(),
+            };
+        }
+    }
+
+    fn open_remove_popup(&mut self) {
+        if let Some(proj) = self.snapshot.projects.get(self.active_project)
+            && matches!(
+                self.selection_section.get(self.active_project),
+                Some(SelectionSection::Worktrees)
+            )
+            && let Some(wt) = proj
+                .cached_worktrees
+                .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+        {
+            if wt.is_main {
+                self.notification = Some(("Cannot remove main worktree".into(), Instant::now()));
+                return;
+            }
+            if let Some(ref branch) = wt.branch {
+                self.popup = PopupState::ConfirmRemove {
+                    branch: branch.clone(),
+                };
+            }
+        }
+    }
+
+    fn open_merge_popup(&mut self) {
+        if let Some(proj) = self.snapshot.projects.get(self.active_project)
+            && matches!(
+                self.selection_section.get(self.active_project),
+                Some(SelectionSection::Worktrees)
+            )
+            && let Some(wt) = proj
+                .cached_worktrees
+                .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+        {
+            if wt.is_main {
+                self.notification = Some(("Cannot merge main worktree".into(), Instant::now()));
+                return;
+            }
+            if let (Some(branch), Some(path)) = (&wt.branch, &wt.path) {
+                self.popup = PopupState::ConfirmMerge {
+                    branch: branch.clone(),
+                    worktree_path: path.clone(),
+                };
+            }
+        }
+    }
+
+    fn popup_input_push(&mut self, ch: char) {
+        if let PopupState::CreateWorktree { ref mut input } = self.popup {
+            input.push(ch);
+        }
+    }
+
+    fn popup_input_pop(&mut self) {
+        if let PopupState::CreateWorktree { ref mut input } = self.popup {
+            input.pop();
+        }
+    }
+
+    fn close_popup(&mut self) {
+        self.popup = PopupState::None;
+    }
+}
+
+pub async fn run(config_path: Option<&str>) -> Result<()> {
+    let sock_path = daemon::socket_path();
+    let stream = connect_or_start_daemon(&sock_path, config_path).await?;
+    let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
+
+    let handshake = ClientMsg::Handshake {
+        version: PROTOCOL_VERSION,
+    };
+    framed
+        .send(Bytes::from(serde_json::to_vec(&handshake)?))
+        .await?;
+
+    let initial_snapshot = wait_for_initial_snapshot(&mut framed).await?;
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut state = ClientState::from_snapshot(initial_snapshot);
+    let result = run_client_loop(&mut terminal, &mut state, &mut framed).await;
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    result
+}
+
+pub async fn stop() -> Result<()> {
+    let sock_path = daemon::socket_path();
+    let stream = UnixStream::connect(&sock_path).await?;
+    let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
+    let msg = ClientMsg::Stop;
+    framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
+    Ok(())
+}
+
+async fn connect_or_start_daemon(sock_path: &Path, config_path: Option<&str>) -> Result<UnixStream> {
+    if let Ok(stream) = UnixStream::connect(sock_path).await {
+        return Ok(stream);
+    }
+
+    eprintln!("[pertmux] starting daemon...");
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("serve");
+    if let Some(p) = config_path {
+        cmd.args(["-c", p]);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/pertmux-daemon.log")?,
+        ));
+    cmd.spawn()?;
+
+    for delay_ms in &[100, 200, 400, 800, 1600] {
+        tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+        if let Ok(stream) = UnixStream::connect(sock_path).await {
+            return Ok(stream);
+        }
+    }
+
+    anyhow::bail!("failed to connect to daemon after starting it")
+}
+
+async fn wait_for_initial_snapshot(
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+) -> Result<DashboardSnapshot> {
+    while let Some(frame) = framed.next().await {
+        let bytes = frame?;
+        let msg: DaemonMsg = serde_json::from_slice(&bytes)?;
+        match msg {
+            DaemonMsg::Snapshot(snap) => return Ok(snap),
+            DaemonMsg::HandshakeAck { .. } => {}
+            DaemonMsg::ActionResult { ok, message } => {
+                if !ok {
+                    anyhow::bail!(message);
+                }
+            }
+        }
+    }
+    anyhow::bail!("daemon disconnected before initial snapshot")
+}
+
+async fn run_client_loop(
+    terminal: &mut Terminal<impl Backend>,
+    state: &mut ClientState,
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+) -> Result<()> {
+    let mut event_stream = EventStream::new();
+
+    while state.running {
+        terminal.draw(|frame| ui::draw_client(frame, state))?;
+
+        tokio::select! {
+            maybe_event = event_stream.next() => {
+                match maybe_event {
+                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                        handle_key(state, framed, key.code).await?;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => {}
+                    None => break,
+                }
+            }
+            msg = framed.next() => {
+                match msg {
+                    Some(Ok(bytes)) => {
+                        let daemon_msg: DaemonMsg = serde_json::from_slice(&bytes)?;
+                        match daemon_msg {
+                            DaemonMsg::Snapshot(snap) => {
+                                state.update_snapshot(snap);
+                            }
+                            DaemonMsg::ActionResult { ok, message } => {
+                                state.notification = Some((message, Instant::now()));
+                                if ok {
+                                    state.popup = PopupState::None;
+                                }
+                            }
+                            DaemonMsg::HandshakeAck { .. } => {}
+                        }
+                    }
+                    Some(Err(_)) => break,
+                    None => {
+                        anyhow::bail!("daemon disconnected");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_key(
+    state: &mut ClientState,
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    code: KeyCode,
+) -> Result<()> {
+    if state.has_popup() {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Enter => {
+                if let Some(msg) = popup_action_msg(state) {
+                    send_msg(framed, msg).await?;
+                }
+            }
+            KeyCode::Backspace => state.popup_input_pop(),
+            KeyCode::Char(ch) => {
+                if matches!(state.popup, PopupState::CreateWorktree { .. }) {
+                    state.popup_input_push(ch);
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    match code {
+        KeyCode::Char('q') | KeyCode::Esc => state.running = false,
+        KeyCode::Up | KeyCode::Char('k') => {
+            let before = state.current_mr_iid();
+            state.move_up();
+            maybe_send_select_mr(state, framed, before).await?;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let before = state.current_mr_iid();
+            state.move_down();
+            maybe_send_select_mr(state, framed, before).await?;
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            let before = state.current_mr_iid();
+            state.prev_project();
+            maybe_send_select_mr(state, framed, before).await?;
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            let before = state.current_mr_iid();
+            state.next_project();
+            maybe_send_select_mr(state, framed, before).await?;
+        }
+        KeyCode::Tab => {
+            let before = state.current_mr_iid();
+            state.toggle_section();
+            maybe_send_select_mr(state, framed, before).await?;
+        }
+        KeyCode::Enter => {
+            if let Err(e) = focus_selected(state) {
+                state.notification = Some((format!("Focus failed: {}", e), Instant::now()));
+            }
+        }
+        KeyCode::Char('r') => send_msg(framed, ClientMsg::Refresh).await?,
+        KeyCode::Char('o') => {
+            if state.has_projects() {
+                state.open_selected_mr_in_browser();
+            }
+        }
+        KeyCode::Char('b') => {
+            if state.has_projects() {
+                state.copy_selected_branch();
+            }
+        }
+        KeyCode::Char('c') => state.open_create_popup(),
+        KeyCode::Char('d') => state.open_remove_popup(),
+        KeyCode::Char('m') => state.open_merge_popup(),
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
+    let project_idx = state.active_project;
+    match &state.popup {
+        PopupState::CreateWorktree { input } => {
+            let branch = input.trim().to_string();
+            if branch.is_empty() {
+                return None;
+            }
+            Some(ClientMsg::CreateWorktree {
+                project_idx,
+                branch,
+            })
+        }
+        PopupState::ConfirmRemove { branch } => Some(ClientMsg::RemoveWorktree {
+            project_idx,
+            branch: branch.clone(),
+        }),
+        PopupState::ConfirmMerge { worktree_path, .. } => Some(ClientMsg::MergeWorktree {
+            project_idx,
+            worktree_path: worktree_path.clone(),
+        }),
+        PopupState::None => None,
+    }
+}
+
+async fn maybe_send_select_mr(
+    state: &ClientState,
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    before: Option<u64>,
+) -> Result<()> {
+    let after = state.current_mr_iid();
+    if after != before && let Some(mr_iid) = after {
+        send_msg(
+            framed,
+            ClientMsg::SelectMr {
+                project_idx: state.active_project,
+                mr_iid,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn focus_selected(state: &ClientState) -> Result<()> {
+    if let Some(proj) = state.snapshot.projects.get(state.active_project) {
+        match state
+            .selection_section
+            .get(state.active_project)
+            .unwrap_or(&SelectionSection::MergeRequests)
+        {
+            SelectionSection::MergeRequests => {
+                if let Some(linked) = proj
+                    .dashboard
+                    .linked_mrs
+                    .get(*state.mr_selected.get(state.active_project).unwrap_or(&0))
+                    && let Some(pane) = linked.tmux_pane.as_ref()
+                {
+                    tmux::switch_to_pane(&pane.pane_id)?;
+                }
+            }
+            SelectionSection::Worktrees => {
+                if let Some(wt) = proj
+                    .cached_worktrees
+                    .get(*state.worktree_selected.get(state.active_project).unwrap_or(&0))
+                    && let Some(ref path) = wt.path
+                {
+                    tmux::find_or_create_pane(path, &proj.name)?;
+                }
+            }
+        }
+    } else if let Some(pane) = state.snapshot.panes.get(state.selected) {
+        tmux::switch_to_pane(&pane.pane_id)?;
+    }
+    Ok(())
+}
+
+async fn send_msg(framed: &mut Framed<UnixStream, LengthDelimitedCodec>, msg: ClientMsg) -> Result<()> {
+    framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
+    Ok(())
+}

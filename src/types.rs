@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PaneStatus {
     Idle,
     Busy,
@@ -6,7 +8,7 @@ pub enum PaneStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct AgentPane {
     pub pane_id: String,
@@ -71,7 +73,7 @@ impl AgentPane {
 }
 
 /// Detailed information about a session, shown in the detail panel.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct SessionDetail {
     pub session_id: String,
@@ -90,7 +92,7 @@ pub struct SessionDetail {
 }
 
 /// A single message turn for the timeline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct MessageSummary {
     pub role: String,
@@ -102,7 +104,7 @@ pub struct MessageSummary {
 }
 
 /// A todo item from the session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct TodoItem {
     pub content: String,

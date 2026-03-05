@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WorktreeInfo {
     pub path: String,              // Absolute, canonicalized filesystem path
