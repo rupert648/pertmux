@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum ProjectSource {
+pub enum ProjectForge {
     Gitlab,
     Github,
 }
@@ -31,10 +31,29 @@ impl GitLabSourceConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubSourceConfig {
+    #[serde(default = "default_github_host")]
+    pub host: String,
+    pub token: Option<String>,
+}
+
+fn default_github_host() -> String {
+    "github.com".to_string()
+}
+
+impl GitHubSourceConfig {
+    pub fn api_token(&self) -> Option<String> {
+        std::env::var("PERTMUX_GITHUB_TOKEN")
+            .ok()
+            .or_else(|| self.token.clone())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
-    pub source: ProjectSource,
+    pub source: ProjectForge,
     pub project: String,
     pub local_path: String,
     pub username: Option<String>,
@@ -46,6 +65,7 @@ pub struct Config {
     pub refresh_interval: u64,
     pub agent: AgentConfig,
     pub gitlab: Option<GitLabSourceConfig>,
+    pub github: Option<GitHubSourceConfig>,
     pub project: Option<Vec<ProjectConfig>>,
 }
 
@@ -68,6 +88,7 @@ impl Default for Config {
             refresh_interval: 2,
             agent: AgentConfig::default(),
             gitlab: None,
+            github: None,
             project: None,
         }
     }
@@ -92,7 +113,7 @@ impl Config {
                 let name = project.split('/').last().unwrap_or(project).to_string();
                 return vec![ProjectConfig {
                     name,
-                    source: ProjectSource::Gitlab,
+                    source: ProjectForge::Gitlab,
                     project: project.clone(),
                     local_path: local_path.clone(),
                     username: gl.username.clone(),
@@ -130,7 +151,7 @@ impl Config {
             }
 
             match proj.source {
-                ProjectSource::Gitlab => {
+                ProjectForge::Gitlab => {
                     if self.gitlab.is_none() {
                         errors.push(format!(
                             "config: project '{}' has source=\"gitlab\" but no [gitlab] section.\n\
@@ -139,11 +160,14 @@ impl Config {
                         ));
                     }
                 }
-                ProjectSource::Github => {
-                    errors.push(format!(
-                        "config: project '{}' has source=\"github\" which is not yet supported.",
-                        proj.name,
-                    ));
+                ProjectForge::Github => {
+                    if self.github.is_none() {
+                        errors.push(format!(
+                            "config: project '{}' has source=\"github\" but no [github] section.\n\
+                             hint: add a [github] section with token.",
+                            proj.name,
+                        ));
+                    }
                 }
             }
         }
@@ -153,6 +177,16 @@ impl Config {
                 errors.push(
                     "config: [gitlab] has no token and PERTMUX_GITLAB_TOKEN is not set.\n\
                      hint: add token to [gitlab] or export PERTMUX_GITLAB_TOKEN."
+                        .into(),
+                );
+            }
+        }
+
+        if let Some(ref gh) = self.github {
+            if gh.api_token().is_none() {
+                errors.push(
+                    "config: [github] has no token and PERTMUX_GITHUB_TOKEN is not set.\n\
+                     hint: add token to [github] or export PERTMUX_GITHUB_TOKEN."
                         .into(),
                 );
             }
@@ -225,7 +259,7 @@ username = "alice"
         );
         let projects = cfg.resolve_projects();
         assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].source, ProjectSource::Gitlab);
+        assert_eq!(projects[0].source, ProjectForge::Gitlab);
         assert_eq!(projects[0].project, "team/project");
         assert_eq!(projects[0].local_path, "/tmp/test-repo");
         assert_eq!(projects[0].username, Some("alice".to_string()));
@@ -381,7 +415,7 @@ local_path = "/tmp/b"
     }
 
     #[test]
-    fn test_validate_github_not_supported() {
+    fn test_validate_github_missing_section() {
         let cfg = load_from_str(
             r#"
 [[project]]
@@ -392,7 +426,86 @@ local_path = "/tmp/gh"
 "#,
         );
         let err = cfg.validate().unwrap_err();
-        assert!(err.to_string().contains("not yet supported"));
+        assert!(err.to_string().contains("no [github] section"));
+    }
+
+    #[test]
+    fn test_validate_github_missing_token() {
+        if std::env::var("PERTMUX_GITHUB_TOKEN").is_ok() {
+            return;
+        }
+        let cfg = load_from_str(
+            r#"
+[github]
+host = "github.com"
+
+[[project]]
+name = "GH"
+source = "github"
+project = "org/repo"
+local_path = "/tmp"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("PERTMUX_GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_validate_github_passes() {
+        let cfg = load_from_str(
+            r#"
+[github]
+token = "ghp_test"
+
+[[project]]
+name = "GH"
+source = "github"
+project = "org/repo"
+local_path = "/tmp"
+"#,
+        );
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_github_default_host() {
+        let cfg = load_from_str(
+            r#"
+[github]
+token = "ghp_test"
+"#,
+        );
+        assert_eq!(cfg.github.unwrap().host, "github.com");
+    }
+
+    #[test]
+    fn test_mixed_forge_projects() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "gl-token"
+
+[github]
+token = "ghp-token"
+
+[[project]]
+name = "GL Project"
+source = "gitlab"
+project = "team/gl-app"
+local_path = "/tmp/gl"
+
+[[project]]
+name = "GH Project"
+source = "github"
+project = "org/gh-app"
+local_path = "/tmp/gh"
+"#,
+        );
+        let projects = cfg.resolve_projects();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].source, ProjectForge::Gitlab);
+        assert_eq!(projects[1].source, ProjectForge::Github);
     }
 
     #[test]

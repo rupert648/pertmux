@@ -6,8 +6,7 @@ mod daemon;
 mod db;
 mod discovery;
 mod git;
-#[allow(unused)]
-mod gitlab;
+mod forge_clients;
 mod linking;
 mod protocol;
 #[allow(unused)]

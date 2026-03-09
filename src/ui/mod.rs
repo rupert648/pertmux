@@ -1,6 +1,6 @@
 use crate::app::SelectionSection;
 use crate::client::ClientState;
-use crate::gitlab::types::{MergeRequestDetail, PipelineJob};
+use crate::forge_clients::types::{MergeRequestDetail, PipelineJob};
 use crate::linking::DashboardState;
 use crate::protocol::ProjectSnapshot;
 use crate::worktrunk::WtWorktree;

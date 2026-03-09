@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitLabUser {
+pub struct ForgeUser {
     pub id: u64,
     pub username: String,
     pub name: String,
@@ -21,7 +21,7 @@ pub struct MergeRequestSummary {
     pub state: String,
     pub source_branch: String,
     pub target_branch: String,
-    pub author: GitLabUser,
+    pub author: ForgeUser,
     pub draft: bool,
     pub user_notes_count: u32,
     pub web_url: String,
@@ -38,7 +38,7 @@ pub struct MergeRequestDetail {
     pub state: String,
     pub source_branch: String,
     pub target_branch: String,
-    pub author: GitLabUser,
+    pub author: ForgeUser,
     pub draft: bool,
     pub user_notes_count: u32,
     pub web_url: String,
@@ -46,16 +46,17 @@ pub struct MergeRequestDetail {
     pub updated_at: String,
     pub detailed_merge_status: Option<String>,
     pub has_conflicts: Option<bool>,
-    pub assignees: Vec<GitLabUser>,
-    pub reviewers: Vec<GitLabUser>,
+    pub assignees: Vec<ForgeUser>,
+    pub reviewers: Vec<ForgeUser>,
     pub head_pipeline: Option<PipelineInfo>,
+    pub head_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestNote {
     pub id: u64,
     pub body: String,
-    pub author: GitLabUser,
+    pub author: ForgeUser,
     pub created_at: String,
     pub system: bool,
 }
@@ -303,5 +304,22 @@ mod tests {
         assert_eq!(mr.assignees[0].username, "alice");
         assert_eq!(mr.assignees[1].username, "bob");
         assert!(mr.head_pipeline.is_none());
+    }
+
+    #[test]
+    fn test_mr_detail_with_head_sha() {
+        let json = r#"{
+            "iid": 1, "title": "test", "state": "opened",
+            "source_branch": "feat", "target_branch": "main",
+            "author": {"id": 1, "username": "u", "name": "User"},
+            "draft": false, "user_notes_count": 0,
+            "web_url": "https://x", "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "detailed_merge_status": null, "has_conflicts": null,
+            "assignees": [], "reviewers": [], "head_pipeline": null,
+            "head_sha": "abc123def456"
+        }"#;
+        let mr: MergeRequestDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(mr.head_sha, Some("abc123def456".to_string()));
     }
 }

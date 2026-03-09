@@ -1,4 +1,4 @@
-use crate::gitlab::types::PipelineJob;
+use crate::forge_clients::types::PipelineJob;
 use crate::ui::ACCENT;
 use ratatui::{
     style::{Color, Style},
