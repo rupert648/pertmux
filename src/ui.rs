@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Tabs,
+        ScrollbarState,
     },
     Frame,
 };
@@ -61,14 +61,14 @@ pub fn draw_client(frame: &mut Frame, state: &ClientState) {
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(area);
         draw_list_panel_client(frame, state, chunks[0]);
-        draw_detail_panel_client(frame, state, chunks[1]);
+        draw_right_panel_client(frame, state, chunks[1]);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(area);
         draw_list_panel_client(frame, state, chunks[0]);
-        draw_detail_panel_client(frame, state, chunks[1]);
+        draw_right_panel_client(frame, state, chunks[1]);
     }
 
     draw_notification_client(frame, state, area);
@@ -133,10 +133,8 @@ fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
         hints.push(Span::styled("b", Style::default().fg(ACCENT)));
         hints.push(Span::styled(" branch  ", Style::default().fg(Color::DarkGray)));
         if state.snapshot.projects.len() > 1 {
-            hints.push(Span::styled("h", Style::default().fg(ACCENT)));
-            hints.push(Span::styled("/", Style::default().fg(Color::DarkGray)));
-            hints.push(Span::styled("l", Style::default().fg(ACCENT)));
-            hints.push(Span::styled(" tab  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled("f", Style::default().fg(ACCENT)));
+            hints.push(Span::styled(" filter  ", Style::default().fg(Color::DarkGray)));
         }
         hints.push(Span::styled("q", Style::default().fg(ACCENT)));
         hints.push(Span::styled(" quit ", Style::default().fg(Color::DarkGray)));
@@ -195,38 +193,18 @@ fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     }
 
     if let Some(proj) = state.snapshot.projects.get(state.active_project) {
-        if state.snapshot.projects.len() > 1 {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(0)])
-                .split(inner);
-            draw_project_tabs_client(frame, state, chunks[0]);
-            let section = state
-                .selection_section
-                .get(state.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests);
-            draw_mr_sections_client(
-                frame,
-                proj,
-                *state.mr_selected.get(state.active_project).unwrap_or(&0),
-                *state.worktree_selected.get(state.active_project).unwrap_or(&0),
-                section,
-                chunks[1],
-            );
-        } else {
-            let section = state
-                .selection_section
-                .get(state.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests);
-            draw_mr_sections_client(
-                frame,
-                proj,
-                *state.mr_selected.get(state.active_project).unwrap_or(&0),
-                *state.worktree_selected.get(state.active_project).unwrap_or(&0),
-                section,
-                inner,
-            );
-        }
+        let section = state
+            .selection_section
+            .get(state.active_project)
+            .unwrap_or(&SelectionSection::MergeRequests);
+        draw_mr_sections_client(
+            frame,
+            proj,
+            *state.mr_selected.get(state.active_project).unwrap_or(&0),
+            *state.worktree_selected.get(state.active_project).unwrap_or(&0),
+            section,
+            inner,
+        );
         return;
     }
 
@@ -342,38 +320,59 @@ fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn draw_project_tabs_client(frame: &mut Frame, state: &ClientState, area: Rect) {
-    let n = state.snapshot.projects.len();
-    let dividers = n.saturating_sub(1);
-    let max_per_tab = (area.width as usize).saturating_sub(dividers) / n.max(1);
+fn draw_right_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    if state.snapshot.projects.len() > 1 {
+        let overview_h = (state.snapshot.projects.len() as u16 + 2).min(area.height / 3);
+        let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(overview_h)])
+            .split(area);
+        draw_detail_panel_client(frame, state, chunks[0]);
+        draw_overview_panel(frame, state, chunks[1]);
+    } else {
+        draw_detail_panel_client(frame, state, area);
+    }
+}
 
-    let titles: Vec<Line> = state
-        .snapshot
-        .projects
-        .iter()
-        .map(|p| {
-            let name = &p.name;
-            let pad = 2;
-            let max_name = max_per_tab.saturating_sub(pad);
-            if name.len() > max_name && max_name > 2 {
-                Line::from(format!(" {}…", &name[..max_name - 1]))
-            } else {
-                Line::from(format!(" {} ", name))
-            }
-        })
-        .collect();
+fn draw_overview_panel(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Projects ",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
 
-    let tabs = Tabs::new(titles)
-        .highlight_style(
-            Style::default()
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
-        .select(state.active_project)
-        .style(Style::default().fg(Color::DarkGray))
-        .divider(Span::styled("│", Style::default().fg(Color::Indexed(238))));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    frame.render_widget(tabs, area);
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, proj) in state.snapshot.projects.iter().enumerate() {
+        let is_active = i == state.active_project;
+        let mr_count = proj.dashboard.linked_mrs.len();
+
+        let marker = if is_active { " \u{25b8} " } else { "   " };
+        let name_style = if is_active {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let count_style = if mr_count > 0 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default().fg(Color::Indexed(238))
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(ACCENT)),
+            Span::styled(&proj.name, name_style),
+            Span::styled(
+                format!("  \u{25cf} {}", mr_count),
+                count_style,
+            ),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_mr_sections_client(

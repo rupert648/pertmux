@@ -156,18 +156,6 @@ impl ClientState {
         }
     }
 
-    fn next_project(&mut self) {
-        if !self.snapshot.projects.is_empty() && self.active_project < self.snapshot.projects.len() - 1 {
-            self.active_project += 1;
-        }
-    }
-
-    fn prev_project(&mut self) {
-        if self.active_project > 0 {
-            self.active_project -= 1;
-        }
-    }
-
     fn current_mr_iid(&self) -> Option<u64> {
         let proj = self.active_project()?;
         if !matches!(
@@ -583,16 +571,6 @@ async fn handle_key(
         KeyCode::Down | KeyCode::Char('j') => {
             let before = state.current_mr_iid();
             state.move_down();
-            maybe_send_select_mr(state, framed, before).await?;
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            let before = state.current_mr_iid();
-            state.prev_project();
-            maybe_send_select_mr(state, framed, before).await?;
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            let before = state.current_mr_iid();
-            state.next_project();
             maybe_send_select_mr(state, framed, before).await?;
         }
         KeyCode::Tab => {
