@@ -292,7 +292,19 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
         ),
     ]));
 
-    if !proj.cached_threads.is_empty() && proj.cached_threads_iid == Some(mr.iid) {
+    if proj.cached_threads_iid != Some(mr.iid) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Discussions",
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD | Modifier::DIM),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  \u{25cc} loading\u{2026}",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else if !proj.cached_threads.is_empty() {
         lines.push(Line::from(""));
 
         let total = proj.cached_threads.len();
