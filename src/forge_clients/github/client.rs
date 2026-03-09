@@ -293,6 +293,55 @@ impl ForgeClient for GitHubClient {
 
         Ok(notes)
     }
+
+    async fn fetch_discussions(&self, iid: u64) -> Result<Vec<MergeRequestThread>> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{}/comments?per_page=100",
+            self.base_url, self.owner, self.repo, iid
+        );
+        let comments: Vec<GhIssueComment> = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .send()
+            .await
+            .context(format!("Failed to fetch issue comments from {}", url))?
+            .error_for_status()
+            .context(format!(
+                "GitHub API returned error status for PR {} comments",
+                iid
+            ))?
+            .json()
+            .await
+            .context(format!(
+                "Failed to parse comments response for PR {}",
+                iid
+            ))?;
+
+        let threads = comments
+            .into_iter()
+            .map(|c| MergeRequestThread {
+                id: c.id.to_string(),
+                notes: vec![ThreadNote {
+                    id: c.id,
+                    author: ForgeUser {
+                        id: c.user.id,
+                        username: c.user.login.clone(),
+                        name: c.user.name.unwrap_or_else(|| c.user.login),
+                    },
+                    body: c.body.unwrap_or_default(),
+                    created_at: c.created_at,
+                    system: false,
+                }],
+                resolvable: false,
+                resolved: false,
+                file_path: None,
+                line: None,
+            })
+            .collect();
+
+        Ok(threads)
+    }
 }
 
 #[cfg(test)]

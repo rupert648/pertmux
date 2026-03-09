@@ -73,6 +73,25 @@ pub struct PipelineJob {
     pub allow_failure: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeRequestThread {
+    pub id: String,
+    pub notes: Vec<ThreadNote>,
+    pub resolvable: bool,
+    pub resolved: bool,
+    pub file_path: Option<String>,
+    pub line: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadNote {
+    pub id: u64,
+    pub author: ForgeUser,
+    pub body: String,
+    pub created_at: String,
+    pub system: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,5 +1,5 @@
 use crate::config::ProjectForge;
-use crate::forge_clients::types::{MergeRequestDetail, PipelineJob};
+use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
@@ -19,6 +19,10 @@ pub struct ProjectSnapshot {
     pub cached_worktrees: Vec<WtWorktree>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
     pub cached_pipeline_jobs: Vec<PipelineJob>,
+    #[serde(default)]
+    pub cached_threads: Vec<MergeRequestThread>,
+    #[serde(default)]
+    pub cached_threads_iid: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -168,6 +172,8 @@ mod tests {
                 }],
                 cached_mr_detail: None,
                 cached_pipeline_jobs: vec![],
+                cached_threads: vec![],
+                cached_threads_iid: None,
             }],
             panes: vec![pane],
             groups: vec![("pertmux".to_string(), vec![0])],
