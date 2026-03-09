@@ -58,14 +58,14 @@ pub fn draw_client(frame: &mut Frame, state: &ClientState) {
     if is_landscape(area) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(area);
         draw_list_panel_client(frame, state, chunks[0]);
         draw_detail_panel_client(frame, state, chunks[1]);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(area);
         draw_list_panel_client(frame, state, chunks[0]);
         draw_detail_panel_client(frame, state, chunks[1]);

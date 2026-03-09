@@ -70,11 +70,18 @@ pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()>
         }
     });
 
+    let window_name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| project_name.to_string());
+
     let output = Command::new("tmux")
         .args([
             "new-window",
             "-t",
             &target_session,
+            "-n",
+            &window_name,
             "-c",
             path,
             "-P",
