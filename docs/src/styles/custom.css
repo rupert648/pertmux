@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Starlight dark theme overrides */
+:root {
+  --sl-font: 'Outfit', system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #422300;
+  --sl-color-accent: #ff8c00;
+  --sl-color-accent-high: #ffbd6b;
+  --sl-color-bg-nav: #0e1015;
+  --sl-color-bg: #17191e;
+  --sl-color-bg-sidebar: #0e1015;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fff3e0;
+  --sl-color-accent: #cc6e00;
+  --sl-color-accent-high: #5c3200;
+}
