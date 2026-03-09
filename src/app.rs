@@ -1,7 +1,9 @@
 use crate::coding_agent::CodingAgent;
 use crate::config::{AgentConfig, Config, ProjectConfig, ProjectForge};
 use crate::forge_clients::traits::ForgeClient;
-use crate::forge_clients::types::{MergeRequestDetail, MergeRequestSummary, PipelineJob};
+use crate::forge_clients::types::{
+    MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
+};
 use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{link_all, DashboardState};
@@ -32,6 +34,8 @@ pub struct ProjectState {
     pub cached_mrs: Vec<MergeRequestSummary>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
     pub cached_pipeline_jobs: Vec<PipelineJob>,
+    pub cached_threads: Vec<MergeRequestThread>,
+    pub cached_threads_iid: Option<u64>,
     pub cached_worktrees: Vec<WtWorktree>,
     pub dashboard: DashboardState,
     pub mr_selected: usize,
@@ -105,6 +109,8 @@ impl App {
                     cached_mrs: vec![],
                     cached_mr_detail: None,
                     cached_pipeline_jobs: vec![],
+                    cached_threads: vec![],
+                    cached_threads_iid: None,
                     cached_worktrees: vec![],
                     dashboard: DashboardState {
                         linked_mrs: vec![],
@@ -283,6 +289,16 @@ impl App {
             }
         }
 
+        match proj.client.fetch_discussions(iid).await {
+            Ok(threads) => {
+                proj.cached_threads = threads;
+                proj.cached_threads_iid = Some(iid);
+            }
+            Err(_) => {
+                // Preserve existing cached threads on fetch error
+            }
+        }
+
         if let Some(ref read_state) = self.read_state {
             if let Ok(notes) = proj.client.fetch_notes(iid).await {
                 let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
@@ -329,6 +345,8 @@ impl App {
                     cached_worktrees: p.cached_worktrees.clone(),
                     cached_mr_detail: p.cached_mr_detail.clone(),
                     cached_pipeline_jobs: p.cached_pipeline_jobs.clone(),
+                    cached_threads: p.cached_threads.clone(),
+                    cached_threads_iid: p.cached_threads_iid,
                 })
                 .collect(),
             panes: self.panes.clone(),
