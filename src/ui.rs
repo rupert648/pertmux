@@ -1295,8 +1295,13 @@ fn draw_notification_client(frame: &mut Frame, state: &ClientState, area: Rect) 
 // ─── Popup ────────────────────────────────────────────────────────────────────
 
 fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    if let PopupState::ProjectFilter { input, filtered, selected } = &state.popup {
+        draw_project_filter_popup(frame, input, filtered, *selected, area);
+        return;
+    }
+
     let (title, body_lines, show_cursor) = match &state.popup {
-        PopupState::None => return,
+        PopupState::None | PopupState::ProjectFilter { .. } => return,
         PopupState::CreateWorktree { input } => {
             let lines = vec![
                 Line::from(Span::styled("Branch name:", Style::default().fg(Color::Gray))),
@@ -1390,6 +1395,73 @@ fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     frame.render_widget(paragraph, rect);
 
     let _ = show_cursor;
+}
+
+fn draw_project_filter_popup(
+    frame: &mut Frame,
+    input: &str,
+    filtered: &[(usize, String)],
+    selected: usize,
+    area: Rect,
+) {
+    let popup_w = 50u16.min(area.width.saturating_sub(4));
+    let list_h = filtered.len().min(10) as u16;
+    let popup_h = (list_h + 4).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Find Project ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+        .split(inner);
+
+    let input_line = Line::from(vec![
+        Span::styled(" > ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("█", Style::default().fg(ACCENT)),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), chunks[0]);
+
+    let divider = Line::from(Span::styled(
+        "─".repeat(inner.width as usize),
+        Style::default().fg(Color::Indexed(236)),
+    ));
+    frame.render_widget(Paragraph::new(divider), chunks[1]);
+
+    let mut result_lines: Vec<Line> = Vec::new();
+    for (i, (_idx, name)) in filtered.iter().enumerate() {
+        let style = if i == selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let prefix = if i == selected { " ▸ " } else { "   " };
+        result_lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(ACCENT)),
+            Span::styled(name.as_str(), style),
+        ]));
+    }
+
+    if result_lines.is_empty() {
+        result_lines.push(Line::from(Span::styled(
+            "   no matches",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(result_lines), chunks[2]);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

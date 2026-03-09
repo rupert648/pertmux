@@ -22,6 +22,7 @@ pub enum PopupState {
     CreateWorktree { input: String },
     ConfirmRemove { branch: String },
     ConfirmMerge { branch: String, worktree_path: String },
+    ProjectFilter { input: String, filtered: Vec<(usize, String)>, selected: usize },
 }
 
 pub struct ProjectState {

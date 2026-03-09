@@ -311,6 +311,62 @@ impl ClientState {
     fn close_popup(&mut self) {
         self.popup = PopupState::None;
     }
+
+    fn open_project_filter(&mut self) {
+        if self.snapshot.projects.len() < 2 {
+            return;
+        }
+        let all: Vec<(usize, String)> = self
+            .snapshot
+            .projects
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.name.clone()))
+            .collect();
+        self.popup = PopupState::ProjectFilter {
+            input: String::new(),
+            filtered: all,
+            selected: 0,
+        };
+    }
+
+    fn recompute_project_filter(&mut self) {
+        if let PopupState::ProjectFilter { input, filtered, selected } = &mut self.popup {
+            let projects: Vec<(usize, &str)> = self
+                .snapshot
+                .projects
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (i, p.name.as_str()))
+                .collect();
+
+            if input.is_empty() {
+                *filtered = projects.iter().map(|(i, n)| (*i, n.to_string())).collect();
+            } else {
+                use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+                use nucleo_matcher::Matcher;
+
+                let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+                let pattern = Pattern::parse(input, CaseMatching::Ignore, Normalization::Smart);
+                let names: Vec<&str> = projects.iter().map(|(_, n)| *n).collect();
+                let matches = pattern.match_list(names, &mut matcher);
+
+                *filtered = matches
+                    .into_iter()
+                    .filter_map(|(name, _score)| {
+                        projects
+                            .iter()
+                            .find(|(_, n)| *n == name)
+                            .map(|(i, _)| (*i, name.to_string()))
+                    })
+                    .collect();
+            }
+
+            if *selected >= filtered.len() {
+                *selected = filtered.len().saturating_sub(1);
+            }
+        }
+    }
 }
 
 pub async fn run() -> Result<()> {
@@ -456,6 +512,48 @@ async fn handle_key(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
     code: KeyCode,
 ) -> Result<()> {
+    if matches!(state.popup, PopupState::ProjectFilter { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Enter => {
+                if let PopupState::ProjectFilter { filtered, selected, .. } = &state.popup {
+                    if let Some(&(idx, _)) = filtered.get(*selected) {
+                        state.active_project = idx;
+                    }
+                }
+                state.close_popup();
+            }
+            KeyCode::Down => {
+                if let PopupState::ProjectFilter { filtered, selected, .. } = &mut state.popup {
+                    if *selected + 1 < filtered.len() {
+                        *selected += 1;
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if let PopupState::ProjectFilter { selected, .. } = &mut state.popup {
+                    if *selected > 0 {
+                        *selected -= 1;
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if let PopupState::ProjectFilter { input, .. } = &mut state.popup {
+                    input.pop();
+                }
+                state.recompute_project_filter();
+            }
+            KeyCode::Char(ch) => {
+                if let PopupState::ProjectFilter { input, .. } = &mut state.popup {
+                    input.push(ch);
+                }
+                state.recompute_project_filter();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -518,6 +616,7 @@ async fn handle_key(
                 state.copy_selected_branch();
             }
         }
+        KeyCode::Char('f') => state.open_project_filter(),
         KeyCode::Char('c') => state.open_create_popup(),
         KeyCode::Char('d') => state.open_remove_popup(),
         KeyCode::Char('m') => state.open_merge_popup(),
@@ -548,7 +647,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             project_idx,
             worktree_path: worktree_path.clone(),
         }),
-        PopupState::None => None,
+        PopupState::ProjectFilter { .. } | PopupState::None => None,
     }
 }
 
