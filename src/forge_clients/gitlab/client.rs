@@ -1,5 +1,7 @@
-use crate::gitlab::types::*;
+use crate::forge_clients::traits::ForgeClient;
+use crate::forge_clients::types::*;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use reqwest::Client;
 
 pub struct GitLabClient {
@@ -27,54 +29,7 @@ impl GitLabClient {
         }
     }
 
-    pub async fn fetch_mr_list(&self) -> Result<Vec<MergeRequestSummary>> {
-        let author_filter = self
-            .username
-            .as_deref()
-            .map(|u| format!("&author_username={}", u))
-            .unwrap_or_default();
-        let url = format!(
-            "{}/projects/{}/merge_requests?state=opened&per_page=100{}",
-            self.base_url, self.project_id, author_filter
-        );
-        self.client
-            .get(&url)
-            .header("PRIVATE-TOKEN", &self.token)
-            .send()
-            .await
-            .context(format!("Failed to fetch MR list from {}", url))?
-            .error_for_status()
-            .context("GitLab API returned error status for MR list")?
-            .json::<Vec<MergeRequestSummary>>()
-            .await
-            .context("Failed to parse MR list response")
-    }
-
-    pub async fn fetch_mr_detail(&self, mr_iid: u64) -> Result<MergeRequestDetail> {
-        let url = format!(
-            "{}/projects/{}/merge_requests/{}",
-            self.base_url, self.project_id, mr_iid
-        );
-        self.client
-            .get(&url)
-            .header("PRIVATE-TOKEN", &self.token)
-            .send()
-            .await
-            .context(format!("Failed to fetch MR detail from {}", url))?
-            .error_for_status()
-            .context(format!(
-                "GitLab API returned error status for MR {}",
-                mr_iid
-            ))?
-            .json::<MergeRequestDetail>()
-            .await
-            .context(format!(
-                "Failed to parse MR detail response for {}",
-                mr_iid
-            ))
-    }
-
-    pub async fn fetch_pipeline_jobs(&self, pipeline_id: u64) -> Result<Vec<PipelineJob>> {
+    async fn fetch_pipeline_jobs(&self, pipeline_id: u64) -> Result<Vec<PipelineJob>> {
         let url = format!(
             "{}/projects/{}/pipelines/{}/jobs?per_page=100",
             self.base_url, self.project_id, pipeline_id
@@ -97,11 +52,73 @@ impl GitLabClient {
                 pipeline_id
             ))
     }
+}
 
-    pub async fn fetch_mr_notes(&self, mr_iid: u64) -> Result<Vec<MergeRequestNote>> {
+#[async_trait(?Send)]
+impl ForgeClient for GitLabClient {
+    async fn fetch_mrs(&self) -> Result<Vec<MergeRequestSummary>> {
+        let author_filter = self
+            .username
+            .as_deref()
+            .map(|u| format!("&author_username={}", u))
+            .unwrap_or_default();
+        let url = format!(
+            "{}/projects/{}/merge_requests?state=opened&per_page=100{}",
+            self.base_url, self.project_id, author_filter
+        );
+        self.client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .context(format!("Failed to fetch MR list from {}", url))?
+            .error_for_status()
+            .context("GitLab API returned error status for MR list")?
+            .json::<Vec<MergeRequestSummary>>()
+            .await
+            .context("Failed to parse MR list response")
+    }
+
+    async fn fetch_mr_detail(&self, iid: u64) -> Result<MergeRequestDetail> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}",
+            self.base_url, self.project_id, iid
+        );
+        self.client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .context(format!("Failed to fetch MR detail from {}", url))?
+            .error_for_status()
+            .context(format!(
+                "GitLab API returned error status for MR {}",
+                iid
+            ))?
+            .json::<MergeRequestDetail>()
+            .await
+            .context(format!("Failed to parse MR detail response for {}", iid))
+    }
+
+    async fn fetch_ci_jobs(
+        &self,
+        mr_detail: &MergeRequestDetail,
+    ) -> Result<Vec<PipelineJob>> {
+        let pipeline_id = mr_detail
+            .head_pipeline
+            .as_ref()
+            .map(|p| p.id);
+
+        match pipeline_id {
+            Some(pid) => self.fetch_pipeline_jobs(pid).await,
+            None => Ok(vec![]),
+        }
+    }
+
+    async fn fetch_notes(&self, iid: u64) -> Result<Vec<MergeRequestNote>> {
         let url = format!(
             "{}/projects/{}/merge_requests/{}/notes?per_page=100",
-            self.base_url, self.project_id, mr_iid
+            self.base_url, self.project_id, iid
         );
         self.client
             .get(&url)
@@ -112,13 +129,13 @@ impl GitLabClient {
             .error_for_status()
             .context(format!(
                 "GitLab API returned error status for MR {} notes",
-                mr_iid
+                iid
             ))?
             .json::<Vec<MergeRequestNote>>()
             .await
             .context(format!(
                 "Failed to parse MR notes response for {}",
-                mr_iid
+                iid
             ))
     }
 }

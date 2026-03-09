@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::forge_clients::types::MergeRequestSummary;
 use crate::git::WorktreeInfo;
-use crate::gitlab::types::MergeRequestSummary;
 use crate::read_state::ReadStateDb;
 use crate::types::AgentPane;
 
@@ -67,7 +67,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::gitlab::types::GitLabUser;
+    use crate::forge_clients::types::ForgeUser;
     use crate::types::PaneStatus;
 
     fn test_db_path(test_name: &str) -> String {
@@ -90,7 +90,7 @@ mod tests {
             state: "opened".to_string(),
             source_branch: source_branch.to_string(),
             target_branch: "main".to_string(),
-            author: GitLabUser {
+            author: ForgeUser {
                 id: 1,
                 username: "tester".to_string(),
                 name: "Tester".to_string(),

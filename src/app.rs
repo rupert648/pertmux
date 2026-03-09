@@ -1,8 +1,9 @@
 use crate::coding_agent::CodingAgent;
-use crate::config::{AgentConfig, Config, ProjectConfig, ProjectSource};
+use crate::config::{AgentConfig, Config, ProjectConfig, ProjectForge};
+use crate::forge_clients::traits::ForgeClient;
+use crate::forge_clients::types::{MergeRequestDetail, MergeRequestSummary, PipelineJob};
+use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
-use crate::gitlab::client::GitLabClient;
-use crate::gitlab::types::{MergeRequestDetail, MergeRequestSummary, PipelineJob};
 use crate::linking::{link_all, DashboardState};
 use crate::protocol::{DashboardSnapshot, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
@@ -27,7 +28,7 @@ pub enum PopupState {
 
 pub struct ProjectState {
     pub config: ProjectConfig,
-    pub client: GitLabClient,
+    pub client: Box<dyn ForgeClient>,
     pub cached_mrs: Vec<MergeRequestSummary>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
     pub cached_pipeline_jobs: Vec<PipelineJob>,
@@ -65,6 +66,7 @@ impl App {
     pub fn new(config: Config) -> Self {
         let resolved_projects = config.resolve_projects();
         let gitlab_source = config.gitlab.clone();
+        let github_source = config.github.clone();
 
         let read_state = if !resolved_projects.is_empty() {
             ReadStateDb::open(None).ok()
@@ -75,13 +77,27 @@ impl App {
         let projects: Vec<ProjectState> = resolved_projects
             .into_iter()
             .filter_map(|pc| {
-                let client = match pc.source {
-                    ProjectSource::Gitlab => {
+                let client: Box<dyn ForgeClient> = match pc.source {
+                    ProjectForge::Gitlab => {
                         let gl = gitlab_source.as_ref()?;
                         let token = gl.api_token()?;
-                        GitLabClient::new(token, &gl.host, &pc.project, pc.username.clone())
+                        Box::new(GitLabClient::new(
+                            token,
+                            &gl.host,
+                            &pc.project,
+                            pc.username.clone(),
+                        ))
                     }
-                    ProjectSource::Github => return None,
+                    ProjectForge::Github => {
+                        let gh = github_source.as_ref()?;
+                        let token = gh.api_token()?;
+                        Box::new(GitHubClient::new(
+                            token,
+                            &gh.host,
+                            &pc.project,
+                            pc.username.clone(),
+                        ))
+                    }
                 };
                 Some(ProjectState {
                     config: pc,
@@ -215,19 +231,19 @@ impl App {
         let mut had_success = false;
 
         for proj in &mut self.projects {
-            match proj.client.fetch_mr_list().await {
+            match proj.client.fetch_mrs().await {
                 Ok(mrs) => {
                     proj.cached_mrs = mrs;
                     had_success = true;
                 }
                 Err(e) => {
                     last_error =
-                        Some(format!("GitLab error ({}): {}", proj.config.name, e));
+                        Some(format!("Forge error ({}): {}", proj.config.name, e));
                 }
             }
         }
 
-        if had_success && self.error.as_ref().is_some_and(|e| e.starts_with("GitLab")) {
+        if had_success && self.error.as_ref().is_some_and(|e| e.starts_with("Forge") || e.starts_with("GitLab")) {
             self.error = None;
         }
         if let Some(e) = last_error {
@@ -257,29 +273,18 @@ impl App {
             }
         }
 
-        // API returns id desc — reverse to get stage order
-        let pipeline_id = proj
-            .cached_mr_detail
-            .as_ref()
-            .and_then(|d| d.head_pipeline.as_ref())
-            .map(|p| p.id);
-
-        if let Some(pid) = pipeline_id {
-            match proj.client.fetch_pipeline_jobs(pid).await {
-                Ok(mut jobs) => {
-                    jobs.reverse();
-                    proj.cached_pipeline_jobs = jobs;
-                }
-                Err(_) => {
-                    proj.cached_pipeline_jobs = vec![];
-                }
+        match proj.client.fetch_ci_jobs(proj.cached_mr_detail.as_ref().unwrap()).await {
+            Ok(mut jobs) => {
+                jobs.reverse();
+                proj.cached_pipeline_jobs = jobs;
             }
-        } else {
-            proj.cached_pipeline_jobs = vec![];
+            Err(_) => {
+                proj.cached_pipeline_jobs = vec![];
+            }
         }
 
         if let Some(ref read_state) = self.read_state {
-            if let Ok(notes) = proj.client.fetch_mr_notes(iid).await {
+            if let Ok(notes) = proj.client.fetch_notes(iid).await {
                 let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
                 let _ = read_state.mark_notes_seen(&proj.config.project, iid, &note_ids);
                 let _ = read_state.mark_mr_viewed(&proj.config.project, iid, notes.len() as u32);

@@ -1,10 +1,10 @@
 # pertmux
 
-pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs to local branches/worktrees, tmux sessions, and coding agent instances. It provides a real-time view of merge request status, pipeline health, worktree management, and session progress — all from a single TUI.
+pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/GitHub MRs to local branches/worktrees, tmux sessions, and coding agent instances. It provides a real-time view of merge request status, pipeline health, worktree management, and session progress — all from a single TUI.
 
 ## Features
 
-- **GitLab MR tracking** — open MRs with pipeline dots, comments, and unread indicators
+- **Multi-forge support** — GitLab and GitHub MR/PR tracking with pipeline dots, comments, and unread indicators
 - **Worktree management** — list, create, remove, and merge worktrees via [worktrunk](https://github.com/max-sixty/worktrunk)
 - **Multi-project support** — fuzzy finder (`f` key) with overview panel showing MR counts
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
@@ -19,7 +19,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs
 │                     (daemon)                            │
 │                                                         │
 │  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │  tmux   │  │  GitLab  │  │ worktrunk│  │  agent  │ │
+│  │  tmux   │  │  Forge   │  │ worktrunk│  │  agent  │ │
 │  │  poll   │  │   API    │  │   CLI    │  │  status │ │
 │  │  (2s)   │  │  (60s)   │  │  (30s)   │  │  (2s)   │ │
 │  └────┬────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
@@ -86,7 +86,7 @@ The daemon must be started before connecting. It logs to `/tmp/pertmux-daemon.lo
 
 ## Configuration
 
-pertmux works out of the box with zero configuration for basic agent monitoring. For GitLab MR tracking and multi-project support, create a TOML config file.
+pertmux works out of the box with zero configuration for basic agent monitoring. For GitLab/GitHub MR tracking and multi-project support, create a TOML config file.
 
 ```
 pertmux -c ./path/to/config.toml serve
@@ -101,6 +101,9 @@ If no `-c` flag is provided, pertmux looks for `~/.config/pertmux/pertmux.toml`.
 host = "gitlab.example.com"
 token = "glpat-your-token-here"
 
+[github]
+token = "ghp_your-token-here"
+
 [[project]]
 name = "My App"
 source = "gitlab"
@@ -109,10 +112,10 @@ local_path = "/home/user/repos/my-app"
 username = "youruser"
 
 [[project]]
-name = "API Service"
-source = "gitlab"
-project = "team/api-service"
-local_path = "/home/user/repos/api-service"
+name = "OSS Project"
+source = "github"
+project = "org/oss-project"
+local_path = "/home/user/repos/oss-project"
 username = "youruser"
 ```
 
@@ -127,7 +130,7 @@ local_path = "/home/user/repos/my-app"
 username = "youruser"
 ```
 
-### Agent-only config (no GitLab)
+### Agent-only config (no forge)
 
 ```toml
 refresh_interval = 2
@@ -149,15 +152,22 @@ refresh_interval = 2
 | `host` | string | `gitlab.com` | GitLab instance hostname |
 | `token` | string | — | Personal access token (or set `PERTMUX_GITLAB_TOKEN` env var) |
 
+#### `[github]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `host` | string | `github.com` | GitHub hostname (use custom host for GitHub Enterprise) |
+| `token` | string | — | Personal access token (or set `PERTMUX_GITHUB_TOKEN` env var). Needs `repo` scope for private repos. |
+
 #### `[[project]]`
 
 | Key | Type | Required | Description |
 |-----|------|----------|-------------|
-| `name` | string | yes | Display name (shown in tabs) |
-| `source` | string | yes | `"gitlab"` (github planned) |
-| `project` | string | yes | Full project path (e.g. `team/app`) |
+| `name` | string | yes | Display name (shown in overview) |
+| `source` | string | yes | `"gitlab"` or `"github"` |
+| `project` | string | yes | Full project path (e.g. `team/app` or `org/repo`) |
 | `local_path` | string | yes | Absolute path to local repo (validated at startup) |
-| `username` | string | no | Your username (for "mine" vs "reviewing" MR grouping) |
+| `username` | string | no | Your username (for filtering MRs/PRs to your own) |
 
 #### `[agent.opencode]`
 

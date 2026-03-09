@@ -19,5 +19,25 @@
 # [gitlab]
 # token = "glpat-xxxxxxxxxxxxxxxxxxxx"  # Or set PERTMUX_GITLAB_TOKEN env var
 # host = "gitlab.com"                   # Default: gitlab.com
-# project = "your-group/your-project"   # GitLab project path
+# project = "your-group/your-project"   # GitLab project path (old single-project format)
 # local_path = "/path/to/local/repo"    # Absolute path to local git repo
+
+# GitHub integration (optional — remove this section to disable GitHub features)
+# [github]
+# token = "ghp_xxxxxxxxxxxxxxxxxxxx"    # Or set PERTMUX_GITHUB_TOKEN env var
+# host = "github.com"                   # Default: github.com (use custom host for GHE)
+
+# Multi-project setup (recommended for multiple repos)
+# [[project]]
+# name = "My GitLab App"
+# source = "gitlab"
+# project = "team/my-app"
+# local_path = "/home/user/repos/my-app"
+# username = "youruser"
+#
+# [[project]]
+# name = "My GitHub App"
+# source = "github"
+# project = "org/my-app"
+# local_path = "/home/user/repos/gh-app"
+# username = "youruser"

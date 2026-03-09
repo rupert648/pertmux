@@ -1,5 +1,5 @@
-use crate::config::ProjectSource;
-use crate::gitlab::types::{MergeRequestDetail, PipelineJob};
+use crate::config::ProjectForge;
+use crate::forge_clients::types::{MergeRequestDetail, PipelineJob};
 use crate::linking::DashboardState;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
@@ -12,7 +12,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectSnapshot {
     pub name: String,
-    pub source: ProjectSource,
+    pub source: ProjectForge,
     pub project_path: String,
     pub local_path: String,
     pub dashboard: DashboardState,
@@ -78,8 +78,8 @@ pub enum DaemonMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forge_clients::types::{ForgeUser, MergeRequestSummary};
     use crate::git::WorktreeInfo;
-    use crate::gitlab::types::{GitLabUser, MergeRequestSummary};
     use crate::linking::LinkedMergeRequest;
     use crate::types::PaneStatus;
     use crate::worktrunk::WtCommit;
@@ -92,7 +92,7 @@ mod tests {
             state: "opened".to_string(),
             source_branch: "feat/protocol".to_string(),
             target_branch: "main".to_string(),
-            author: GitLabUser {
+            author: ForgeUser {
                 id: 1,
                 username: "rupert".to_string(),
                 name: "Rupert".to_string(),
@@ -140,7 +140,7 @@ mod tests {
         let snapshot = DashboardSnapshot {
             projects: vec![ProjectSnapshot {
                 name: "pertmux".to_string(),
-                source: ProjectSource::Gitlab,
+                source: ProjectForge::Gitlab,
                 project_path: "team/pertmux".to_string(),
                 local_path: "/tmp/pertmux".to_string(),
                 dashboard: DashboardState {

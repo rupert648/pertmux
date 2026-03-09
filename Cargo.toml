@@ -22,3 +22,4 @@ clap = { version = "4", features = ["derive"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
 nucleo-matcher = "0.3"
+async-trait = "0.1"
