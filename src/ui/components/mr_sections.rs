@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use super::cards::{render_mr_card, render_worktree_card};
 use crate::app::SelectionSection;
 use crate::protocol::ProjectSnapshot;
+use crate::types::AgentPane;
 use crate::ui::{ProjectRenderData, ACCENT};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
@@ -15,12 +19,14 @@ use ratatui::{
 pub(crate) fn draw_mr_sections_client(
     frame: &mut Frame,
     proj: &ProjectSnapshot,
+    panes: &[crate::types::AgentPane],
     mr_selected: usize,
     worktree_selected: usize,
     section: &SelectionSection,
     area: Rect,
 ) {
-    let render = ProjectRenderData::from_snapshot(proj, mr_selected, worktree_selected, section);
+    let render =
+        ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected, section);
     draw_mr_sections_render(frame, &render, area);
 }
 
@@ -120,6 +126,17 @@ fn draw_mr_block_render(
     }
 }
 
+fn build_pane_by_path<'a>(panes: &'a [AgentPane]) -> HashMap<PathBuf, &'a AgentPane> {
+    panes
+        .iter()
+        .filter_map(|pane| {
+            std::fs::canonicalize(&pane.pane_path)
+                .ok()
+                .map(|path| (path, pane))
+        })
+        .collect()
+}
+
 fn draw_worktree_block_render(
     frame: &mut Frame,
     proj: &ProjectRenderData<'_>,
@@ -158,6 +175,8 @@ fn draw_worktree_block_render(
         return;
     }
 
+    let pane_by_path = build_pane_by_path(proj.panes);
+
     let card_h: u16 = 4;
     let total_content = wt_count as u16 * card_h;
     let selected_y = proj.worktree_selected as u16 * card_h;
@@ -182,7 +201,12 @@ fn draw_worktree_block_render(
         let ay = section_inner.y + sy as u16;
         let is_selected = focused && i == proj.worktree_selected;
         let rect = Rect::new(section_inner.x, ay, section_inner.width, card_h);
-        render_worktree_card(frame, wt, rect, is_selected);
+        let matched_pane = wt
+            .path
+            .as_ref()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .and_then(|canon| pane_by_path.get(&canon).copied());
+        render_worktree_card(frame, wt, matched_pane, rect, is_selected);
     }
 
     if total_content > section_inner.height {

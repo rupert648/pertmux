@@ -25,6 +25,7 @@ pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, a
         draw_mr_detail_panel_client(
             frame,
             proj,
+            &state.snapshot.panes,
             *state.mr_selected.get(state.active_project).unwrap_or(&0),
             *state
                 .worktree_selected
@@ -87,12 +88,14 @@ pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, a
 fn draw_mr_detail_panel_client(
     frame: &mut Frame,
     proj: &ProjectSnapshot,
+    panes: &[crate::types::AgentPane],
     mr_selected: usize,
     worktree_selected: usize,
     section: &SelectionSection,
     area: Rect,
 ) {
-    let render = ProjectRenderData::from_snapshot(proj, mr_selected, worktree_selected, section);
+    let render =
+        ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected, section);
     draw_mr_detail_panel_render(frame, &render, area);
 }
 

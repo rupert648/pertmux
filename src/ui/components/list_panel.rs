@@ -135,6 +135,7 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         draw_mr_sections_client(
             frame,
             proj,
+            &state.snapshot.panes,
             *state.mr_selected.get(state.active_project).unwrap_or(&0),
             *state.worktree_selected.get(state.active_project).unwrap_or(&0),
             section,
