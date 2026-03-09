@@ -510,6 +510,16 @@ async fn handle_key(
                     }
                 }
                 state.close_popup();
+                if let Some(mr_iid) = state.current_mr_iid() {
+                    send_msg(
+                        framed,
+                        ClientMsg::SelectMr {
+                            project_idx: state.active_project,
+                            mr_iid,
+                        },
+                    )
+                    .await?;
+                }
             }
             KeyCode::Down => {
                 if let PopupState::ProjectFilter { filtered, selected, .. } = &mut state.popup {
