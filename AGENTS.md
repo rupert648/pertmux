@@ -85,6 +85,53 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **async-trait**: Async trait support for `ForgeClient` trait (`#[async_trait(?Send)]`).
 - **futures**: StreamExt for crossterm EventStream and IPC streams.
 
+## Landing Page & Docs Site
+The `docs/` directory contains the project website: a marketing landing page + full documentation site built with Astro + Starlight + Tailwind.
+
+### Tech Stack
+- **Astro 5**: Static site generator (island architecture, near-zero JS)
+- **Starlight**: Astro's docs theme (sidebar, search via Pagefind, dark/light mode)
+- **Tailwind 3**: Utility CSS with custom config (`docs/tailwind.config.mjs`)
+- **Fonts**: Outfit (sans), JetBrains Mono (mono) via Google Fonts
+
+### Structure
+- **`docs/src/pages/index.astro`**: Custom landing page (standalone, NOT Starlight layout)
+- **`docs/src/components/`**: Landing page sections — `Navbar`, `Hero`, `LinkingDiagram`, `FeatureGrid`, `GettingStarted`, `Footer`
+- **`docs/src/content/docs/`**: Markdown docs rendered by Starlight with sidebar navigation
+  - `getting-started/`: Installation, Quick Start, tmux Integration
+  - `configuration/`: Config Reference, Multi-Project, Forge Setup, Agent Config
+  - `features/`: MR Tracking, Worktree Management, Agent Monitoring, Pipeline Visualization
+  - `reference/`: Keybindings, Architecture, CLI Commands, Extending
+- **`docs/src/styles/custom.css`**: Tailwind directives + Starlight theme overrides
+- **`docs/astro.config.mjs`**: Starlight sidebar config, social links, custom CSS
+- **`docs/tailwind.config.mjs`**: Custom colors (accent orange `#FF8C00`, gray palette), fonts, Starlight plugin
+
+### Routes
+- `/` — Landing page (custom Astro page, no Starlight layout)
+- `/getting-started/installation/` — First docs page (Starlight routes docs at root, no `/docs/` prefix)
+- All docs pages follow Starlight's file-based routing from `src/content/docs/`
+
+### Build & Dev
+```sh
+cd docs
+npm install
+npm run dev       # Dev server on localhost:4321
+npm run build     # Static build to docs/dist/
+npm run preview   # Preview the build
+```
+
+### Visual Identity
+- Dark theme primary: `#0e1015` (gray-950)
+- Cards/sections: `#17191e` (gray-900)
+- Accent: `#FF8C00` (orange, matches TUI `ACCENT` color)
+- Screenshot placeholders exist in Hero and LinkingDiagram sections — replace with actual TUI screenshots/GIFs
+
+### Conventions
+- Landing page is a STANDALONE Astro page — does NOT use Starlight's layout or components
+- Internal doc cross-links use root-relative paths (`/getting-started/quick-start/`), NOT `/docs/` prefix
+- All icons are inline SVGs — no icon library dependencies
+- No React/Vue/framework components — pure Astro + HTML + Tailwind
+
 ## Build & Run
 - **Build**: `cargo build --release`
 - **Start daemon**: `pertmux serve`
