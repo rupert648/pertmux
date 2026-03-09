@@ -79,6 +79,60 @@ pub(crate) fn leak_status(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
+/// Parse ISO 8601 datetime (e.g. "2026-01-02T15:04:05Z") into relative time like "2d ago".
+pub(crate) fn format_relative_time(iso: &str) -> String {
+    if iso.len() < 19 {
+        return iso.to_string();
+    }
+    let parts: Vec<&str> = iso[..19].split('T').collect();
+    if parts.len() != 2 {
+        return iso.to_string();
+    }
+    let date_parts: Vec<u64> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+    let time_parts: Vec<u64> = parts[1].split(':').filter_map(|s| s.parse().ok()).collect();
+    if date_parts.len() != 3 || time_parts.len() != 3 {
+        return iso.to_string();
+    }
+
+    let (year, month, day) = (date_parts[0], date_parts[1], date_parts[2]);
+    let (hour, min, sec) = (time_parts[0], time_parts[1], time_parts[2]);
+
+    let days_from_year = |y: u64| -> u64 {
+        365 * y + y / 4 - y / 100 + y / 400
+    };
+    let days_in_month: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let mut total_days = days_from_year(year) - days_from_year(1970);
+    for m in 0..(month.saturating_sub(1) as usize) {
+        total_days += if m < 12 { days_in_month[m] } else { 30 };
+        if m == 1 && is_leap {
+            total_days += 1;
+        }
+    }
+    total_days += day.saturating_sub(1);
+
+    let ts = total_days * 86400 + hour * 3600 + min * 60 + sec;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let delta = (now as i64 - ts as i64).max(0) as u64;
+
+    if delta < 60 {
+        "just now".to_string()
+    } else if delta < 3600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86400 {
+        format!("{}h ago", delta / 3600)
+    } else if delta < 604800 {
+        format!("{}d ago", delta / 86400)
+    } else {
+        format!("{}w ago", delta / 604800)
+    }
+}
+
 // ─── Merge status ────────────────────────────────────────────────────────────
 
 pub(crate) fn merge_status_display(
