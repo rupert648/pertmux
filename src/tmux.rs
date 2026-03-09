@@ -1,4 +1,5 @@
 use crate::types::{AgentPane, PaneStatus};
+use std::path::Path;
 use std::process::Command;
 
 pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>> {
@@ -51,25 +52,97 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
     Ok(panes)
 }
 
-/// Focus a pane on the OTHER tmux client (not the dashboard's).
-/// If no other client exists, falls back to switching our own client.
-pub fn switch_to_pane(pane_id: &str) -> anyhow::Result<()> {
-    // Find our own session name
+pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()> {
+    let canonical_target =
+        std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+
+    if let Some(pane_id) = find_pane_by_path(&canonical_target)? {
+        return switch_to_pane(&pane_id);
+    }
+
     let our_session = get_own_session().unwrap_or_default();
 
-    // Find another client to control
+    let target_session = find_session_by_name(project_name).unwrap_or_else(|| {
+        if let Some(other_tty) = find_other_client(&our_session) {
+            session_for_client(&other_tty).unwrap_or(our_session.clone())
+        } else {
+            our_session.clone()
+        }
+    });
+
+    let window_name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| project_name.to_string());
+
+    let output = Command::new("tmux")
+        .args([
+            "new-window",
+            "-t",
+            &target_session,
+            "-n",
+            &window_name,
+            "-c",
+            path,
+            "-P",
+            "-F",
+            "#{pane_id}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("tmux new-window failed: {}", stderr.trim());
+    }
+
+    let new_pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !new_pane_id.is_empty() {
+        switch_to_pane(&new_pane_id)?;
+    }
+
+    Ok(())
+}
+
+fn find_pane_by_path(target: &Path) -> anyhow::Result<Option<String>> {
+    let output = Command::new("tmux")
+        .args(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_path}"])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let pane_id = parts[0];
+        let pane_path =
+            std::fs::canonicalize(parts[1]).unwrap_or_else(|_| Path::new(parts[1]).to_path_buf());
+
+        if pane_path == target {
+            return Ok(Some(pane_id.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn switch_to_pane(pane_id: &str) -> anyhow::Result<()> {
+    let our_session = get_own_session().unwrap_or_default();
+
     if let Some(other_tty) = find_other_client(&our_session) {
         Command::new("tmux")
             .args(["switch-client", "-c", &other_tty, "-t", pane_id])
             .output()?;
     } else {
-        // Fallback: switch our own client
         Command::new("tmux")
             .args(["switch-client", "-t", pane_id])
             .output()?;
     }
 
-    // Select the window and pane (server-side, affects the session)
     Command::new("tmux")
         .args(["select-window", "-t", pane_id])
         .output()?;
@@ -79,7 +152,6 @@ pub fn switch_to_pane(pane_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Get the session name that the dashboard is running in.
 fn get_own_session() -> Option<String> {
     let output = Command::new("tmux")
         .args(["display-message", "-p", "#{session_name}"])
@@ -92,7 +164,34 @@ fn get_own_session() -> Option<String> {
     }
 }
 
-/// Find a client TTY that is NOT attached to our session.
+fn session_for_client(client_tty: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", client_tty, "-p", "#{session_name}"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn find_session_by_name(name: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lower_name = name.to_lowercase();
+    stdout
+        .lines()
+        .find(|s| s.to_lowercase() == lower_name)
+        .map(|s| s.to_string())
+}
+
 fn find_other_client(our_session: &str) -> Option<String> {
     let output = Command::new("tmux")
         .args(["list-clients", "-F", "#{client_tty}\t#{session_name}"])
