@@ -583,7 +583,10 @@ async fn handle_key(
                 state.notification = Some((format!("Focus failed: {}", e), Instant::now()));
             }
         }
-        KeyCode::Char('r') => send_msg(framed, ClientMsg::Refresh).await?,
+        KeyCode::Char('r') => {
+            state.notification = Some(("Refreshing...".into(), Instant::now()));
+            send_msg(framed, ClientMsg::Refresh).await?;
+        }
         KeyCode::Char('o') => {
             if state.has_projects() {
                 state.open_selected_mr_in_browser();
