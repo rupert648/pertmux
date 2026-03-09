@@ -6,7 +6,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab MRs
 
 - **GitLab MR tracking** — open MRs with pipeline dots, comments, and unread indicators
 - **Worktree management** — list, create, remove, and merge worktrees via [worktrunk](https://github.com/max-sixty/worktrunk)
-- **Multi-project support** — tab between projects with `h`/`l` keys
+- **Multi-project support** — fuzzy finder (`f` key) with overview panel showing MR counts
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
 - **Coding agent monitoring** — track Claude/opencode instances across tmux panes
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
@@ -174,7 +174,7 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 | Key | Action |
 |-----|--------|
 | `j`/`k` or `↑`/`↓` | Navigate list |
-| `h`/`l` or `��`/`→` | Switch project tab |
+| `f` | Fuzzy filter to switch project |
 | `Tab` | Toggle between MR list and worktree panel |
 | `Enter` | Focus selected pane/worktree in tmux |
 | `r` | Refresh all data |

@@ -23,7 +23,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 ## Module Guide
 - **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemon::run()`, `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`. Requires explicit subcommand (no bare `pertmux`).
 - **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals.
-- **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/h/l/Tab) with no round-trip. Also provides `stop()` and `status()` commands.
+- **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/Tab) with no round-trip. Project switching via fuzzy finder (`f` key). Also provides `stop()` and `status()` commands.
 - **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
 - **app.rs**: Owns the `App` struct, which holds data state (panes, projects, MRs, worktrees). Manages refresh cycle, linking, and `snapshot()` method to produce `DashboardSnapshot`. UI-related methods (selection, popup) have moved to `ClientState` in `client.rs`.
 - **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. To add a new agent, implement the trait and register it here.
@@ -33,7 +33,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **config.rs**: Defines `Config`, `AgentConfig`, `ProjectConfig`, `ProjectSource` enum, and per-agent config structs. Loads from TOML with `-c`/`--config` CLI flag or `~/.config/pertmux/pertmux.toml`. Validates local_path existence, source configuration, and project name uniqueness at startup.
 - **db.rs**: Manages read-only access to the Claude SQLite database. Fetches session details and enriches pane information.
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
-- **ui.rs**: Contains all `ratatui` rendering logic. Entry point is `draw_client(frame, &ClientState)`. Uses `ProjectRenderData` adapter to bridge `ProjectSnapshot` data to shared rendering functions. Includes popup overlay, notification toasts, and adaptive tab truncation.
+- **ui.rs**: Contains all `ratatui` rendering logic. Entry point is `draw_client(frame, &ClientState)`. Uses `ProjectRenderData` adapter to bridge `ProjectSnapshot` data to shared rendering functions. Includes popup overlay, notification toasts, and overview panel with project MR counts.
 - **worktrunk.rs**: Serde types for `wt list --format=json` output (`WtWorktree`, `WtCommit`, `WtMain`, etc.). Async functions: `fetch_worktrees()`, `create_worktree()`, `remove_worktree()`, `merge_worktree()`. Includes `format_age()` helper and 9 unit tests.
 - **linking.rs**: Defines `DashboardState`, `LinkedMergeRequest`. Implements `link_all()` which connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude.
 - **gitlab/mod.rs**, **gitlab/client.rs**, **gitlab/types.rs**: GitLab API client. `GitLabClient` fetches MR list, detail, and notes via reqwest. DTOs: `MergeRequestSummary`, `MergeRequestDetail`, `MergeRequestNote`.
@@ -42,7 +42,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 
 ## Key Design Decisions
 - **Pluggable Agents**: The `CodingAgent` trait abstracts process detection and status querying. Each agent handles its own discovery mechanism internally.
-- **Multi-Project Support**: `[[project]]` TOML array with per-project GitLab config, local paths, and worktree state. Tab navigation with h/l keys. Tab names auto-truncate to fit terminal width.
+- **Multi-Project Support**: `[[project]]` TOML array with per-project GitLab config, local paths, and worktree state. Fuzzy finder (`f` key) for project switching. Overview panel shows all projects with MR counts.
 - **Worktrunk CLI Integration**: Uses `wt list --format=json` (NOT the library crate — author warns API is unstable). `wt` supports `-C <path>` to target specific repos. Worktree actions (create/remove/merge) via popup dialogs.
 - **Optional Config**: Supports `-c`/`--config` for a TOML config file. Defaults to `~/.config/pertmux/pertmux.toml`, falls back to built-in defaults if absent.
 - **Startup Validation**: Config `validate()` checks local_path existence, source configuration, token availability, and project name uniqueness. Fails fast with clear error messages.
