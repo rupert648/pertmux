@@ -1,0 +1,43 @@
+---
+import '../styles/custom.css';
+import Navbar from '../components/Navbar.astro';
+import Hero from '../components/Hero.astro';
+import LinkingDiagram from '../components/LinkingDiagram.astro';
+import FeatureGrid from '../components/FeatureGrid.astro';
+import GettingStarted from '../components/GettingStarted.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pertmux - Your MRs. Your worktrees. Your agents. One dashboard.</title>
+    <meta name="description" content="A Rust TUI that links GitLab/GitHub merge requests to local branches, tmux sessions, and AI coding agents — so you never lose context." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0e1015" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="pertmux - Unified SWE Dashboard" />
+    <meta property="og:description" content="A Rust TUI that links GitLab/GitHub merge requests to local branches, tmux sessions, and AI coding agents." />
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="pertmux - Unified SWE Dashboard" />
+    <meta property="twitter:description" content="A Rust TUI that links GitLab/GitHub merge requests to local branches, tmux sessions, and AI coding agents." />
+  </head>
+  <body class="bg-gray-950 text-gray-300 font-sans antialiased selection:bg-orange-500/30 selection:text-orange-200 min-h-screen flex flex-col">
+    <Navbar />
+    
+    <main class="flex-grow">
+      <Hero />
+      <LinkingDiagram />
+      <FeatureGrid />
+      <GettingStarted />
+    </main>
+
+    <Footer />
+  </body>
+</html>
