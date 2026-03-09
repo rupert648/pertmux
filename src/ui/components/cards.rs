@@ -1,4 +1,5 @@
 use crate::linking::LinkedMergeRequest;
+use crate::types::AgentPane;
 use crate::ui::helpers::{compact_status_badge, merge_status_display, truncate};
 use crate::ui::ACCENT;
 use crate::worktrunk::{self, WtWorktree};
@@ -100,6 +101,7 @@ pub(crate) fn render_mr_card(
 pub(crate) fn render_worktree_card(
     frame: &mut Frame,
     wt: &WtWorktree,
+    pane: Option<&AgentPane>,
     rect: Rect,
     is_selected: bool,
 ) {
@@ -170,11 +172,12 @@ pub(crate) fn render_worktree_card(
     line1_spans.push(Span::styled(truncated, Style::default().fg(Color::Gray)));
 
     let age = worktrunk::format_age(wt.commit.timestamp);
-    let line2 = Line::from(vec![Span::styled(
-        age,
-        Style::default().fg(Color::DarkGray),
-    )]);
+    let mut line2_spans = vec![Span::styled(age, Style::default().fg(Color::DarkGray))];
+    if let Some(pane) = pane {
+        line2_spans.push(Span::raw(" "));
+        line2_spans.push(compact_status_badge(&pane.status));
+    }
 
-    let content = vec![Line::from(line1_spans), line2];
+    let content = vec![Line::from(line1_spans), Line::from(line2_spans)];
     frame.render_widget(Paragraph::new(content), card_inner);
 }

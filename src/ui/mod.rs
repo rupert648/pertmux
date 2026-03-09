@@ -3,6 +3,7 @@ use crate::client::ClientState;
 use crate::forge_clients::types::{MergeRequestDetail, PipelineJob};
 use crate::linking::DashboardState;
 use crate::protocol::ProjectSnapshot;
+use crate::types::AgentPane;
 use crate::worktrunk::WtWorktree;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -21,6 +22,7 @@ pub(crate) struct ProjectRenderData<'a> {
     pub(crate) cached_worktrees: &'a [WtWorktree],
     pub(crate) cached_mr_detail: Option<&'a MergeRequestDetail>,
     pub(crate) cached_pipeline_jobs: &'a [PipelineJob],
+    pub(crate) panes: &'a [AgentPane],
     pub(crate) mr_selected: usize,
     pub(crate) worktree_selected: usize,
     pub(crate) mr_focused: bool,
@@ -29,6 +31,7 @@ pub(crate) struct ProjectRenderData<'a> {
 impl<'a> ProjectRenderData<'a> {
     pub(crate) fn from_snapshot(
         proj: &'a ProjectSnapshot,
+        panes: &'a [AgentPane],
         mr_selected: usize,
         worktree_selected: usize,
         section: &'a SelectionSection,
@@ -38,6 +41,7 @@ impl<'a> ProjectRenderData<'a> {
             cached_worktrees: &proj.cached_worktrees,
             cached_mr_detail: proj.cached_mr_detail.as_ref(),
             cached_pipeline_jobs: &proj.cached_pipeline_jobs,
+            panes,
             mr_selected,
             worktree_selected,
             mr_focused: matches!(section, SelectionSection::MergeRequests),
