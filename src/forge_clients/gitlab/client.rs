@@ -1,3 +1,4 @@
+use crate::forge_clients::gitlab::types::GlDiscussion;
 use crate::forge_clients::traits::ForgeClient;
 use crate::forge_clients::types::*;
 use anyhow::{Context, Result};
@@ -137,5 +138,38 @@ impl ForgeClient for GitLabClient {
                 "Failed to parse MR notes response for {}",
                 iid
             ))
+    }
+
+    async fn fetch_discussions(&self, iid: u64) -> Result<Vec<MergeRequestThread>> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}/discussions?per_page=100",
+            self.base_url, self.project_id, iid
+        );
+        let discussions: Vec<GlDiscussion> = self
+            .client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .context(format!("Failed to fetch MR discussions from {}", url))?
+            .error_for_status()
+            .context(format!(
+                "GitLab API returned error status for MR {} discussions",
+                iid
+            ))?
+            .json()
+            .await
+            .context(format!(
+                "Failed to parse MR discussions response for {}",
+                iid
+            ))?;
+
+        let threads = discussions
+            .iter()
+            .map(|d| d.to_thread())
+            .filter(|t| !t.notes.is_empty())
+            .collect();
+
+        Ok(threads)
     }
 }
