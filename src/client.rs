@@ -8,7 +8,7 @@ use bytes::Bytes;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::{SinkExt, StreamExt};
 use ratatui::prelude::*;
@@ -125,14 +125,16 @@ impl ClientState {
             {
                 SelectionSection::MergeRequests => {
                     if !proj.dashboard.linked_mrs.is_empty()
-                        && self.mr_selected[self.active_project] < proj.dashboard.linked_mrs.len() - 1
+                        && self.mr_selected[self.active_project]
+                            < proj.dashboard.linked_mrs.len() - 1
                     {
                         self.mr_selected[self.active_project] += 1;
                     }
                 }
                 SelectionSection::Worktrees => {
                     if !proj.cached_worktrees.is_empty()
-                        && self.worktree_selected[self.active_project] < proj.cached_worktrees.len() - 1
+                        && self.worktree_selected[self.active_project]
+                            < proj.cached_worktrees.len() - 1
                     {
                         self.worktree_selected[self.active_project] += 1;
                     }
@@ -201,7 +203,12 @@ impl ClientState {
                     .map(|l| l.mr.source_branch.clone()),
                 SelectionSection::Worktrees => proj
                     .cached_worktrees
-                    .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+                    .get(
+                        *self
+                            .worktree_selected
+                            .get(self.active_project)
+                            .unwrap_or(&0),
+                    )
                     .and_then(|wt| wt.branch.clone()),
             }
         } else {
@@ -245,9 +252,12 @@ impl ClientState {
                 self.selection_section.get(self.active_project),
                 Some(SelectionSection::Worktrees)
             )
-            && let Some(wt) = proj
-                .cached_worktrees
-                .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+            && let Some(wt) = proj.cached_worktrees.get(
+                *self
+                    .worktree_selected
+                    .get(self.active_project)
+                    .unwrap_or(&0),
+            )
         {
             if wt.is_main {
                 self.notification = Some(("Cannot remove main worktree".into(), Instant::now()));
@@ -267,9 +277,12 @@ impl ClientState {
                 self.selection_section.get(self.active_project),
                 Some(SelectionSection::Worktrees)
             )
-            && let Some(wt) = proj
-                .cached_worktrees
-                .get(*self.worktree_selected.get(self.active_project).unwrap_or(&0))
+            && let Some(wt) = proj.cached_worktrees.get(
+                *self
+                    .worktree_selected
+                    .get(self.active_project)
+                    .unwrap_or(&0),
+            )
         {
             if wt.is_main {
                 self.notification = Some(("Cannot merge main worktree".into(), Instant::now()));
@@ -319,7 +332,12 @@ impl ClientState {
     }
 
     fn recompute_project_filter(&mut self) {
-        if let PopupState::ProjectFilter { input, filtered, selected } = &mut self.popup {
+        if let PopupState::ProjectFilter {
+            input,
+            filtered,
+            selected,
+        } = &mut self.popup
+        {
             let projects: Vec<(usize, &str)> = self
                 .snapshot
                 .projects
@@ -331,8 +349,8 @@ impl ClientState {
             if input.is_empty() {
                 *filtered = projects.iter().map(|(i, n)| (*i, n.to_string())).collect();
             } else {
-                use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
                 use nucleo_matcher::Matcher;
+                use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 
                 let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
                 let pattern = Pattern::parse(input, CaseMatching::Ignore, Normalization::Smart);
@@ -394,9 +412,9 @@ pub async fn run() -> Result<()> {
 
 pub async fn stop() -> Result<()> {
     let sock_path = daemon::socket_path();
-    let stream = UnixStream::connect(&sock_path).await.map_err(|_| {
-        anyhow::anyhow!("no daemon running at {}", sock_path.display())
-    })?;
+    let stream = UnixStream::connect(&sock_path)
+        .await
+        .map_err(|_| anyhow::anyhow!("no daemon running at {}", sock_path.display()))?;
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     // Drain the initial snapshot the daemon sends on connect,
@@ -433,7 +451,7 @@ async fn wait_for_initial_snapshot(
         let bytes = frame?;
         let msg: DaemonMsg = serde_json::from_slice(&bytes)?;
         match msg {
-            DaemonMsg::Snapshot(snap) => return Ok(snap),
+            DaemonMsg::Snapshot(snap) => return Ok(*snap),
             DaemonMsg::HandshakeAck { .. } => {}
             DaemonMsg::ActionResult { ok, message } => {
                 if !ok {
@@ -472,7 +490,7 @@ async fn run_client_loop(
                         let daemon_msg: DaemonMsg = serde_json::from_slice(&bytes)?;
                         match daemon_msg {
                             DaemonMsg::Snapshot(snap) => {
-                                state.update_snapshot(snap);
+                                state.update_snapshot(*snap);
                             }
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notification = Some((message, Instant::now()));
@@ -504,10 +522,12 @@ async fn handle_key(
         match code {
             KeyCode::Esc => state.close_popup(),
             KeyCode::Enter => {
-                if let PopupState::ProjectFilter { filtered, selected, .. } = &state.popup {
-                    if let Some(&(idx, _)) = filtered.get(*selected) {
-                        state.active_project = idx;
-                    }
+                if let PopupState::ProjectFilter {
+                    filtered, selected, ..
+                } = &state.popup
+                    && let Some(&(idx, _)) = filtered.get(*selected)
+                {
+                    state.active_project = idx;
                 }
                 state.close_popup();
                 if let Some(mr_iid) = state.current_mr_iid() {
@@ -522,17 +542,19 @@ async fn handle_key(
                 }
             }
             KeyCode::Down => {
-                if let PopupState::ProjectFilter { filtered, selected, .. } = &mut state.popup {
-                    if *selected + 1 < filtered.len() {
-                        *selected += 1;
-                    }
+                if let PopupState::ProjectFilter {
+                    filtered, selected, ..
+                } = &mut state.popup
+                    && *selected + 1 < filtered.len()
+                {
+                    *selected += 1;
                 }
             }
             KeyCode::Up => {
-                if let PopupState::ProjectFilter { selected, .. } = &mut state.popup {
-                    if *selected > 0 {
-                        *selected -= 1;
-                    }
+                if let PopupState::ProjectFilter { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
                 }
             }
             KeyCode::Backspace => {
@@ -648,7 +670,9 @@ async fn maybe_send_select_mr(
     before: Option<u64>,
 ) -> Result<()> {
     let after = state.current_mr_iid();
-    if after != before && let Some(mr_iid) = after {
+    if after != before
+        && let Some(mr_iid) = after
+    {
         send_msg(
             framed,
             ClientMsg::SelectMr {
@@ -679,10 +703,12 @@ fn focus_selected(state: &ClientState) -> Result<()> {
                 }
             }
             SelectionSection::Worktrees => {
-                if let Some(wt) = proj
-                    .cached_worktrees
-                    .get(*state.worktree_selected.get(state.active_project).unwrap_or(&0))
-                    && let Some(ref path) = wt.path
+                if let Some(wt) = proj.cached_worktrees.get(
+                    *state
+                        .worktree_selected
+                        .get(state.active_project)
+                        .unwrap_or(&0),
+                ) && let Some(ref path) = wt.path
                 {
                     tmux::find_or_create_pane(path, &proj.name)?;
                 }
@@ -694,22 +720,27 @@ fn focus_selected(state: &ClientState) -> Result<()> {
     Ok(())
 }
 
-async fn send_msg(framed: &mut Framed<UnixStream, LengthDelimitedCodec>, msg: ClientMsg) -> Result<()> {
+async fn send_msg(
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    msg: ClientMsg,
+) -> Result<()> {
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
     Ok(())
 }
 
 fn show_connection_error(sock_path: &std::path::Path) {
-    use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+    use ratatui::layout::{Alignment, Constraint, Layout};
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::{Line, Span};
-    use ratatui::layout::{Alignment, Constraint, Layout};
+    use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
     let _ = enable_raw_mode();
     let mut stdout = io::stdout();
     let _ = execute!(stdout, EnterAlternateScreen);
     let backend = CrosstermBackend::new(stdout);
-    let Ok(mut terminal) = Terminal::new(backend) else { return };
+    let Ok(mut terminal) = Terminal::new(backend) else {
+        return;
+    };
 
     let _ = terminal.draw(|frame| {
         let area = frame.area();
@@ -717,12 +748,14 @@ fn show_connection_error(sock_path: &std::path::Path) {
             Constraint::Fill(1),
             Constraint::Length(9),
             Constraint::Fill(1),
-        ]).split(area);
+        ])
+        .split(area);
         let horizontal = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Length(52),
             Constraint::Fill(1),
-        ]).split(vertical[1]);
+        ])
+        .split(vertical[1]);
         let rect = horizontal[1];
 
         let accent = Color::Rgb(255, 140, 0);
@@ -739,7 +772,9 @@ fn show_connection_error(sock_path: &std::path::Path) {
             Line::from(""),
             Line::from(Span::styled(
                 "daemon is not running",
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(vec![
@@ -751,10 +786,15 @@ fn show_connection_error(sock_path: &std::path::Path) {
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(""),
-            Line::from(Span::styled("press any key to close", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled(
+                "press any key to close",
+                Style::default().fg(Color::DarkGray),
+            )),
         ];
 
-        let paragraph = Paragraph::new(lines).block(block).alignment(Alignment::Center);
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .alignment(Alignment::Center);
         frame.render_widget(paragraph, rect);
     });
 

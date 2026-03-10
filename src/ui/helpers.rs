@@ -1,5 +1,6 @@
-use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use super::ACCENT;
+use crate::types::{AgentPane, PaneStatus, SessionDetail};
+use jiff::Timestamp;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -26,8 +27,8 @@ pub(crate) fn format_tokens(tokens: u64) -> String {
     }
 }
 
-pub(crate) fn format_timestamp(ts_ms: i64) -> String {
-    let secs = ts_ms / 1000;
+pub(crate) fn format_timestamp(ts: Timestamp) -> String {
+    let secs = ts.as_second();
     let hours = (secs % 86400) / 3600;
     let mins = (secs % 3600) / 60;
     format!("{:02}:{:02}", hours, mins)
@@ -36,7 +37,8 @@ pub(crate) fn format_timestamp(ts_ms: i64) -> String {
 pub(crate) fn session_duration(detail: &SessionDetail) -> Option<String> {
     let created = detail.session_created?;
     let updated = detail.session_updated?;
-    let elapsed_secs = (updated - created) / 1000;
+    updated.since(created).ok()?;
+    let elapsed_secs = updated.as_second() - created.as_second();
     if elapsed_secs < 60 {
         Some(format!("{}s", elapsed_secs))
     } else if elapsed_secs < 3600 {
@@ -56,12 +58,8 @@ pub(crate) fn session_duration(detail: &SessionDetail) -> Option<String> {
     }
 }
 
-pub(crate) fn format_date(iso: &str) -> &str {
-    if iso.len() >= 10 {
-        &iso[..10]
-    } else {
-        iso
-    }
+pub(crate) fn format_date(ts: Timestamp) -> String {
+    ts.to_string().chars().take(10).collect()
 }
 
 pub(crate) fn truncate(s: &str, max: usize) -> String {
@@ -79,46 +77,12 @@ pub(crate) fn leak_status(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-/// Parse ISO 8601 datetime (e.g. "2026-01-02T15:04:05Z") into relative time like "2d ago".
-pub(crate) fn format_relative_time(iso: &str) -> String {
-    if iso.len() < 19 {
-        return iso.to_string();
+pub(crate) fn format_elapsed(ts: Timestamp) -> String {
+    let now = Timestamp::now();
+    if now.since(ts).is_err() {
+        return "just now".to_string();
     }
-    let parts: Vec<&str> = iso[..19].split('T').collect();
-    if parts.len() != 2 {
-        return iso.to_string();
-    }
-    let date_parts: Vec<u64> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
-    let time_parts: Vec<u64> = parts[1].split(':').filter_map(|s| s.parse().ok()).collect();
-    if date_parts.len() != 3 || time_parts.len() != 3 {
-        return iso.to_string();
-    }
-
-    let (year, month, day) = (date_parts[0], date_parts[1], date_parts[2]);
-    let (hour, min, sec) = (time_parts[0], time_parts[1], time_parts[2]);
-
-    let days_from_year = |y: u64| -> u64 {
-        365 * y + y / 4 - y / 100 + y / 400
-    };
-    let days_in_month: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let mut total_days = days_from_year(year) - days_from_year(1970);
-    for m in 0..(month.saturating_sub(1) as usize) {
-        total_days += if m < 12 { days_in_month[m] } else { 30 };
-        if m == 1 && is_leap {
-            total_days += 1;
-        }
-    }
-    total_days += day.saturating_sub(1);
-
-    let ts = total_days * 86400 + hour * 3600 + min * 60 + sec;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let delta = (now as i64 - ts as i64).max(0) as u64;
+    let delta = (now.as_second() - ts.as_second()).max(0) as u64;
 
     if delta < 60 {
         "just now".to_string()
@@ -185,9 +149,7 @@ pub(crate) fn status_badge(status: &PaneStatus) -> Span<'static> {
         ),
         PaneStatus::Unknown => Span::styled(
             " ? no server ",
-            Style::default()
-                .fg(Color::DarkGray)
-                .bg(Color::Indexed(236)),
+            Style::default().fg(Color::DarkGray).bg(Color::Indexed(236)),
         ),
     }
 }
