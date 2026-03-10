@@ -6,7 +6,7 @@ use crate::forge_clients::types::{
 };
 use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
-use crate::linking::{link_all, DashboardState};
+use crate::linking::{DashboardState, link_all};
 use crate::protocol::{DashboardSnapshot, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
@@ -22,10 +22,21 @@ pub enum SelectionSection {
 
 pub enum PopupState {
     None,
-    CreateWorktree { input: String },
-    ConfirmRemove { branch: String },
-    ConfirmMerge { branch: String, worktree_path: String },
-    ProjectFilter { input: String, filtered: Vec<(usize, String)>, selected: usize },
+    CreateWorktree {
+        input: String,
+    },
+    ConfirmRemove {
+        branch: String,
+    },
+    ConfirmMerge {
+        branch: String,
+        worktree_path: String,
+    },
+    ProjectFilter {
+        input: String,
+        filtered: Vec<(usize, String)>,
+        selected: usize,
+    },
 }
 
 pub struct ProjectState {
@@ -112,9 +123,7 @@ impl App {
                     cached_threads: vec![],
                     cached_threads_iid: None,
                     cached_worktrees: vec![],
-                    dashboard: DashboardState {
-                        linked_mrs: vec![],
-                    },
+                    dashboard: DashboardState { linked_mrs: vec![] },
                     mr_selected: 0,
                     worktree_selected: 0,
                     selection_section: SelectionSection::MergeRequests,
@@ -243,13 +252,17 @@ impl App {
                     had_success = true;
                 }
                 Err(e) => {
-                    last_error =
-                        Some(format!("Forge error ({}): {}", proj.config.name, e));
+                    last_error = Some(format!("Forge error ({}): {}", proj.config.name, e));
                 }
             }
         }
 
-        if had_success && self.error.as_ref().is_some_and(|e| e.starts_with("Forge") || e.starts_with("GitLab")) {
+        if had_success
+            && self
+                .error
+                .as_ref()
+                .is_some_and(|e| e.starts_with("Forge") || e.starts_with("GitLab"))
+        {
             self.error = None;
         }
         if let Some(e) = last_error {
@@ -279,7 +292,11 @@ impl App {
             }
         }
 
-        match proj.client.fetch_ci_jobs(proj.cached_mr_detail.as_ref().unwrap()).await {
+        match proj
+            .client
+            .fetch_ci_jobs(proj.cached_mr_detail.as_ref().unwrap())
+            .await
+        {
             Ok(mut jobs) => {
                 jobs.reverse();
                 proj.cached_pipeline_jobs = jobs;
@@ -300,11 +317,12 @@ impl App {
         }
 
         if let Some(ref read_state) = self.read_state
-            && let Ok(notes) = proj.client.fetch_notes(iid).await {
-                let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
-                let _ = read_state.mark_notes_seen(&proj.config.project, iid, &note_ids);
-                let _ = read_state.mark_mr_viewed(&proj.config.project, iid, notes.len() as u32);
-            }
+            && let Ok(notes) = proj.client.fetch_notes(iid).await
+        {
+            let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
+            let _ = read_state.mark_notes_seen(&proj.config.project, iid, &note_ids);
+            let _ = read_state.mark_mr_viewed(&proj.config.project, iid, notes.len() as u32);
+        }
     }
 
     pub async fn refresh_worktrees(&mut self) {

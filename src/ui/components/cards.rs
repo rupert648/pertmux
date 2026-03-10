@@ -1,14 +1,14 @@
 use crate::linking::LinkedMergeRequest;
 use crate::types::AgentPane;
-use crate::ui::helpers::{compact_status_badge, merge_status_display, truncate};
 use crate::ui::ACCENT;
+use crate::ui::helpers::{compact_status_badge, merge_status_display, truncate};
 use crate::worktrunk::{self, WtWorktree};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
-    Frame,
 };
 
 pub(crate) fn render_mr_card(
@@ -156,12 +156,13 @@ pub(crate) fn render_worktree_card(
 
     let mut line1_spans: Vec<Span> = Vec::new();
     if let Some(ref symbols) = wt.symbols
-        && !symbols.is_empty() {
-            line1_spans.push(Span::styled(
-                format!("{} ", symbols),
-                Style::default().fg(Color::Yellow),
-            ));
-        }
+        && !symbols.is_empty()
+    {
+        line1_spans.push(Span::styled(
+            format!("{} ", symbols),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
     let msg = &wt.commit.message;
     let truncated = if msg.len() > card_inner.width as usize - 4 {
         format!("{}\u{2026}", &msg[..card_inner.width as usize - 5])

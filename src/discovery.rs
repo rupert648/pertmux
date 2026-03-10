@@ -1,4 +1,4 @@
-use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
+use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Discover the HTTP port for an opencode instance given the pane's PID.
@@ -91,13 +91,14 @@ fn find_listening_port(pids: &[u32]) -> Option<u16> {
 
     for socket in sockets {
         if let ProtocolSocketInfo::Tcp(tcp) = &socket.protocol_socket_info
-            && tcp.state == TcpState::Listen {
-                for &sock_pid in &socket.associated_pids {
-                    if pids.contains(&sock_pid) {
-                        return Some(tcp.local_port);
-                    }
+            && tcp.state == TcpState::Listen
+        {
+            for &sock_pid in &socket.associated_pids {
+                if pids.contains(&sock_pid) {
+                    return Some(tcp.local_port);
                 }
             }
+        }
     }
 
     None
