@@ -13,9 +13,31 @@ use crossterm::{
 use futures::{SinkExt, StreamExt};
 use ratatui::prelude::*;
 use std::io;
+use std::path::PathBuf;
 use std::time::Instant;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+fn last_project_path() -> Option<PathBuf> {
+    let data_dir = dirs::data_dir()?;
+    Some(data_dir.join("pertmux").join("last_project"))
+}
+
+fn save_last_project(name: &str) {
+    if let Some(path) = last_project_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, name);
+    }
+}
+
+fn load_last_project() -> Option<String> {
+    let path = last_project_path()?;
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
 
 pub struct ClientState {
     pub snapshot: DashboardSnapshot,
@@ -32,12 +54,15 @@ pub struct ClientState {
 impl ClientState {
     fn from_snapshot(snapshot: DashboardSnapshot) -> Self {
         let n = snapshot.projects.len();
+        let active_project = load_last_project()
+            .and_then(|name| snapshot.projects.iter().position(|p| p.name == name))
+            .unwrap_or(0);
         Self {
             snapshot,
-            active_project: 0,
+            active_project,
             mr_selected: vec![0; n],
             worktree_selected: vec![0; n],
-            selection_section: (0..n).map(|_| SelectionSection::MergeRequests).collect(),
+            selection_section: (0..n).map(|_| SelectionSection::Worktrees).collect(),
             selected: 0,
             popup: PopupState::None,
             notification: None,
@@ -49,7 +74,7 @@ impl ClientState {
         while self.mr_selected.len() < snapshot.projects.len() {
             self.mr_selected.push(0);
             self.worktree_selected.push(0);
-            self.selection_section.push(SelectionSection::MergeRequests);
+            self.selection_section.push(SelectionSection::Worktrees);
         }
 
         for (i, proj) in snapshot.projects.iter().enumerate() {
@@ -92,7 +117,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => {
                     if self.mr_selected[self.active_project] > 0 {
@@ -121,7 +146,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => {
                     if !proj.dashboard.linked_mrs.is_empty()
@@ -194,7 +219,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => proj
                     .dashboard
@@ -404,6 +429,10 @@ pub async fn run() -> Result<()> {
     let mut state = ClientState::from_snapshot(initial_snapshot);
     let result = run_client_loop(&mut terminal, &mut state, &mut framed).await;
 
+    if let Some(proj) = state.snapshot.projects.get(state.active_project) {
+        save_last_project(&proj.name);
+    }
+
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
@@ -528,6 +557,9 @@ async fn handle_key(
                     && let Some(&(idx, _)) = filtered.get(*selected)
                 {
                     state.active_project = idx;
+                    if let Some(proj) = state.snapshot.projects.get(idx) {
+                        save_last_project(&proj.name);
+                    }
                 }
                 state.close_popup();
                 if let Some(mr_iid) = state.current_mr_iid() {
@@ -690,7 +722,7 @@ fn focus_selected(state: &ClientState) -> Result<()> {
         match state
             .selection_section
             .get(state.active_project)
-            .unwrap_or(&SelectionSection::MergeRequests)
+            .unwrap_or(&SelectionSection::Worktrees)
         {
             SelectionSection::MergeRequests => {
                 if let Some(linked) = proj
