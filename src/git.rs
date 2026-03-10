@@ -5,11 +5,11 @@ use tokio::process::Command;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WorktreeInfo {
-    pub path: String,              // Absolute, canonicalized filesystem path
-    pub branch: Option<String>,    // Branch name (None if detached HEAD or bare)
-    pub head_commit: String,       // HEAD commit hash
-    pub is_main: bool,             // True if this is the main (first) worktree
-    pub is_bare: bool,             // True if bare repository
+    pub path: String,           // Absolute, canonicalized filesystem path
+    pub branch: Option<String>, // Branch name (None if detached HEAD or bare)
+    pub head_commit: String,    // HEAD commit hash
+    pub is_main: bool,          // True if this is the main (first) worktree
+    pub is_bare: bool,          // True if bare repository
 }
 
 /// Discover all git worktrees for the repository at `repo_path`.
@@ -74,7 +74,7 @@ fn parse_worktree_output(output: &str) -> Result<Vec<WorktreeInfo>> {
                 path,
                 branch,
                 head_commit,
-                is_main: i == 0,  // First block is always the main worktree
+                is_main: i == 0, // First block is always the main worktree
                 is_bare,
             });
         }
@@ -127,7 +127,8 @@ mod tests {
 
     #[test]
     fn test_parse_bare_repo() {
-        let output = "worktree /home/user/project.git\nHEAD abc123\nbranch refs/heads/main\nbare\n\n";
+        let output =
+            "worktree /home/user/project.git\nHEAD abc123\nbranch refs/heads/main\nbare\n\n";
         let result = parse_worktree_output(output).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].is_bare);

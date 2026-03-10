@@ -92,23 +92,14 @@ impl ForgeClient for GitLabClient {
             .await
             .context(format!("Failed to fetch MR detail from {}", url))?
             .error_for_status()
-            .context(format!(
-                "GitLab API returned error status for MR {}",
-                iid
-            ))?
+            .context(format!("GitLab API returned error status for MR {}", iid))?
             .json::<MergeRequestDetail>()
             .await
             .context(format!("Failed to parse MR detail response for {}", iid))
     }
 
-    async fn fetch_ci_jobs(
-        &self,
-        mr_detail: &MergeRequestDetail,
-    ) -> Result<Vec<PipelineJob>> {
-        let pipeline_id = mr_detail
-            .head_pipeline
-            .as_ref()
-            .map(|p| p.id);
+    async fn fetch_ci_jobs(&self, mr_detail: &MergeRequestDetail) -> Result<Vec<PipelineJob>> {
+        let pipeline_id = mr_detail.head_pipeline.as_ref().map(|p| p.id);
 
         match pipeline_id {
             Some(pid) => self.fetch_pipeline_jobs(pid).await,
@@ -134,10 +125,7 @@ impl ForgeClient for GitLabClient {
             ))?
             .json::<Vec<MergeRequestNote>>()
             .await
-            .context(format!(
-                "Failed to parse MR notes response for {}",
-                iid
-            ))
+            .context(format!("Failed to parse MR notes response for {}", iid))
     }
 
     async fn fetch_discussions(&self, iid: u64) -> Result<Vec<MergeRequestThread>> {

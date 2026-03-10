@@ -141,6 +141,27 @@ npm run preview   # Preview the build
 - **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. opencode) to be running in other tmux panes to display data.
 - **Edition**: Rust 2024.
 
+## CI (GitHub Actions)
+Two separate workflows with path filters — only the relevant workflow runs when files change.
+
+### Rust (`.github/workflows/rust.yml`)
+Triggers on changes to `src/**`, `Cargo.toml`, `Cargo.lock`.
+- **Format**: `cargo fmt --all --check`
+- **Clippy**: `cargo clippy --all-targets --all-features -- -D warnings` (with `Swatinem/rust-cache`, `shared-key: bundled`)
+- **Test**: `cargo test --all-features` (runs after fmt + clippy pass, shares the cache)
+- Uses `dtolnay/rust-toolchain@stable` (not the unmaintained `actions-rs`)
+- `rusqlite` bundled feature compiles SQLite from C source — no system deps needed on runners
+- `CARGO_INCREMENTAL: 0` to avoid wasting cache space in CI
+
+### Docs (`.github/workflows/docs.yml`)
+Triggers on changes to `docs/**`.
+- **Astro Check**: `npx astro check` (TypeScript diagnostics on `.astro` files, requires `@astrojs/check` + `typescript` devDependencies)
+- **Build**: `npm run build` (runs after check passes)
+- Node 22, `npm ci` with cache scoped to `docs/package-lock.json`
+- `ASTRO_TELEMETRY_DISABLED: true` on build step
+
+Both workflows use `concurrency` groups to cancel in-progress runs when new commits are pushed.
+
 ## Important Paths & Endpoints
 - **Daemon socket**: `/tmp/pertmux-{USER}.sock`
 - **Daemon log**: `/tmp/pertmux-daemon.log`

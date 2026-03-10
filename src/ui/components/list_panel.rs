@@ -1,15 +1,15 @@
+use super::mr_sections::draw_mr_sections_client;
 use crate::app::SelectionSection;
 use crate::client::ClientState;
 use crate::types::PaneStatus;
-use crate::ui::helpers::{compute_scroll, status_badge};
 use crate::ui::ACCENT;
-use super::mr_sections::draw_mr_sections_client;
+use crate::ui::helpers::{compute_scroll, status_badge};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
-    Frame,
 };
 
 pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
@@ -34,12 +34,16 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         )
     };
 
-    let in_worktrees = state.snapshot.projects.get(state.active_project).is_some_and(|_| {
-        matches!(
-            state.selection_section.get(state.active_project),
-            Some(SelectionSection::Worktrees)
-        )
-    });
+    let in_worktrees = state
+        .snapshot
+        .projects
+        .get(state.active_project)
+        .is_some_and(|_| {
+            matches!(
+                state.selection_section.get(state.active_project),
+                Some(SelectionSection::Worktrees)
+            )
+        });
 
     let hint_bottom = if !state.snapshot.projects.is_empty() {
         let mut hints = vec![
@@ -56,20 +60,32 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         ];
         if in_worktrees {
             hints.push(Span::styled("c", Style::default().fg(ACCENT)));
-            hints.push(Span::styled("reate  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled(
+                "reate  ",
+                Style::default().fg(Color::DarkGray),
+            ));
             hints.push(Span::styled("d", Style::default().fg(ACCENT)));
             hints.push(Span::styled("el  ", Style::default().fg(Color::DarkGray)));
             hints.push(Span::styled("m", Style::default().fg(ACCENT)));
             hints.push(Span::styled("erge  ", Style::default().fg(Color::DarkGray)));
         } else {
             hints.push(Span::styled("o", Style::default().fg(ACCENT)));
-            hints.push(Span::styled(" open  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled(
+                " open  ",
+                Style::default().fg(Color::DarkGray),
+            ));
         }
         hints.push(Span::styled("b", Style::default().fg(ACCENT)));
-        hints.push(Span::styled(" branch  ", Style::default().fg(Color::DarkGray)));
+        hints.push(Span::styled(
+            " branch  ",
+            Style::default().fg(Color::DarkGray),
+        ));
         if state.snapshot.projects.len() > 1 {
             hints.push(Span::styled("f", Style::default().fg(ACCENT)));
-            hints.push(Span::styled(" filter  ", Style::default().fg(Color::DarkGray)));
+            hints.push(Span::styled(
+                " filter  ",
+                Style::default().fg(Color::DarkGray),
+            ));
         }
         hints.push(Span::styled("q", Style::default().fg(ACCENT)));
         hints.push(Span::styled(" quit ", Style::default().fg(Color::DarkGray)));
@@ -137,7 +153,10 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
             proj,
             &state.snapshot.panes,
             *state.mr_selected.get(state.active_project).unwrap_or(&0),
-            *state.worktree_selected.get(state.active_project).unwrap_or(&0),
+            *state
+                .worktree_selected
+                .get(state.active_project)
+                .unwrap_or(&0),
             section,
             inner,
         );
@@ -181,7 +200,11 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
             let cursor = if is_selected { "\u{25b8} " } else { "  " };
             let badge = status_badge(&pane.status);
 
-            let title_color = if is_selected { Color::White } else { Color::Gray };
+            let title_color = if is_selected {
+                Color::White
+            } else {
+                Color::Gray
+            };
 
             let mut spans = vec![
                 Span::styled(
@@ -190,7 +213,10 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
                 ),
                 badge,
                 Span::raw(" "),
-                Span::styled(pane.display_title().to_string(), Style::default().fg(title_color)),
+                Span::styled(
+                    pane.display_title().to_string(),
+                    Style::default().fg(title_color),
+                ),
             ];
 
             if is_selected {
@@ -206,7 +232,10 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
                 pane.display_agent().to_string(),
                 Style::default().fg(Color::DarkGray),
             ));
-            detail_parts.push(Span::styled(" \u{00b7} ", Style::default().fg(Color::Indexed(238))));
+            detail_parts.push(Span::styled(
+                " \u{00b7} ",
+                Style::default().fg(Color::Indexed(238)),
+            ));
             detail_parts.push(Span::styled(
                 pane.display_model().to_string(),
                 Style::default().fg(Color::DarkGray),
@@ -215,7 +244,10 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
             if (pane.status == PaneStatus::Idle || pane.status == PaneStatus::Unknown)
                 && let Some(ago) = pane.time_ago()
             {
-                detail_parts.push(Span::styled(" \u{00b7} ", Style::default().fg(Color::Indexed(238))));
+                detail_parts.push(Span::styled(
+                    " \u{00b7} ",
+                    Style::default().fg(Color::Indexed(238)),
+                ));
                 detail_parts.push(Span::styled(ago, Style::default().fg(Color::DarkGray)));
             }
 
