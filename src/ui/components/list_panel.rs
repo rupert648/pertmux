@@ -147,7 +147,7 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         let section = state
             .selection_section
             .get(state.active_project)
-            .unwrap_or(&SelectionSection::MergeRequests);
+            .unwrap_or(&SelectionSection::Worktrees);
         draw_mr_sections_client(
             frame,
             proj,

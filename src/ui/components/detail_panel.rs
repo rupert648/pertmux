@@ -21,7 +21,7 @@ pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, a
         let section = state
             .selection_section
             .get(state.active_project)
-            .unwrap_or(&SelectionSection::MergeRequests);
+            .unwrap_or(&SelectionSection::Worktrees);
         draw_mr_detail_panel_client(
             frame,
             proj,

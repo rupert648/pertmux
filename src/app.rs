@@ -126,7 +126,7 @@ impl App {
                     dashboard: DashboardState { linked_mrs: vec![] },
                     mr_selected: 0,
                     worktree_selected: 0,
-                    selection_section: SelectionSection::MergeRequests,
+                    selection_section: SelectionSection::Worktrees,
                     last_detail_refresh: Instant::now() - Duration::from_secs(120),
                 })
             })
