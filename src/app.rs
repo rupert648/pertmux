@@ -299,13 +299,12 @@ impl App {
             }
         }
 
-        if let Some(ref read_state) = self.read_state {
-            if let Ok(notes) = proj.client.fetch_notes(iid).await {
+        if let Some(ref read_state) = self.read_state
+            && let Ok(notes) = proj.client.fetch_notes(iid).await {
                 let note_ids: Vec<u64> = notes.iter().map(|n| n.id).collect();
                 let _ = read_state.mark_notes_seen(&proj.config.project, iid, &note_ids);
                 let _ = read_state.mark_mr_viewed(&proj.config.project, iid, notes.len() as u32);
             }
-        }
     }
 
     pub async fn refresh_worktrees(&mut self) {

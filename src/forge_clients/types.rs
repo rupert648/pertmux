@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,8 +26,8 @@ pub struct MergeRequestSummary {
     pub draft: bool,
     pub user_notes_count: u32,
     pub web_url: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub detailed_merge_status: Option<String>,
     pub has_conflicts: Option<bool>,
 }
@@ -42,8 +43,8 @@ pub struct MergeRequestDetail {
     pub draft: bool,
     pub user_notes_count: u32,
     pub web_url: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub detailed_merge_status: Option<String>,
     pub has_conflicts: Option<bool>,
     pub assignees: Vec<ForgeUser>,
@@ -57,7 +58,7 @@ pub struct MergeRequestNote {
     pub id: u64,
     pub body: String,
     pub author: ForgeUser,
-    pub created_at: String,
+    pub created_at: Timestamp,
     pub system: bool,
 }
 
@@ -88,7 +89,7 @@ pub struct ThreadNote {
     pub id: u64,
     pub author: ForgeUser,
     pub body: String,
-    pub created_at: String,
+    pub created_at: Timestamp,
     pub system: bool,
 }
 

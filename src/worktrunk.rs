@@ -1,6 +1,6 @@
 use anyhow::Result;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,11 +188,11 @@ pub fn format_age(timestamp: i64) -> String {
     if timestamp <= 0 {
         return "—".to_string();
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let delta = (now - timestamp).max(0);
+    let ts = match Timestamp::from_second(timestamp) {
+        Ok(ts) => ts,
+        Err(_) => return "—".to_string(),
+    };
+    let delta = (Timestamp::now().as_second() - ts.as_second()).max(0);
 
     if delta < 60 {
         "just now".to_string()
@@ -361,40 +361,28 @@ mod tests {
 
     #[test]
     fn test_format_age_just_now() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = Timestamp::now().as_second();
         assert_eq!(format_age(now), "just now");
         assert_eq!(format_age(now - 30), "just now");
     }
 
     #[test]
     fn test_format_age_minutes() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = Timestamp::now().as_second();
         assert_eq!(format_age(now - 300), "5m ago");
         assert_eq!(format_age(now - 3540), "59m ago");
     }
 
     #[test]
     fn test_format_age_hours() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = Timestamp::now().as_second();
         assert_eq!(format_age(now - 3600), "1h ago");
         assert_eq!(format_age(now - 7200), "2h ago");
     }
 
     #[test]
     fn test_format_age_days() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = Timestamp::now().as_second();
         assert_eq!(format_age(now - 86400), "1d ago");
         assert_eq!(format_age(now - 172800), "2d ago");
     }

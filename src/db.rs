@@ -1,4 +1,5 @@
 use crate::types::{AgentPane, MessageSummary, SessionDetail, TodoItem};
+use jiff::Timestamp;
 use rusqlite::Connection;
 
 const DEFAULT_DB_PATH_SUFFIX: &str = ".local/share/opencode/opencode.db";
@@ -79,7 +80,7 @@ fn try_enrich(pane: &mut AgentPane, db_path: Option<&str>) -> anyhow::Result<()>
         pane.db_session_title = title;
         pane.agent = agent;
         pane.model = model;
-        pane.last_activity = updated;
+        pane.last_activity = updated.and_then(|ms| Timestamp::from_millisecond(ms).ok());
         pane.last_response = last_response;
     }
     Ok(())
@@ -114,8 +115,12 @@ fn try_fetch_detail(conn: &Connection, session_id: &str) -> anyhow::Result<Sessi
             message_count: row.get::<_, u32>(3)?,
             input_tokens: row.get::<_, u64>(4)?,
             output_tokens: row.get::<_, u64>(5)?,
-            session_created: row.get::<_, Option<i64>>(6)?,
-            session_updated: row.get::<_, Option<i64>>(7)?,
+            session_created: row
+                .get::<_, Option<i64>>(6)?
+                .and_then(|ms| Timestamp::from_millisecond(ms).ok()),
+            session_updated: row
+                .get::<_, Option<i64>>(7)?
+                .and_then(|ms| Timestamp::from_millisecond(ms).ok()),
             summary_files: row.get::<_, Option<u32>>(8)?,
             summary_additions: row.get::<_, Option<u32>>(9)?,
             summary_deletions: row.get::<_, Option<u32>>(10)?,
@@ -145,12 +150,16 @@ fn try_fetch_detail(conn: &Connection, session_id: &str) -> anyhow::Result<Sessi
     let mut stmt = conn.prepare(msg_query)?;
     let messages: Vec<MessageSummary> = stmt
         .query_map(rusqlite::params![session_id], |row| {
+            let ts_ms = row.get::<_, i64>(4)?;
+            let timestamp = Timestamp::from_millisecond(ts_ms)
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, ts_ms))?;
+
             Ok(MessageSummary {
                 role: row.get::<_, String>(0)?,
                 agent: row.get::<_, Option<String>>(1)?,
                 model: row.get::<_, Option<String>>(2)?,
                 output_tokens: row.get::<_, u64>(3)?,
-                timestamp: row.get::<_, i64>(4)?,
+                timestamp,
                 text_preview: row.get::<_, Option<String>>(5)?,
             })
         })?

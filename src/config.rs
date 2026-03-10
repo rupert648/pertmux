@@ -108,9 +108,9 @@ impl Config {
             return projects.clone();
         }
 
-        if let Some(ref gl) = self.gitlab {
-            if let (Some(project), Some(local_path)) = (&gl.project, &gl.local_path) {
-                let name = project.split('/').last().unwrap_or(project).to_string();
+        if let Some(ref gl) = self.gitlab
+            && let (Some(project), Some(local_path)) = (&gl.project, &gl.local_path) {
+                let name = project.split('/').next_back().unwrap_or(project).to_string();
                 return vec![ProjectConfig {
                     name,
                     source: ProjectForge::Gitlab,
@@ -119,7 +119,6 @@ impl Config {
                     username: gl.username.clone(),
                 }];
             }
-        }
 
         vec![]
     }
@@ -127,17 +126,15 @@ impl Config {
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut errors: Vec<String> = Vec::new();
 
-        if self.project.is_some() {
-            if let Some(ref gl) = self.gitlab {
-                if gl.project.is_some() {
+        if self.project.is_some()
+            && let Some(ref gl) = self.gitlab
+                && gl.project.is_some() {
                     errors.push(
                         "config: [gitlab] has 'project' field but [[project]] is also defined.\n\
                          hint: remove 'project' and 'local_path' from [gitlab] — use [[project]] instead."
                             .into(),
                     );
                 }
-            }
-        }
 
         let projects = self.resolve_projects();
 
@@ -172,25 +169,23 @@ impl Config {
             }
         }
 
-        if let Some(ref gl) = self.gitlab {
-            if gl.api_token().is_none() {
+        if let Some(ref gl) = self.gitlab
+            && gl.api_token().is_none() {
                 errors.push(
                     "config: [gitlab] has no token and PERTMUX_GITLAB_TOKEN is not set.\n\
                      hint: add token to [gitlab] or export PERTMUX_GITLAB_TOKEN."
                         .into(),
                 );
             }
-        }
 
-        if let Some(ref gh) = self.github {
-            if gh.api_token().is_none() {
+        if let Some(ref gh) = self.github
+            && gh.api_token().is_none() {
                 errors.push(
                     "config: [github] has no token and PERTMUX_GITHUB_TOKEN is not set.\n\
                      hint: add token to [github] or export PERTMUX_GITHUB_TOKEN."
                         .into(),
                 );
             }
-        }
 
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         for (i, name) in names.iter().enumerate() {
