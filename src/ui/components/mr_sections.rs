@@ -5,15 +5,15 @@ use super::cards::{render_mr_card, render_worktree_card};
 use crate::app::SelectionSection;
 use crate::protocol::ProjectSnapshot;
 use crate::types::AgentPane;
-use crate::ui::{ProjectRenderData, ACCENT};
+use crate::ui::{ACCENT, ProjectRenderData};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
-    Frame,
 };
 
 pub(crate) fn draw_mr_sections_client(
@@ -37,13 +37,13 @@ fn draw_mr_sections_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, area
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Ratio(mr_count as u32, mr_count as u32 + wt_count as u32),
-            Constraint::Ratio(wt_count as u32, mr_count as u32 + wt_count as u32),
+            Constraint::Ratio(wt_count as u32, wt_count as u32 + mr_count as u32),
+            Constraint::Ratio(mr_count as u32, wt_count as u32 + mr_count as u32),
         ])
         .split(area);
 
-    draw_mr_block_render(frame, proj, chunks[0], proj.mr_focused);
-    draw_worktree_block_render(frame, proj, chunks[1], !proj.mr_focused);
+    draw_worktree_block_render(frame, proj, chunks[0], !proj.mr_focused);
+    draw_mr_block_render(frame, proj, chunks[1], proj.mr_focused);
 }
 
 fn draw_mr_block_render(
