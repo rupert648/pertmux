@@ -34,7 +34,9 @@ fn save_last_project(name: &str) {
 
 fn load_last_project() -> Option<String> {
     let path = last_project_path()?;
-    std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 pub struct ClientState {
@@ -53,19 +55,14 @@ impl ClientState {
     fn from_snapshot(snapshot: DashboardSnapshot) -> Self {
         let n = snapshot.projects.len();
         let active_project = load_last_project()
-            .and_then(|name| {
-                snapshot
-                    .projects
-                    .iter()
-                    .position(|p| p.name == name)
-            })
+            .and_then(|name| snapshot.projects.iter().position(|p| p.name == name))
             .unwrap_or(0);
         Self {
             snapshot,
             active_project,
             mr_selected: vec![0; n],
             worktree_selected: vec![0; n],
-            selection_section: (0..n).map(|_| SelectionSection::MergeRequests).collect(),
+            selection_section: (0..n).map(|_| SelectionSection::Worktrees).collect(),
             selected: 0,
             popup: PopupState::None,
             notification: None,
@@ -77,7 +74,7 @@ impl ClientState {
         while self.mr_selected.len() < snapshot.projects.len() {
             self.mr_selected.push(0);
             self.worktree_selected.push(0);
-            self.selection_section.push(SelectionSection::MergeRequests);
+            self.selection_section.push(SelectionSection::Worktrees);
         }
 
         for (i, proj) in snapshot.projects.iter().enumerate() {
@@ -120,7 +117,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => {
                     if self.mr_selected[self.active_project] > 0 {
@@ -149,7 +146,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => {
                     if !proj.dashboard.linked_mrs.is_empty()
@@ -222,7 +219,7 @@ impl ClientState {
             match self
                 .selection_section
                 .get(self.active_project)
-                .unwrap_or(&SelectionSection::MergeRequests)
+                .unwrap_or(&SelectionSection::Worktrees)
             {
                 SelectionSection::MergeRequests => proj
                     .dashboard
@@ -725,7 +722,7 @@ fn focus_selected(state: &ClientState) -> Result<()> {
         match state
             .selection_section
             .get(state.active_project)
-            .unwrap_or(&SelectionSection::MergeRequests)
+            .unwrap_or(&SelectionSection::Worktrees)
         {
             SelectionSection::MergeRequests => {
                 if let Some(linked) = proj
