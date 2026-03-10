@@ -353,8 +353,7 @@ mod tests {
             { "branch": "feat/old", "kind": "branch", "commit": { "sha": "b", "short_sha": "b" }, "is_main": false, "is_current": false, "is_previous": false }
         ]"#;
         let all: Vec<WtWorktree> = serde_json::from_str(json).unwrap();
-        let filtered: Vec<WtWorktree> =
-            all.into_iter().filter(|w| w.kind == "worktree").collect();
+        let filtered: Vec<WtWorktree> = all.into_iter().filter(|w| w.kind == "worktree").collect();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].branch.as_deref(), Some("main"));
     }

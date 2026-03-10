@@ -7,13 +7,13 @@ use crate::ui::helpers::{
     compact_status_badge, format_date, format_elapsed, format_timestamp, format_tokens,
     session_duration, shorten_path, truncate,
 };
-use crate::ui::{ProjectRenderData, ACCENT};
+use crate::ui::{ACCENT, ProjectRenderData};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
-    Frame,
 };
 
 pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
@@ -177,38 +177,40 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
     ]));
 
     if let Some(detail) = proj.cached_mr_detail
-        && detail.iid == mr.iid {
-            if let Some(ref merge_status) = detail.detailed_merge_status {
-                lines.push(Line::from(vec![
-                    Span::styled("  status     ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(merge_status.as_str(), Style::default().fg(Color::Gray)),
-                ]));
-            }
-            if let Some(has_conflicts) = detail.has_conflicts
-                && has_conflicts {
-                    lines.push(Line::from(vec![
-                        Span::styled("  conflicts  ", Style::default().fg(Color::DarkGray)),
-                        Span::styled("yes", Style::default().fg(Color::Red)),
-                    ]));
-                }
-            if let Some(ref pipeline) = detail.head_pipeline {
-                let pipe_color = match pipeline.status.as_str() {
-                    "success" => Color::Green,
-                    "failed" => Color::Red,
-                    "running" => ACCENT,
-                    "pending" => Color::Yellow,
-                    _ => Color::Gray,
-                };
-                lines.push(Line::from(vec![
-                    Span::styled("  pipeline   ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(&pipeline.status, Style::default().fg(pipe_color)),
-                ]));
-            }
-
-            if !proj.cached_pipeline_jobs.is_empty() {
-                lines.extend(render_pipeline_dots(proj.cached_pipeline_jobs));
-            }
+        && detail.iid == mr.iid
+    {
+        if let Some(ref merge_status) = detail.detailed_merge_status {
+            lines.push(Line::from(vec![
+                Span::styled("  status     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(merge_status.as_str(), Style::default().fg(Color::Gray)),
+            ]));
         }
+        if let Some(has_conflicts) = detail.has_conflicts
+            && has_conflicts
+        {
+            lines.push(Line::from(vec![
+                Span::styled("  conflicts  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("yes", Style::default().fg(Color::Red)),
+            ]));
+        }
+        if let Some(ref pipeline) = detail.head_pipeline {
+            let pipe_color = match pipeline.status.as_str() {
+                "success" => Color::Green,
+                "failed" => Color::Red,
+                "running" => ACCENT,
+                "pending" => Color::Yellow,
+                _ => Color::Gray,
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  pipeline   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&pipeline.status, Style::default().fg(pipe_color)),
+            ]));
+        }
+
+        if !proj.cached_pipeline_jobs.is_empty() {
+            lines.extend(render_pipeline_dots(proj.cached_pipeline_jobs));
+        }
+    }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(

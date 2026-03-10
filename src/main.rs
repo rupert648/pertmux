@@ -1,12 +1,12 @@
 mod app;
-mod coding_agent;
 mod client;
+mod coding_agent;
 mod config;
 mod daemon;
 mod db;
 mod discovery;
-mod git;
 mod forge_clients;
+mod git;
 mod linking;
 mod protocol;
 #[allow(unused)]
@@ -24,7 +24,7 @@ use clap::{Parser, Subcommand};
     about = "TUI dashboard for coding agent sessions in tmux",
     version,
     subcommand_required = true,
-    arg_required_else_help = true,
+    arg_required_else_help = true
 )]
 struct Cli {
     #[arg(short = 'c', long = "config", global = true)]
