@@ -5,15 +5,15 @@ use super::cards::{render_mr_card, render_worktree_card};
 use crate::app::SelectionSection;
 use crate::protocol::ProjectSnapshot;
 use crate::types::AgentPane;
-use crate::ui::{ProjectRenderData, ACCENT};
+use crate::ui::{ACCENT, ProjectRenderData};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
-    Frame,
 };
 
 pub(crate) fn draw_mr_sections_client(

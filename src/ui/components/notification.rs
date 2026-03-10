@@ -2,11 +2,11 @@ use crate::client::ClientState;
 use crate::ui::helpers::truncate;
 use crate::ui::{ACCENT, NOTIFICATION_DURATION};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
-    Frame,
 };
 
 pub(crate) fn draw_notification_client(frame: &mut Frame, state: &ClientState, area: Rect) {

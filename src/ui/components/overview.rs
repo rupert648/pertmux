@@ -2,11 +2,11 @@ use crate::client::ClientState;
 use crate::types::PaneStatus;
 use crate::ui::ACCENT;
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
-    Frame,
 };
 
 pub(crate) fn draw_overview_panel(frame: &mut Frame, state: &ClientState, area: Rect) {
