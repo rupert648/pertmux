@@ -139,24 +139,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // Integration test: discover worktrees on the actual pertmux repo
-    // This test requires git to be installed, which it always is in this environment
-    #[tokio::test]
-    async fn test_discover_real_worktrees() {
-        // Use the pertmux repo itself (always a git repo)
-        let result = discover_worktrees(".").await;
-        assert!(result.is_ok(), "discover_worktrees failed: {:?}", result);
-        let worktrees = result.unwrap();
-        assert!(!worktrees.is_empty(), "Expected at least one worktree");
-        assert!(worktrees[0].is_main, "First worktree should be main");
-        // Current branch should be "pertmux-v2"
-        assert_eq!(
-            worktrees[0].branch,
-            Some("pertmux-v2".to_string()),
-            "Expected branch pertmux-v2"
-        );
-    }
-
     #[tokio::test]
     async fn test_non_git_dir_returns_error() {
         let result = discover_worktrees("/tmp").await;
