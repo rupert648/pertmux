@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -29,8 +30,8 @@ pub struct GhPullRequest {
     #[serde(default)]
     pub review_comments: u32,
     pub html_url: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default)]
     pub mergeable: Option<bool>,
     #[serde(default)]
@@ -66,7 +67,7 @@ pub struct GhIssueComment {
     pub id: u64,
     pub body: Option<String>,
     pub user: GhUser,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 #[cfg(test)]

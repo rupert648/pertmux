@@ -69,6 +69,7 @@ mod tests {
     use super::*;
     use crate::forge_clients::types::ForgeUser;
     use crate::types::PaneStatus;
+    use jiff::Timestamp;
 
     fn test_db_path(test_name: &str) -> String {
         let nanos = SystemTime::now()
@@ -98,8 +99,8 @@ mod tests {
             draft: false,
             user_notes_count,
             web_url: "https://gitlab.example.com/team/project/-/merge_requests/1".to_string(),
-            created_at: "2026-01-01T00:00:00.000Z".to_string(),
-            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            created_at: Timestamp::from_second(1_767_225_600).unwrap(),
+            updated_at: Timestamp::from_second(1_767_225_600).unwrap(),
             detailed_merge_status: None,
             has_conflicts: None,
         }

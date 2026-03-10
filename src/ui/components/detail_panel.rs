@@ -4,7 +4,7 @@ use crate::client::ClientState;
 use crate::protocol::ProjectSnapshot;
 use crate::types::SessionDetail;
 use crate::ui::helpers::{
-    compact_status_badge, format_date, format_relative_time, format_timestamp, format_tokens,
+    compact_status_badge, format_date, format_elapsed, format_timestamp, format_tokens,
     session_duration, shorten_path, truncate,
 };
 use crate::ui::{ProjectRenderData, ACCENT};
@@ -176,22 +176,21 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
         ),
     ]));
 
-    if let Some(detail) = proj.cached_mr_detail {
-        if detail.iid == mr.iid {
+    if let Some(detail) = proj.cached_mr_detail
+        && detail.iid == mr.iid {
             if let Some(ref merge_status) = detail.detailed_merge_status {
                 lines.push(Line::from(vec![
                     Span::styled("  status     ", Style::default().fg(Color::DarkGray)),
                     Span::styled(merge_status.as_str(), Style::default().fg(Color::Gray)),
                 ]));
             }
-            if let Some(has_conflicts) = detail.has_conflicts {
-                if has_conflicts {
+            if let Some(has_conflicts) = detail.has_conflicts
+                && has_conflicts {
                     lines.push(Line::from(vec![
                         Span::styled("  conflicts  ", Style::default().fg(Color::DarkGray)),
                         Span::styled("yes", Style::default().fg(Color::Red)),
                     ]));
                 }
-            }
             if let Some(ref pipeline) = detail.head_pipeline {
                 let pipe_color = match pipeline.status.as_str() {
                     "success" => Color::Green,
@@ -210,7 +209,6 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
                 lines.extend(render_pipeline_dots(proj.cached_pipeline_jobs));
             }
         }
-    }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -278,7 +276,7 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
     lines.push(Line::from(vec![
         Span::styled("  updated    ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            format_date(&mr.updated_at),
+            format_date(mr.updated_at),
             Style::default().fg(Color::White),
         ),
     ]));
@@ -350,7 +348,7 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
                     Style::default().fg(Color::White),
                 ),
                 Span::styled(
-                    format!(" \u{00b7} {}", format_relative_time(&first.created_at)),
+                    format!(" \u{00b7} {}", format_elapsed(first.created_at)),
                     Style::default().fg(Color::DarkGray),
                 ),
             ];
@@ -391,7 +389,7 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
                         Style::default().fg(Color::White),
                     ),
                     Span::styled(
-                        format!(" \u{00b7} {}", format_relative_time(&reply.created_at)),
+                        format!(" \u{00b7} {}", format_elapsed(reply.created_at)),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]));

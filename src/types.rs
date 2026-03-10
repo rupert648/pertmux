@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub struct AgentPane {
     pub db_session_title: Option<String>,
     pub agent: Option<String>,
     pub model: Option<String>,
-    pub last_activity: Option<i64>,
+    pub last_activity: Option<Timestamp>,
     pub db_session_id: Option<String>,
     pub last_response: Option<String>,
 }
@@ -51,11 +52,9 @@ impl AgentPane {
 
     pub fn time_ago(&self) -> Option<String> {
         let ts = self.last_activity?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_millis() as i64;
-        let elapsed_secs = (now_ms - ts) / 1000;
+        let now = Timestamp::now();
+        now.since(ts).ok()?;
+        let elapsed_secs = now.as_second() - ts.as_second();
         if elapsed_secs < 0 {
             return None;
         }
@@ -82,8 +81,8 @@ pub struct SessionDetail {
     pub message_count: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
-    pub session_created: Option<i64>,
-    pub session_updated: Option<i64>,
+    pub session_created: Option<Timestamp>,
+    pub session_updated: Option<Timestamp>,
     pub summary_files: Option<u32>,
     pub summary_additions: Option<u32>,
     pub summary_deletions: Option<u32>,
@@ -99,7 +98,7 @@ pub struct MessageSummary {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub output_tokens: u64,
-    pub timestamp: i64,
+    pub timestamp: Timestamp,
     pub text_preview: Option<String>,
 }
 

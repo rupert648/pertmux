@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub fn socket_path() -> PathBuf {
@@ -49,7 +49,7 @@ pub async fn run(config: Config) -> Result<()> {
     app.refresh_worktrees().await;
 
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
-    let _ = broadcast_tx.send(DaemonMsg::Snapshot(app.snapshot()));
+    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
 
     let accept_broadcast_tx = broadcast_tx.clone();
     let accept_cmd_tx = cmd_tx.clone();
@@ -155,7 +155,9 @@ async fn accept_loop(
                 let cmd_tx = cmd_tx.clone();
                 let latest_snapshot = Arc::clone(&latest_snapshot);
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, snapshot_rx, cmd_tx, latest_snapshot).await {
+                    if let Err(e) =
+                        handle_client(stream, snapshot_rx, cmd_tx, latest_snapshot).await
+                    {
                         let msg = e.to_string();
                         if !msg.contains("Broken pipe") && !msg.contains("Connection reset") {
                             eprintln!("[pertmux-daemon] client error: {}", e);
@@ -182,7 +184,7 @@ async fn handle_client(
         let guard = latest_snapshot.lock().await;
         guard.clone()
     };
-    let msg = DaemonMsg::Snapshot(initial_snapshot);
+    let msg = DaemonMsg::Snapshot(Box::new(initial_snapshot));
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
 
     loop {
@@ -286,5 +288,5 @@ async fn broadcast_snapshot(
         let mut guard = latest_snapshot.lock().await;
         *guard = snapshot.clone();
     }
-    let _ = broadcast_tx.send(DaemonMsg::Snapshot(snapshot));
+    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(snapshot)));
 }

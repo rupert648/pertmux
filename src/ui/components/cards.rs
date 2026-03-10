@@ -155,14 +155,13 @@ pub(crate) fn render_worktree_card(
     }
 
     let mut line1_spans: Vec<Span> = Vec::new();
-    if let Some(ref symbols) = wt.symbols {
-        if !symbols.is_empty() {
+    if let Some(ref symbols) = wt.symbols
+        && !symbols.is_empty() {
             line1_spans.push(Span::styled(
                 format!("{} ", symbols),
                 Style::default().fg(Color::Yellow),
             ));
         }
-    }
     let msg = &wt.commit.message;
     let truncated = if msg.len() > card_inner.width as usize - 4 {
         format!("{}\u{2026}", &msg[..card_inner.width as usize - 5])

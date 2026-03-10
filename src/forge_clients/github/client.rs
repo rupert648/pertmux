@@ -59,18 +59,12 @@ impl GitHubClient {
             draft: pr.draft,
             user_notes_count: pr.comments + pr.review_comments,
             web_url: pr.html_url.clone(),
-            created_at: pr.created_at.clone(),
-            updated_at: pr.updated_at.clone(),
+            created_at: pr.created_at,
+            updated_at: pr.updated_at,
             detailed_merge_status: pr.mergeable_state.as_deref().map(map_mergeable_state),
             has_conflicts: pr
                 .mergeable
-                .and_then(|m| {
-                    if !m && pr.mergeable_state.as_deref() == Some("dirty") {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }),
+                .map(|m| !m && pr.mergeable_state.as_deref() == Some("dirty")),
         }
     }
 
@@ -93,18 +87,12 @@ impl GitHubClient {
             draft: pr.draft,
             user_notes_count: pr.comments + pr.review_comments,
             web_url: pr.html_url.clone(),
-            created_at: pr.created_at.clone(),
-            updated_at: pr.updated_at.clone(),
+            created_at: pr.created_at,
+            updated_at: pr.updated_at,
             detailed_merge_status: pr.mergeable_state.as_deref().map(map_mergeable_state),
             has_conflicts: pr
                 .mergeable
-                .and_then(|m| {
-                    if !m && pr.mergeable_state.as_deref() == Some("dirty") {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }),
+                .map(|m| !m && pr.mergeable_state.as_deref() == Some("dirty")),
             assignees: vec![],
             reviewers: vec![],
             head_pipeline: None,
@@ -170,10 +158,8 @@ impl ForgeClient for GitHubClient {
             .await
             .context("Failed to parse PR list response")?;
 
-        let mut summaries: Vec<MergeRequestSummary> = prs
-            .iter()
-            .map(|pr| self.gh_pr_to_summary(pr))
-            .collect();
+        let mut summaries: Vec<MergeRequestSummary> =
+            prs.iter().map(|pr| self.gh_pr_to_summary(pr)).collect();
 
         if let Some(ref username) = self.username {
             summaries.retain(|mr| mr.author.username == *username);
@@ -195,10 +181,7 @@ impl ForgeClient for GitHubClient {
             .await
             .context(format!("Failed to fetch PR detail from {}", url))?
             .error_for_status()
-            .context(format!(
-                "GitHub API returned error status for PR {}",
-                iid
-            ))?
+            .context(format!("GitHub API returned error status for PR {}", iid))?
             .json()
             .await
             .context(format!("Failed to parse PR detail response for {}", iid))?;
@@ -206,10 +189,7 @@ impl ForgeClient for GitHubClient {
         Ok(self.gh_pr_to_detail(&pr))
     }
 
-    async fn fetch_ci_jobs(
-        &self,
-        mr_detail: &MergeRequestDetail,
-    ) -> Result<Vec<PipelineJob>> {
+    async fn fetch_ci_jobs(&self, mr_detail: &MergeRequestDetail) -> Result<Vec<PipelineJob>> {
         let sha = match &mr_detail.head_sha {
             Some(sha) => sha.clone(),
             None => return Ok(vec![]),
@@ -271,10 +251,7 @@ impl ForgeClient for GitHubClient {
             ))?
             .json()
             .await
-            .context(format!(
-                "Failed to parse comments response for PR {}",
-                iid
-            ))?;
+            .context(format!("Failed to parse comments response for PR {}", iid))?;
 
         let notes = comments
             .into_iter()
@@ -284,7 +261,7 @@ impl ForgeClient for GitHubClient {
                 author: ForgeUser {
                     id: c.user.id,
                     username: c.user.login.clone(),
-                    name: c.user.name.unwrap_or_else(|| c.user.login),
+                    name: c.user.name.unwrap_or(c.user.login),
                 },
                 created_at: c.created_at,
                 system: false,
@@ -313,10 +290,7 @@ impl ForgeClient for GitHubClient {
             ))?
             .json()
             .await
-            .context(format!(
-                "Failed to parse comments response for PR {}",
-                iid
-            ))?;
+            .context(format!("Failed to parse comments response for PR {}", iid))?;
 
         let threads = comments
             .into_iter()
@@ -327,7 +301,7 @@ impl ForgeClient for GitHubClient {
                     author: ForgeUser {
                         id: c.user.id,
                         username: c.user.login.clone(),
-                        name: c.user.name.unwrap_or_else(|| c.user.login),
+                        name: c.user.name.unwrap_or(c.user.login),
                     },
                     body: c.body.unwrap_or_default(),
                     created_at: c.created_at,
@@ -373,10 +347,7 @@ mod tests {
             map_check_run_status("completed", Some("success")),
             "success"
         );
-        assert_eq!(
-            map_check_run_status("completed", Some("failure")),
-            "failed"
-        );
+        assert_eq!(map_check_run_status("completed", Some("failure")), "failed");
         assert_eq!(
             map_check_run_status("completed", Some("cancelled")),
             "canceled"

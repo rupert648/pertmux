@@ -75,7 +75,7 @@ pub enum ClientMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DaemonMsg {
     HandshakeAck { version: u32 },
-    Snapshot(DashboardSnapshot),
+    Snapshot(Box<DashboardSnapshot>),
     ActionResult { ok: bool, message: String },
 }
 
@@ -87,6 +87,7 @@ mod tests {
     use crate::linking::LinkedMergeRequest;
     use crate::types::PaneStatus;
     use crate::worktrunk::WtCommit;
+    use jiff::Timestamp;
 
     #[test]
     fn dashboard_snapshot_round_trip_json() {
@@ -104,8 +105,8 @@ mod tests {
             draft: false,
             user_notes_count: 1,
             web_url: "https://gitlab.example.com/team/pertmux/-/merge_requests/42".to_string(),
-            created_at: "2026-03-01T00:00:00.000Z".to_string(),
-            updated_at: "2026-03-01T00:00:00.000Z".to_string(),
+            created_at: "2026-03-01T00:00:00.000Z".parse().unwrap(),
+            updated_at: "2026-03-01T00:00:00.000Z".parse().unwrap(),
             detailed_merge_status: Some("mergeable".to_string()),
             has_conflicts: Some(false),
         };
@@ -136,7 +137,7 @@ mod tests {
             db_session_title: Some("Protocol work".to_string()),
             agent: Some("opencode".to_string()),
             model: Some("gpt-5".to_string()),
-            last_activity: Some(1_762_000_000_000),
+            last_activity: Some(Timestamp::from_millisecond(1_762_000_000_000).unwrap()),
             db_session_id: Some("sess-1".to_string()),
             last_response: Some("done".to_string()),
         };

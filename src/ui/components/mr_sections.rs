@@ -126,7 +126,7 @@ fn draw_mr_block_render(
     }
 }
 
-fn build_pane_by_path<'a>(panes: &'a [AgentPane]) -> HashMap<PathBuf, &'a AgentPane> {
+fn build_pane_by_path(panes: &[AgentPane]) -> HashMap<PathBuf, &AgentPane> {
     panes
         .iter()
         .filter_map(|pane| {

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use serde::Deserialize;
 
 use crate::forge_clients::types::{ForgeUser, MergeRequestThread, ThreadNote};
@@ -15,7 +16,7 @@ pub struct GlDiscussionNote {
     pub id: u64,
     pub body: String,
     pub author: GlUser,
-    pub created_at: String,
+    pub created_at: Timestamp,
     pub system: bool,
     #[serde(default)]
     pub resolvable: bool,
@@ -64,7 +65,7 @@ impl GlDiscussion {
                         name: n.author.name.clone(),
                     },
                     body: n.body.clone(),
-                    created_at: n.created_at.clone(),
+                    created_at: n.created_at,
                     system: n.system,
                 })
                 .collect(),
