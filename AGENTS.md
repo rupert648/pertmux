@@ -163,3 +163,4 @@ npm run preview   # Preview the build
 - Do NOT use `statusline` field from wt output (contains ANSI escape codes). Use `symbols` field instead.
 - No unsafe code. Manual validation with `anyhow` (no validation crate).
 - `ACCENT` color constant: `Color::Rgb(255, 140, 0)` (orange).
+- Never add AI co-author trailers (e.g. `Co-authored-by: Sisyphus ...`) to commits.
