@@ -13,7 +13,10 @@ pertmux -c ./path/to/config.toml serve
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes |
+| `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes and agent status |
+| `mr_detail_interval` | integer | `60` | How often (in seconds) to refresh MR detail and pipeline status |
+| `worktree_interval` | integer | `30` | How often (in seconds) to refresh worktree list |
+| `mr_list_interval` | integer | `300` | How often (in seconds) to refresh the MR/PR list from the forge |
 | `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
 
 ## `[gitlab]`

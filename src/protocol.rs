@@ -1,12 +1,13 @@
 use crate::config::{KeybindingsConfig, ProjectForge};
 use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
+use crate::mr_changes::MrChange;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
 use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,8 @@ pub struct DashboardSnapshot {
     pub default_agent_command: Option<String>,
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+    #[serde(default)]
+    pub pending_changes: Vec<MrChange>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -187,6 +190,7 @@ mod tests {
             seconds_since_refresh: 2,
             default_agent_command: None,
             keybindings: KeybindingsConfig::default(),
+            pending_changes: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");

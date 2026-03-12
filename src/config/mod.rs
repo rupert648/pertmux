@@ -14,6 +14,9 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct Config {
     pub refresh_interval: u64,
+    pub mr_detail_interval: u64,
+    pub worktree_interval: u64,
+    pub mr_list_interval: u64,
     pub default_agent_command: Option<String>,
     pub keybindings: KeybindingsConfig,
     pub agent: AgentConfig,
@@ -26,6 +29,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             refresh_interval: 2,
+            mr_detail_interval: 60,
+            worktree_interval: 30,
+            mr_list_interval: 300,
             default_agent_command: None,
             keybindings: KeybindingsConfig::default(),
             agent: AgentConfig::default(),
