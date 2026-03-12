@@ -159,16 +159,12 @@ impl App {
 
     pub async fn refresh(&mut self) {
         self.last_refresh = Instant::now();
+        self.error = None;
 
         let process_names: Vec<&str> = self.agents.iter().map(|a| a.process_name()).collect();
 
         let mut panes = match tmux::list_agent_panes(&process_names) {
-            Ok(p) => {
-                if self.error.as_ref().is_some_and(|e| e.starts_with("tmux")) {
-                    self.error = None;
-                }
-                p
-            }
+            Ok(p) => p,
             Err(e) => {
                 self.error = Some(format!("tmux error: {}", e));
                 return;
@@ -243,13 +239,11 @@ impl App {
 
     pub async fn refresh_mrs(&mut self) {
         let mut last_error: Option<String> = None;
-        let mut had_success = false;
 
         for proj in &mut self.projects {
             match proj.client.fetch_mrs().await {
                 Ok(mrs) => {
                     proj.cached_mrs = mrs;
-                    had_success = true;
                 }
                 Err(e) => {
                     last_error = Some(format!("Forge error ({}): {}", proj.config.name, e));
@@ -257,14 +251,6 @@ impl App {
             }
         }
 
-        if had_success
-            && self
-                .error
-                .as_ref()
-                .is_some_and(|e| e.starts_with("Forge") || e.starts_with("GitLab"))
-        {
-            self.error = None;
-        }
         if let Some(e) = last_error {
             self.error = Some(e);
         }
