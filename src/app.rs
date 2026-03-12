@@ -71,6 +71,7 @@ pub struct App {
     pub projects: Vec<ProjectState>,
     pub active_project: usize,
     pub read_state: Option<ReadStateDb>,
+    pub default_agent_command: Option<String>,
     #[allow(dead_code)]
     pub notification: Option<(String, Instant)>,
     #[allow(dead_code)]
@@ -82,6 +83,7 @@ impl App {
         let resolved_projects = config.resolve_projects();
         let gitlab_source = config.gitlab.clone();
         let github_source = config.github.clone();
+        let default_agent_command = config.default_agent_command.clone();
 
         let read_state = if !resolved_projects.is_empty() {
             ReadStateDb::open(None).ok()
@@ -148,6 +150,7 @@ impl App {
             projects,
             active_project: 0,
             read_state,
+            default_agent_command,
             notification: None,
             popup: PopupState::None,
         }
@@ -371,6 +374,7 @@ impl App {
             detail: self.detail.clone(),
             error: self.error.clone(),
             seconds_since_refresh: self.seconds_since_refresh(),
+            default_agent_command: self.default_agent_command.clone(),
         }
     }
 
