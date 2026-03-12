@@ -91,18 +91,21 @@ pub async fn run(config: Config) -> Result<()> {
                         let result = handle_create_worktree(&app, project_idx, &branch).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
+                        app.refresh().await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
                     ClientMsg::RemoveWorktree { project_idx, branch } => {
                         let result = handle_remove_worktree(&app, project_idx, &branch).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
+                        app.refresh().await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
                     ClientMsg::MergeWorktree { project_idx, worktree_path } => {
                         let result = handle_merge_worktree(&app, project_idx, &worktree_path).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
+                        app.refresh().await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
                     ClientMsg::SelectMr { project_idx, mr_iid } => {
