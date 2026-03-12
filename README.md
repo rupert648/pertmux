@@ -178,6 +178,20 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 |-----|------|---------|-------------|
 | `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
 
+#### `[keybindings]`
+
+Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable. Each action must have a unique key — duplicates are rejected at startup.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `refresh` | string | `"r"` | Refresh all data |
+| `open_browser` | string | `"o"` | Open selected MR in browser |
+| `copy_branch` | string | `"b"` | Copy selected branch name to clipboard |
+| `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
+| `create_worktree` | string | `"c"` | Create new worktree |
+| `delete_worktree` | string | `"d"` | Delete selected worktree |
+| `merge_worktree` | string | `"m"` | Merge selected worktree into default branch |
+
 ## Keybindings
 
 ### Navigation
@@ -185,17 +199,19 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 | Key | Action |
 |-----|--------|
 | `j`/`k` or `↑`/`↓` | Navigate list |
-| `f` | Fuzzy filter to switch project |
 | `Tab` | Toggle between MR list and worktree panel |
 | `Enter` | Focus selected pane/worktree in tmux |
-| `r` | Refresh all data |
 
-### Actions
+### Actions (configurable)
+
+Action keys can be remapped via the `[keybindings]` section in your config file. Defaults shown below.
 
 | Key | Context | Action |
 |-----|---------|--------|
+| `r` | Global | Refresh all data |
 | `o` | MR selected | Open MR in browser |
 | `b` | Any | Copy selected branch name |
+| `f` | Global | Fuzzy filter to switch project |
 | `c` | Worktree panel | Create new worktree |
 | `d` | Worktree panel | Delete selected worktree |
 | `m` | Worktree panel | Merge selected worktree into default branch |
