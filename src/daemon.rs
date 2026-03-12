@@ -8,7 +8,6 @@ use futures::{SinkExt, StreamExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -75,9 +74,9 @@ pub async fn run(config: Config) -> Result<()> {
     });
 
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
-    let mut detail_interval = tokio::time::interval(Duration::from_secs(60));
-    let mut worktree_interval = tokio::time::interval(Duration::from_secs(30));
-    let mut mr_list_interval = tokio::time::interval(Duration::from_secs(300));
+    let mut detail_interval = tokio::time::interval(app.mr_detail_interval);
+    let mut worktree_interval = tokio::time::interval(app.worktree_interval);
+    let mut mr_list_interval = tokio::time::interval(app.mr_list_interval);
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     worktree_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

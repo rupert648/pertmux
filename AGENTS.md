@@ -9,13 +9,13 @@ pertmux is a Rust TUI unified SWE dashboard that links GitLab/GitHub MRs to loca
 The project uses a **daemon/client architecture** with Unix socket IPC. A background daemon (`pertmux serve`) owns all data fetching and state, while a lightweight TUI client (`pertmux connect`) connects to render the UI.
 
 ### Daemon/Client Split
-- **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on timers: tmux/agent every 2s, MR detail every 60s, worktrees every 30s. Listens on `/tmp/pertmux-{USER}.sock`.
+- **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on configurable timers: tmux/agent (`refresh_interval`, default 2s), MR detail (`mr_detail_interval`, default 60s), worktrees (`worktree_interval`, default 30s), MR list (`mr_list_interval`, default 300s). Listens on `/tmp/pertmux-{USER}.sock`.
 - **Client** (`client.rs`): Lightweight TUI. Owns all UI state (`ClientState`: selection indices, popup state, notifications). Connects to daemon via Unix socket, receives `DashboardSnapshot` updates, sends commands (`Refresh`, `CreateWorktree`, etc.). Navigation is instant with no daemon round-trip.
 - **Protocol** (`protocol.rs`): Defines `DashboardSnapshot`, `ProjectSnapshot`, `ClientMsg`, `DaemonMsg`. Framed with `LengthDelimitedCodec` + `serde_json`. Multi-client via `tokio::sync::broadcast`.
 
 ### Data Flow
 1. **Daemon startup**: Loads config, validates projects, creates `App`, performs initial fetch of MRs + tmux + worktrees.
-2. **Refresh loops**: Daemon runs tiered timers (2s tmux, 60s MR detail, 30s worktrees, 300s MR list). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
+2. **Refresh loops**: Daemon runs configurable tiered timers (`refresh_interval` default 2s tmux, `mr_detail_interval` default 60s MR detail, `worktree_interval` default 30s worktrees, `mr_list_interval` default 300s MR list). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
 3. **Client connect**: Connects to daemon socket. Fails with clear error if daemon not running. Receives initial snapshot immediately.
 4. **Client commands**: User actions (refresh, worktree create/remove/merge, MR selection) are sent as `ClientMsg` to daemon. Daemon processes, refreshes relevant data, broadcasts updated snapshot.
 5. **tmux actions**: `switch_to_pane()` and `find_or_create_pane()` run client-side — they only need data from the snapshot, not daemon state.
@@ -60,7 +60,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **Responsive Layout**: The UI adapts to landscape and portrait terminal dimensions.
 - **Process Tree Walking**: Port discovery relies on finding the specific child process of the tmux pane that owns the API socket.
 - **MR-first layout**: When a forge (`[gitlab]` or `[github]`) is configured, the primary list entity is open MRs/PRs. Worktrees appear in a dedicated bottom section with navigation and actions.
-- **Tiered refresh**: Daemon runs timers — tmux/agent every 2s, MR detail every 60s, worktrees every 30s, MR list every 300s. MR list also refreshed on manual 'r' or daemon startup.
+- **Tiered refresh**: Daemon runs configurable timers — tmux/agent (`refresh_interval` default 2s), MR detail (`mr_detail_interval` default 60s), worktrees (`worktree_interval` default 30s), MR list (`mr_list_interval` default 300s). MR list also refreshed on manual 'r' or daemon startup.
 - **Backwards compatibility**: No forge config (`[gitlab]`/`[github]`) = v1 behavior unchanged (agent-only mode).
 - **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send) — daemon keeps `App` on main task.
 - **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client requires daemon to be running (no auto-start).
