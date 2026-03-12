@@ -112,6 +112,10 @@ impl ClientState {
         !matches!(self.popup, PopupState::None)
     }
 
+    pub fn notify(&mut self, msg: impl Into<String>) {
+        self.notification = Some((msg.into(), Instant::now()));
+    }
+
     fn move_up(&mut self) {
         if let Some(proj) = self.snapshot.projects.get(self.active_project) {
             match self
@@ -253,7 +257,7 @@ impl ClientState {
                 })
                 .is_ok();
             if ok {
-                self.notification = Some((format!("Copied: {}", branch), Instant::now()));
+                self.notify(format!("Copied: {}", branch));
             }
         }
     }
@@ -285,7 +289,7 @@ impl ClientState {
             )
         {
             if wt.is_main {
-                self.notification = Some(("Cannot remove main worktree".into(), Instant::now()));
+                self.notify("Cannot remove main worktree");
                 return;
             }
             if let Some(ref branch) = wt.branch {
@@ -310,7 +314,7 @@ impl ClientState {
             )
         {
             if wt.is_main {
-                self.notification = Some(("Cannot merge main worktree".into(), Instant::now()));
+                self.notify("Cannot merge main worktree");
                 return;
             }
             if let (Some(branch), Some(path)) = (&wt.branch, &wt.path) {
@@ -522,7 +526,7 @@ async fn run_client_loop(
                                 state.update_snapshot(*snap);
                             }
                             DaemonMsg::ActionResult { ok, message } => {
-                                state.notification = Some((message, Instant::now()));
+                                state.notify(message);
                                 if ok {
                                     state.popup = PopupState::None;
                                 }
@@ -611,6 +615,15 @@ async fn handle_key(
             KeyCode::Esc => state.close_popup(),
             KeyCode::Enter => {
                 if let Some(msg) = popup_action_msg(state) {
+                    let toast = match &state.popup {
+                        PopupState::CreateWorktree { .. } => "Creating worktree...",
+                        PopupState::ConfirmRemove { .. } => "Removing worktree...",
+                        PopupState::ConfirmMerge { .. } => "Merging worktree...",
+                        _ => "",
+                    };
+                    if !toast.is_empty() {
+                        state.notify(toast);
+                    }
                     send_msg(framed, msg).await?;
                 }
             }
@@ -644,11 +657,11 @@ async fn handle_key(
         }
         KeyCode::Enter => {
             if let Err(e) = focus_selected(state) {
-                state.notification = Some((format!("Focus failed: {}", e), Instant::now()));
+                state.notify(format!("Focus failed: {}", e));
             }
         }
         KeyCode::Char('r') => {
-            state.notification = Some(("Refreshing...".into(), Instant::now()));
+            state.notify("Refreshing...");
             send_msg(framed, ClientMsg::Refresh).await?;
         }
         KeyCode::Char('o') => {
