@@ -1,4 +1,5 @@
 pub(crate) mod cards;
+pub(crate) mod change_summary;
 pub(crate) mod detail_panel;
 pub(crate) mod list_panel;
 pub(crate) mod mr_sections;

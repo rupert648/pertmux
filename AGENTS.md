@@ -9,21 +9,21 @@ pertmux is a Rust TUI unified SWE dashboard that links GitLab/GitHub MRs to loca
 The project uses a **daemon/client architecture** with Unix socket IPC. A background daemon (`pertmux serve`) owns all data fetching and state, while a lightweight TUI client (`pertmux connect`) connects to render the UI.
 
 ### Daemon/Client Split
-- **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on timers: tmux/agent every 2s, MR detail every 60s, worktrees every 30s. Listens on `/tmp/pertmux-{USER}.sock`.
+- **Daemon** (`daemon.rs`): Runs persistently in background. Owns the `App` struct (which is not `Send` due to `dyn CodingAgent`), runs on the main tokio task. Performs all data fetching on configurable timers: tmux/agent (`refresh_interval`, default 2s), MR detail (`mr_detail_interval`, default 60s), worktrees (`worktree_interval`, default 30s), MR list (`mr_list_interval`, default 300s). Listens on `/tmp/pertmux-{USER}.sock`.
 - **Client** (`client.rs`): Lightweight TUI. Owns all UI state (`ClientState`: selection indices, popup state, notifications). Connects to daemon via Unix socket, receives `DashboardSnapshot` updates, sends commands (`Refresh`, `CreateWorktree`, etc.). Navigation is instant with no daemon round-trip.
 - **Protocol** (`protocol.rs`): Defines `DashboardSnapshot`, `ProjectSnapshot`, `ClientMsg`, `DaemonMsg`. Framed with `LengthDelimitedCodec` + `serde_json`. Multi-client via `tokio::sync::broadcast`.
 
 ### Data Flow
 1. **Daemon startup**: Loads config, validates projects, creates `App`, performs initial fetch of MRs + tmux + worktrees.
-2. **Refresh loops**: Daemon runs tiered timers (2s tmux, 60s MR detail, 30s worktrees). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
+2. **Refresh loops**: Daemon runs configurable tiered timers (`refresh_interval` default 2s tmux, `mr_detail_interval` default 60s MR detail, `worktree_interval` default 30s worktrees, `mr_list_interval` default 300s MR list). After each refresh, broadcasts `DashboardSnapshot` to all connected clients.
 3. **Client connect**: Connects to daemon socket. Fails with clear error if daemon not running. Receives initial snapshot immediately.
 4. **Client commands**: User actions (refresh, worktree create/remove/merge, MR selection) are sent as `ClientMsg` to daemon. Daemon processes, refreshes relevant data, broadcasts updated snapshot.
 5. **tmux actions**: `switch_to_pane()` and `find_or_create_pane()` run client-side — they only need data from the snapshot, not daemon state.
 
 ## Module Guide
-- **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemon::run()`, `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`. Requires explicit subcommand (no bare `pertmux`).
-- **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals.
-- **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/Tab) with no round-trip. Project switching via fuzzy finder (`f` key). Also provides `stop()` and `status()` commands.
+- **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemon::run()`, `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`, `cleanup` → `client::cleanup()`. Requires explicit subcommand (no bare `pertmux`).
+- **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals. Tracks client count via `Arc<AtomicUsize>` and accumulates MR changes in `pending_for_offline` when no clients are connected — drains them into the initial snapshot on reconnect.
+- **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/Tab) with no round-trip. Project switching via fuzzy finder (`f` key). Also provides `stop()`, `status()`, and `cleanup()` commands. On reconnect, if `pending_changes` is non-empty, opens `ChangeSummary` modal; for live snapshots, shows toast notifications.
 - **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
 - **app.rs**: Owns the `App` struct, which holds data state (panes, projects, MRs, worktrees). Manages refresh cycle, linking, and `snapshot()` method to produce `DashboardSnapshot`. UI-related methods (selection, popup) have moved to `ClientState` in `client.rs`.
 - **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. To add a new agent, implement the trait and register it here.
@@ -35,7 +35,8 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
 - **ui/mod.rs**: Entry point `draw_client(frame, &ClientState)`. Constants (`ACCENT`, `NOTIFICATION_DURATION`), `ProjectRenderData` adapter, layout orchestration.
 - **ui/helpers.rs**: Formatting (`truncate`, `shorten_path`, `format_tokens`), status badges, merge status display, scroll computation.
-- **ui/components/**: Modular rendering components — `list_panel` (left panel with MR list or agent panes), `detail_panel` (right panel with MR detail or session info), `mr_sections` (MR and worktree block layouts), `cards` (individual MR/worktree cards), `overview` (project list with MR counts), `pipeline` (CI/CD dot visualization), `popup` (worktree actions and fuzzy filter), `notification` (toast overlay — renders `ClientState.notification`).
+- **mr_changes.rs**: Defines `MrChange` and `MrChangeType` for tracking MR status changes. `MrChange` carries project name, MR iid/title, and change type. `MrChangeType` covers pipeline failures/successes, new discussions, and approvals. Implements `Display` for toast messages.
+- **ui/components/**: Modular rendering components — `list_panel` (left panel with MR list or agent panes), `detail_panel` (right panel with MR detail or session info), `mr_sections` (MR and worktree block layouts), `cards` (individual MR/worktree cards), `overview` (project list with MR counts), `pipeline` (CI/CD dot visualization), `popup` (worktree actions and fuzzy filter), `notification` (toast overlay — renders `ClientState.notification`), `change_summary` (reconnect modal showing accumulated MR changes).
 - **worktrunk.rs**: Serde types for `wt list --format=json` output (`WtWorktree`, `WtCommit`, `WtMain`, etc.). Async functions: `fetch_worktrees()`, `create_worktree()`, `remove_worktree()`, `merge_worktree()`. Includes `format_age()` helper and 9 unit tests.
 - **linking.rs**: Defines `DashboardState`, `LinkedMergeRequest`. Implements `link_all()` which connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude.
 - **forge_clients/mod.rs**: Re-exports `GitLabClient` and `GitHubClient`. Sub-modules: `traits`, `types`, `gitlab`, `github`.
@@ -59,7 +60,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **Responsive Layout**: The UI adapts to landscape and portrait terminal dimensions.
 - **Process Tree Walking**: Port discovery relies on finding the specific child process of the tmux pane that owns the API socket.
 - **MR-first layout**: When a forge (`[gitlab]` or `[github]`) is configured, the primary list entity is open MRs/PRs. Worktrees appear in a dedicated bottom section with navigation and actions.
-- **Tiered refresh**: Daemon runs timers — tmux/agent every 2s, MR detail every 60s, worktrees every 30s. MR list refreshed on manual 'r' or daemon startup.
+- **Tiered refresh**: Daemon runs configurable timers — tmux/agent (`refresh_interval` default 2s), MR detail (`mr_detail_interval` default 60s), worktrees (`worktree_interval` default 30s), MR list (`mr_list_interval` default 300s). MR list also refreshed on manual 'r' or daemon startup.
 - **Backwards compatibility**: No forge config (`[gitlab]`/`[github]`) = v1 behavior unchanged (agent-only mode).
 - **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send) — daemon keeps `App` on main task.
 - **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client requires daemon to be running (no auto-start).
@@ -75,7 +76,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **sysinfo**: Process management and tree traversal.
 - **netstat2**: Socket-to-process mapping.
 - **dirs**: Cross-platform path resolution for the database location.
-- **clap**: CLI argument parsing (subcommands: serve, connect, stop, status).
+- **clap**: CLI argument parsing (subcommands: serve, connect, stop, status, cleanup).
 - **toml**: Configuration file parsing.
 - **anyhow**: Error handling.
 - **tokio**: Async runtime (full features). Used for daemon event loop and client I/O.

@@ -52,11 +52,20 @@ pub struct ClientState {
 }
 
 impl ClientState {
-    fn from_snapshot(snapshot: DashboardSnapshot) -> Self {
+    fn from_snapshot(mut snapshot: DashboardSnapshot) -> Self {
         let n = snapshot.projects.len();
         let active_project = load_last_project()
             .and_then(|name| snapshot.projects.iter().position(|p| p.name == name))
             .unwrap_or(0);
+        let popup = if !snapshot.pending_changes.is_empty() {
+            let changes = std::mem::take(&mut snapshot.pending_changes);
+            PopupState::ChangeSummary {
+                changes,
+                selected: 0,
+            }
+        } else {
+            PopupState::None
+        };
         Self {
             snapshot,
             active_project,
@@ -64,13 +73,23 @@ impl ClientState {
             worktree_selected: vec![0; n],
             selection_section: (0..n).map(|_| SelectionSection::Worktrees).collect(),
             selected: 0,
-            popup: PopupState::None,
+            popup,
             notification: None,
             running: true,
         }
     }
 
-    fn update_snapshot(&mut self, snapshot: DashboardSnapshot) {
+    fn update_snapshot(&mut self, mut snapshot: DashboardSnapshot) {
+        if !snapshot.pending_changes.is_empty() {
+            let changes = std::mem::take(&mut snapshot.pending_changes);
+            let summary: String = changes
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.notification = Some((summary, Instant::now()));
+        }
+
         while self.mr_selected.len() < snapshot.projects.len() {
             self.mr_selected.push(0);
             self.worktree_selected.push(0);
@@ -477,6 +496,43 @@ pub fn status() {
     }
 }
 
+pub fn cleanup() -> anyhow::Result<()> {
+    let sock_path = daemon::socket_path();
+    if sock_path.exists() {
+        let is_stale = std::os::unix::net::UnixStream::connect(&sock_path).is_err();
+        if is_stale {
+            std::fs::remove_file(&sock_path)?;
+            println!("removed stale socket: {}", sock_path.display());
+        } else {
+            println!(
+                "socket is live (daemon running), skipping: {}",
+                sock_path.display()
+            );
+        }
+    } else {
+        println!("no socket found");
+    }
+
+    if let Some(data_dir) = dirs::data_dir() {
+        let pertmux_dir = data_dir.join("pertmux");
+
+        let read_state_path = pertmux_dir.join("read_state.db");
+        if read_state_path.exists() {
+            std::fs::remove_file(&read_state_path)?;
+            println!("removed: {}", read_state_path.display());
+        }
+
+        let last_project_path = pertmux_dir.join("last_project");
+        if last_project_path.exists() {
+            std::fs::remove_file(&last_project_path)?;
+            println!("removed: {}", last_project_path.display());
+        }
+    }
+
+    println!("cleanup complete");
+    Ok(())
+}
+
 async fn wait_for_initial_snapshot(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
 ) -> Result<DashboardSnapshot> {
@@ -610,6 +666,63 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::ChangeSummary { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PopupState::ChangeSummary { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PopupState::ChangeSummary {
+                    changes, selected, ..
+                } = &mut state.popup
+                    && *selected + 1 < changes.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let PopupState::ChangeSummary { changes, selected } =
+                    std::mem::replace(&mut state.popup, PopupState::None)
+                    && let Some(change) = changes.get(selected)
+                    && let Some(idx) = state
+                        .snapshot
+                        .projects
+                        .iter()
+                        .position(|p| p.name == change.project_name)
+                {
+                    state.active_project = idx;
+                    if let Some(proj) = state.snapshot.projects.get(idx) {
+                        save_last_project(&proj.name);
+                        if let Some(mr_idx) = proj
+                            .dashboard
+                            .linked_mrs
+                            .iter()
+                            .position(|l| l.mr.iid == change.mr_iid)
+                        {
+                            state.mr_selected[idx] = mr_idx;
+                            state.selection_section[idx] = SelectionSection::MergeRequests;
+                            send_msg(
+                                framed,
+                                ClientMsg::SelectMr {
+                                    project_idx: idx,
+                                    mr_iid: change.mr_iid,
+                                },
+                            )
+                            .await?;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -710,7 +823,9 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             project_idx,
             worktree_path: worktree_path.clone(),
         }),
-        PopupState::ProjectFilter { .. } | PopupState::None => None,
+        PopupState::ProjectFilter { .. } | PopupState::ChangeSummary { .. } | PopupState::None => {
+            None
+        }
     }
 }
 
