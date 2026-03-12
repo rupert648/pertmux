@@ -1,5 +1,5 @@
 use crate::coding_agent::CodingAgent;
-use crate::config::{AgentConfig, Config, ProjectConfig, ProjectForge};
+use crate::config::{AgentConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
 use crate::forge_clients::traits::ForgeClient;
 use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
@@ -76,6 +76,7 @@ pub struct App {
     pub notification: Option<(String, Instant)>,
     #[allow(dead_code)]
     pub popup: PopupState,
+    pub keybindings: KeybindingsConfig,
 }
 
 impl App {
@@ -84,6 +85,7 @@ impl App {
         let gitlab_source = config.gitlab.clone();
         let github_source = config.github.clone();
         let default_agent_command = config.default_agent_command.clone();
+        let keybindings = config.keybindings.clone();
 
         let read_state = if !resolved_projects.is_empty() {
             ReadStateDb::open(None).ok()
@@ -153,6 +155,7 @@ impl App {
             default_agent_command,
             notification: None,
             popup: PopupState::None,
+            keybindings,
         }
     }
 
@@ -361,6 +364,7 @@ impl App {
             error: self.error.clone(),
             seconds_since_refresh: self.seconds_since_refresh(),
             default_agent_command: self.default_agent_command.clone(),
+            keybindings: self.keybindings.clone(),
         }
     }
 

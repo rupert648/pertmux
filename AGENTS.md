@@ -30,7 +30,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **coding_agent/Claude.rs**: Claude implementation of `CodingAgent`. Handles Claude-specific HTTP API communication and status interpretation.
 - **tmux.rs**: Wraps tmux CLI commands. Responsible for identifying coding agent panes (filtered by registered process names), switching focus between them, and `find_or_create_pane()` which searches all sessions for matching paths before creating new windows (prefers project-named sessions). When `default_agent_command` is configured, `find_or_create_pane()` creates a horizontal split: LEFT pane runs the agent command via `send-keys`, RIGHT pane is an empty terminal.
 - **discovery.rs**: Implements port discovery. It uses `sysinfo` to find child processes and `netstat2` to map those processes to active TCP listening ports.
-- **config.rs**: Defines `Config`, `AgentConfig`, `ProjectConfig`, `ProjectForge` enum, `GitLabSourceConfig`, `GitHubSourceConfig`, and per-agent config structs. Loads from TOML with `-c`/`--config` CLI flag or `~/.config/pertmux/pertmux.toml`. Validates local_path existence, source configuration, token availability, and project name uniqueness at startup.
+- **config.rs**: Defines `Config`, `AgentConfig`, `ProjectConfig`, `ProjectForge` enum, `KeybindingsConfig`, `GitLabSourceConfig`, `GitHubSourceConfig`, and per-agent config structs. Loads from TOML with `-c`/`--config` CLI flag or `~/.config/pertmux/pertmux.toml`. Validates local_path existence, source configuration, token availability, project name uniqueness, and keybinding uniqueness at startup.
 - **db.rs**: Manages read-only access to the Claude SQLite database. Fetches session details and enriches pane information.
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
 - **ui/mod.rs**: Entry point `draw_client(frame, &ClientState)`. Constants (`ACCENT`, `NOTIFICATION_DURATION`), `ProjectRenderData` adapter, layout orchestration.
@@ -185,4 +185,5 @@ Both workflows use `concurrency` groups to cancel in-progress runs when new comm
 - No unsafe code. Manual validation with `anyhow` (no validation crate).
 - `ACCENT` color constant: `Color::Rgb(255, 140, 0)` (orange).
 - Toast notifications: Use `ClientState::notify(msg)` to show a temporary toast overlay. It sets `notification: Option<(String, Instant)>` and auto-expires after `NOTIFICATION_DURATION` (2s). The notification component (`ui/components/notification.rs`) renders it in the bottom-right corner. Use for action feedback (e.g. "Refreshing...", "Creating worktree...", "Copied: branch-name"). The daemon's `ActionResult` response also triggers a toast with the result message.
+- Action keybindings are configurable via `[keybindings]` in the TOML config. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable.
 - Never add AI co-author trailers (e.g. `Co-authored-by: Sisyphus ...`) to commits.
