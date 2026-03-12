@@ -35,7 +35,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
 - **ui/mod.rs**: Entry point `draw_client(frame, &ClientState)`. Constants (`ACCENT`, `NOTIFICATION_DURATION`), `ProjectRenderData` adapter, layout orchestration.
 - **ui/helpers.rs**: Formatting (`truncate`, `shorten_path`, `format_tokens`), status badges, merge status display, scroll computation.
-- **ui/components/**: Modular rendering components — `list_panel` (left panel with MR list or agent panes), `detail_panel` (right panel with MR detail or session info), `mr_sections` (MR and worktree block layouts), `cards` (individual MR/worktree cards), `overview` (project list with MR counts), `pipeline` (CI/CD dot visualization), `popup` (worktree actions and fuzzy filter), `notification` (toast overlay).
+- **ui/components/**: Modular rendering components — `list_panel` (left panel with MR list or agent panes), `detail_panel` (right panel with MR detail or session info), `mr_sections` (MR and worktree block layouts), `cards` (individual MR/worktree cards), `overview` (project list with MR counts), `pipeline` (CI/CD dot visualization), `popup` (worktree actions and fuzzy filter), `notification` (toast overlay — renders `ClientState.notification`).
 - **worktrunk.rs**: Serde types for `wt list --format=json` output (`WtWorktree`, `WtCommit`, `WtMain`, etc.). Async functions: `fetch_worktrees()`, `create_worktree()`, `remove_worktree()`, `merge_worktree()`. Includes `format_age()` helper and 9 unit tests.
 - **linking.rs**: Defines `DashboardState`, `LinkedMergeRequest`. Implements `link_all()` which connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude.
 - **forge_clients/mod.rs**: Re-exports `GitLabClient` and `GitHubClient`. Sub-modules: `traits`, `types`, `gitlab`, `github`.
@@ -184,4 +184,5 @@ Both workflows use `concurrency` groups to cancel in-progress runs when new comm
 - Do NOT use `statusline` field from wt output (contains ANSI escape codes). Use `symbols` field instead.
 - No unsafe code. Manual validation with `anyhow` (no validation crate).
 - `ACCENT` color constant: `Color::Rgb(255, 140, 0)` (orange).
+- Toast notifications: Use `ClientState::notify(msg)` to show a temporary toast overlay. It sets `notification: Option<(String, Instant)>` and auto-expires after `NOTIFICATION_DURATION` (2s). The notification component (`ui/components/notification.rs`) renders it in the bottom-right corner. Use for action feedback (e.g. "Refreshing...", "Creating worktree...", "Copied: branch-name"). The daemon's `ActionResult` response also triggers a toast with the result message.
 - Never add AI co-author trailers (e.g. `Co-authored-by: Sisyphus ...`) to commits.
