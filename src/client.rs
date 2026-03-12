@@ -755,7 +755,11 @@ fn focus_selected(state: &ClientState) -> Result<()> {
                         .unwrap_or(&0),
                 ) && let Some(ref path) = wt.path
                 {
-                    tmux::find_or_create_pane(path, &proj.name)?;
+                    tmux::find_or_create_pane(
+                        path,
+                        &proj.name,
+                        state.snapshot.default_agent_command.as_deref(),
+                    )?;
                 }
             }
         }

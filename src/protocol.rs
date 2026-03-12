@@ -34,6 +34,8 @@ pub struct DashboardSnapshot {
     pub detail: Option<SessionDetail>,
     pub error: Option<String>,
     pub seconds_since_refresh: u64,
+    #[serde(default)]
+    pub default_agent_command: Option<String>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -181,6 +183,7 @@ mod tests {
             detail: None,
             error: None,
             seconds_since_refresh: 2,
+            default_agent_command: None,
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
