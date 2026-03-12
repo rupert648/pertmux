@@ -8,6 +8,7 @@ mod discovery;
 mod forge_clients;
 mod git;
 mod linking;
+mod mr_changes;
 mod protocol;
 #[allow(unused)]
 mod read_state;
@@ -43,6 +44,8 @@ enum Commands {
     Stop,
     #[command(about = "Show daemon status and socket info")]
     Status,
+    #[command(about = "Remove stale socket, read state, and cached data")]
+    Cleanup,
 }
 
 #[tokio::main]
@@ -60,5 +63,6 @@ async fn main() -> anyhow::Result<()> {
             client::status();
             Ok(())
         }
+        Commands::Cleanup => client::cleanup(),
     }
 }
