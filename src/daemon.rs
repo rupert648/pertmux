@@ -1,11 +1,13 @@
 use crate::app::App;
 use crate::config::Config;
+use crate::mr_changes::MrChange;
 use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION};
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
@@ -47,19 +49,27 @@ pub async fn run(config: Config) -> Result<()> {
     }
     app.refresh().await;
     app.refresh_worktrees().await;
+    app.pending_changes.clear();
 
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
     let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
 
+    let client_count = Arc::new(AtomicUsize::new(0));
+    let pending_for_offline: Arc<Mutex<Vec<MrChange>>> = Arc::new(Mutex::new(Vec::new()));
+
     let accept_broadcast_tx = broadcast_tx.clone();
     let accept_cmd_tx = cmd_tx.clone();
     let accept_latest_snapshot = Arc::clone(&latest_snapshot);
+    let accept_client_count = Arc::clone(&client_count);
+    let accept_pending_for_offline = Arc::clone(&pending_for_offline);
     tokio::spawn(async move {
         accept_loop(
             listener,
             accept_broadcast_tx,
             accept_cmd_tx,
             accept_latest_snapshot,
+            accept_client_count,
+            accept_pending_for_offline,
         )
         .await;
     });
@@ -67,9 +77,11 @@ pub async fn run(config: Config) -> Result<()> {
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
     let mut detail_interval = tokio::time::interval(Duration::from_secs(60));
     let mut worktree_interval = tokio::time::interval(Duration::from_secs(30));
+    let mut mr_list_interval = tokio::time::interval(Duration::from_secs(300));
     refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     worktree_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    mr_list_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let mut shutdown = false;
 
@@ -85,6 +97,7 @@ pub async fn run(config: Config) -> Result<()> {
                         app.refresh().await;
                         app.refresh_mrs().await;
                         app.refresh_worktrees().await;
+                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
                     ClientMsg::CreateWorktree { project_idx, branch } => {
@@ -116,6 +129,7 @@ pub async fn run(config: Config) -> Result<()> {
                             app.active_project = project_idx;
                         }
                         app.refresh_mr_detail().await;
+                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
                     ClientMsg::Handshake { .. } => {}
@@ -123,14 +137,21 @@ pub async fn run(config: Config) -> Result<()> {
             }
             _ = refresh_interval.tick() => {
                 app.refresh().await;
+                drain_changes(&mut app, &client_count, &pending_for_offline).await;
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
             }
             _ = detail_interval.tick() => {
                 app.refresh_mr_detail().await;
+                drain_changes(&mut app, &client_count, &pending_for_offline).await;
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
             }
             _ = worktree_interval.tick() => {
                 app.refresh_worktrees().await;
+                broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+            }
+            _ = mr_list_interval.tick() => {
+                app.refresh_mrs().await;
+                drain_changes(&mut app, &client_count, &pending_for_offline).await;
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
             }
             _ = tokio::signal::ctrl_c() => {
@@ -150,6 +171,8 @@ async fn accept_loop(
     broadcast_tx: broadcast::Sender<DaemonMsg>,
     cmd_tx: mpsc::Sender<ClientMsg>,
     latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
+    client_count: Arc<AtomicUsize>,
+    pending_for_offline: Arc<Mutex<Vec<MrChange>>>,
 ) {
     loop {
         match listener.accept().await {
@@ -157,15 +180,25 @@ async fn accept_loop(
                 let snapshot_rx = broadcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
                 let latest_snapshot = Arc::clone(&latest_snapshot);
+                let client_count = Arc::clone(&client_count);
+                let pending_for_offline = Arc::clone(&pending_for_offline);
+                client_count.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_client(stream, snapshot_rx, cmd_tx, latest_snapshot).await
+                    if let Err(e) = handle_client(
+                        stream,
+                        snapshot_rx,
+                        cmd_tx,
+                        latest_snapshot,
+                        &pending_for_offline,
+                    )
+                    .await
                     {
                         let msg = e.to_string();
                         if !msg.contains("Broken pipe") && !msg.contains("Connection reset") {
                             eprintln!("[pertmux-daemon] client error: {}", e);
                         }
                     }
+                    client_count.fetch_sub(1, Ordering::SeqCst);
                 });
             }
             Err(e) => {
@@ -180,12 +213,23 @@ async fn handle_client(
     mut snapshot_rx: broadcast::Receiver<DaemonMsg>,
     cmd_tx: mpsc::Sender<ClientMsg>,
     latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
+    pending_for_offline: &Arc<Mutex<Vec<MrChange>>>,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     let initial_snapshot = {
-        let guard = latest_snapshot.lock().await;
-        guard.clone()
+        let mut snapshot = {
+            let guard = latest_snapshot.lock().await;
+            guard.clone()
+        };
+        let offline_changes = {
+            let mut guard = pending_for_offline.lock().await;
+            std::mem::take(&mut *guard)
+        };
+        if !offline_changes.is_empty() {
+            snapshot.pending_changes = offline_changes;
+        }
+        snapshot
     };
     let msg = DaemonMsg::Snapshot(Box::new(initial_snapshot));
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
@@ -240,6 +284,22 @@ async fn handle_client(
     }
 
     Ok(())
+}
+
+async fn drain_changes(
+    app: &mut App,
+    client_count: &Arc<AtomicUsize>,
+    pending_for_offline: &Arc<Mutex<Vec<MrChange>>>,
+) {
+    let changes = app.take_pending_changes();
+    if changes.is_empty() {
+        return;
+    }
+
+    if client_count.load(Ordering::SeqCst) == 0 {
+        let mut guard = pending_for_offline.lock().await;
+        guard.extend(changes);
+    }
 }
 
 async fn handle_create_worktree(app: &App, project_idx: usize, branch: &str) -> Result<String> {
