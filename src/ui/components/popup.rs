@@ -10,6 +10,11 @@ use ratatui::{
 };
 
 pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Rect) {
+    if let PopupState::ChangeSummary { changes, selected } = &state.popup {
+        super::change_summary::draw_change_summary(frame, changes, *selected, area);
+        return;
+    }
+
     if let PopupState::ProjectFilter {
         input,
         filtered,
@@ -21,7 +26,9 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     }
 
     let (title, body_lines, show_cursor) = match &state.popup {
-        PopupState::None | PopupState::ProjectFilter { .. } => return,
+        PopupState::None | PopupState::ProjectFilter { .. } | PopupState::ChangeSummary { .. } => {
+            return;
+        }
         PopupState::CreateWorktree { input } => {
             let lines = vec![
                 Line::from(Span::styled(
