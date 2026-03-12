@@ -144,6 +144,7 @@ refresh_interval = 2
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes |
+| `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
 
 #### `[gitlab]`
 

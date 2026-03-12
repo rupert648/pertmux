@@ -63,6 +63,7 @@ pub struct ProjectConfig {
 #[serde(default)]
 pub struct Config {
     pub refresh_interval: u64,
+    pub default_agent_command: Option<String>,
     pub agent: AgentConfig,
     pub gitlab: Option<GitLabSourceConfig>,
     pub github: Option<GitHubSourceConfig>,
@@ -86,6 +87,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             refresh_interval: 2,
+            default_agent_command: None,
             agent: AgentConfig::default(),
             gitlab: None,
             github: None,

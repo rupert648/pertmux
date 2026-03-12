@@ -52,7 +52,11 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
     Ok(panes)
 }
 
-pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()> {
+pub fn find_or_create_pane(
+    path: &str,
+    project_name: &str,
+    agent_command: Option<&str>,
+) -> anyhow::Result<()> {
     let canonical_target =
         std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
 
@@ -98,7 +102,34 @@ pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()>
 
     let new_pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !new_pane_id.is_empty() {
-        switch_to_pane(&new_pane_id)?;
+        if let Some(cmd) = agent_command {
+            let split_output = Command::new("tmux")
+                .args([
+                    "split-window",
+                    "-h",
+                    "-t",
+                    &new_pane_id,
+                    "-c",
+                    path,
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                ])
+                .output()?;
+
+            if !split_output.status.success() {
+                let stderr = String::from_utf8_lossy(&split_output.stderr);
+                anyhow::bail!("tmux split-window failed: {}", stderr.trim());
+            }
+
+            Command::new("tmux")
+                .args(["send-keys", "-t", &new_pane_id, cmd, "Enter"])
+                .output()?;
+
+            switch_to_pane(&new_pane_id)?;
+        } else {
+            switch_to_pane(&new_pane_id)?;
+        }
     }
 
     Ok(())
