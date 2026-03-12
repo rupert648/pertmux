@@ -7,6 +7,7 @@ use crate::forge_clients::types::{
 use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
+use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{DashboardSnapshot, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
@@ -35,6 +36,10 @@ pub enum PopupState {
     ProjectFilter {
         input: String,
         filtered: Vec<(usize, String)>,
+        selected: usize,
+    },
+    ChangeSummary {
+        changes: Vec<MrChange>,
         selected: usize,
     },
 }
@@ -77,6 +82,7 @@ pub struct App {
     #[allow(dead_code)]
     pub popup: PopupState,
     pub keybindings: KeybindingsConfig,
+    pub pending_changes: Vec<MrChange>,
 }
 
 impl App {
@@ -156,6 +162,7 @@ impl App {
             notification: None,
             popup: PopupState::None,
             keybindings,
+            pending_changes: Vec::new(),
         }
     }
 
@@ -249,6 +256,13 @@ impl App {
         for proj in &mut self.projects {
             match proj.client.fetch_mrs().await {
                 Ok(mrs) => {
+                    if !proj.cached_mrs.is_empty() {
+                        self.pending_changes.extend(detect_mr_list_changes(
+                            &proj.config.name,
+                            &proj.cached_mrs,
+                            &mrs,
+                        ));
+                    }
                     proj.cached_mrs = mrs;
                 }
                 Err(e) => {
@@ -273,8 +287,16 @@ impl App {
 
         let iid = linked_mr.mr.iid;
 
+        let project_name = proj.config.name.clone();
         match proj.client.fetch_mr_detail(iid).await {
             Ok(detail) => {
+                if let Some(ref old_detail) = proj.cached_mr_detail {
+                    self.pending_changes.extend(detect_mr_detail_changes(
+                        &project_name,
+                        old_detail,
+                        &detail,
+                    ));
+                }
                 proj.cached_mr_detail = Some(detail);
                 proj.last_detail_refresh = Instant::now();
             }
@@ -365,7 +387,13 @@ impl App {
             seconds_since_refresh: self.seconds_since_refresh(),
             default_agent_command: self.default_agent_command.clone(),
             keybindings: self.keybindings.clone(),
+            pending_changes: Vec::new(),
         }
+    }
+
+    /// Take accumulated pending changes, leaving the internal list empty.
+    pub fn take_pending_changes(&mut self) -> Vec<MrChange> {
+        std::mem::take(&mut self.pending_changes)
     }
 
     fn update_detail(&mut self) {
@@ -389,4 +417,86 @@ impl App {
             .find(|a| a.process_name() == command)
             .map(|a| a.as_ref())
     }
+}
+
+fn detect_mr_list_changes(
+    project_name: &str,
+    old_mrs: &[MergeRequestSummary],
+    new_mrs: &[MergeRequestSummary],
+) -> Vec<MrChange> {
+    let mut changes = Vec::new();
+
+    for new_mr in new_mrs {
+        let Some(old_mr) = old_mrs.iter().find(|m| m.iid == new_mr.iid) else {
+            continue;
+        };
+
+        if new_mr.user_notes_count > old_mr.user_notes_count {
+            let delta = new_mr.user_notes_count - old_mr.user_notes_count;
+            changes.push(MrChange {
+                project_name: project_name.to_string(),
+                mr_iid: new_mr.iid,
+                mr_title: new_mr.title.clone(),
+                change_type: MrChangeType::NewDiscussions(delta),
+            });
+        }
+
+        let was_approved = old_mr
+            .detailed_merge_status
+            .as_deref()
+            .is_some_and(|s| s.contains("approved"));
+        let is_approved = new_mr
+            .detailed_merge_status
+            .as_deref()
+            .is_some_and(|s| s.contains("approved"));
+        if is_approved && !was_approved {
+            changes.push(MrChange {
+                project_name: project_name.to_string(),
+                mr_iid: new_mr.iid,
+                mr_title: new_mr.title.clone(),
+                change_type: MrChangeType::Approved,
+            });
+        }
+    }
+
+    changes
+}
+
+fn detect_mr_detail_changes(
+    project_name: &str,
+    old_detail: &MergeRequestDetail,
+    new_detail: &MergeRequestDetail,
+) -> Vec<MrChange> {
+    let mut changes = Vec::new();
+
+    if old_detail.iid != new_detail.iid {
+        return changes;
+    }
+
+    let old_pipeline_status = old_detail.head_pipeline.as_ref().map(|p| p.status.as_str());
+    let new_pipeline_status = new_detail.head_pipeline.as_ref().map(|p| p.status.as_str());
+
+    if old_pipeline_status != new_pipeline_status {
+        match new_pipeline_status {
+            Some("failed") => {
+                changes.push(MrChange {
+                    project_name: project_name.to_string(),
+                    mr_iid: new_detail.iid,
+                    mr_title: new_detail.title.clone(),
+                    change_type: MrChangeType::PipelineFailed,
+                });
+            }
+            Some("success") => {
+                changes.push(MrChange {
+                    project_name: project_name.to_string(),
+                    mr_iid: new_detail.iid,
+                    mr_title: new_detail.title.clone(),
+                    change_type: MrChangeType::PipelineSucceeded,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    changes
 }
