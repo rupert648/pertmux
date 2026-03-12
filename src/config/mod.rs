@@ -1,64 +1,14 @@
-use serde::{Deserialize, Serialize};
+mod agent;
+mod forge;
+mod keybindings;
+
+pub use agent::AgentConfig;
+pub use forge::{GitHubSourceConfig, GitLabSourceConfig, ProjectConfig, ProjectForge};
+pub use keybindings::KeybindingsConfig;
+
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ProjectForge {
-    Gitlab,
-    Github,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitLabSourceConfig {
-    #[serde(default = "default_gitlab_host")]
-    pub host: String,
-    pub token: Option<String>,
-    // Backwards compat: old format stored project-level fields here
-    pub project: Option<String>,
-    pub local_path: Option<String>,
-    pub username: Option<String>,
-}
-
-fn default_gitlab_host() -> String {
-    "gitlab.com".to_string()
-}
-
-impl GitLabSourceConfig {
-    pub fn api_token(&self) -> Option<String> {
-        std::env::var("PERTMUX_GITLAB_TOKEN")
-            .ok()
-            .or_else(|| self.token.clone())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitHubSourceConfig {
-    #[serde(default = "default_github_host")]
-    pub host: String,
-    pub token: Option<String>,
-}
-
-fn default_github_host() -> String {
-    "github.com".to_string()
-}
-
-impl GitHubSourceConfig {
-    pub fn api_token(&self) -> Option<String> {
-        std::env::var("PERTMUX_GITHUB_TOKEN")
-            .ok()
-            .or_else(|| self.token.clone())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectConfig {
-    pub name: String,
-    pub source: ProjectForge,
-    pub project: String,
-    pub local_path: String,
-    pub username: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -72,45 +22,6 @@ pub struct Config {
     pub project: Option<Vec<ProjectConfig>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct KeybindingsConfig {
-    pub refresh: char,
-    pub open_browser: char,
-    pub copy_branch: char,
-    pub filter_projects: char,
-    pub create_worktree: char,
-    pub delete_worktree: char,
-    pub merge_worktree: char,
-}
-
-impl Default for KeybindingsConfig {
-    fn default() -> Self {
-        Self {
-            refresh: 'r',
-            open_browser: 'o',
-            copy_branch: 'b',
-            filter_projects: 'f',
-            create_worktree: 'c',
-            delete_worktree: 'd',
-            merge_worktree: 'm',
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct AgentConfig {
-    pub opencode: Option<OpenCodeAgentConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-#[derive(Default)]
-pub struct OpenCodeAgentConfig {
-    pub db_path: Option<String>,
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -121,14 +32,6 @@ impl Default for Config {
             gitlab: None,
             github: None,
             project: None,
-        }
-    }
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            opencode: Some(OpenCodeAgentConfig::default()),
         }
     }
 }
