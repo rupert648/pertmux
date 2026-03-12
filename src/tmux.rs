@@ -78,6 +78,7 @@ pub fn find_or_create_pane(path: &str, project_name: &str) -> anyhow::Result<()>
     let output = Command::new("tmux")
         .args([
             "new-window",
+            "-a",
             "-t",
             &target_session,
             "-n",
