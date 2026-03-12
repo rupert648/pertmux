@@ -660,24 +660,29 @@ async fn handle_key(
                 state.notify(format!("Focus failed: {}", e));
             }
         }
-        KeyCode::Char('r') => {
-            state.notify("Refreshing...");
-            send_msg(framed, ClientMsg::Refresh).await?;
-        }
-        KeyCode::Char('o') => {
-            if state.has_projects() {
-                state.open_selected_mr_in_browser();
+        KeyCode::Char(ch) => {
+            let kb = &state.snapshot.keybindings;
+            if ch == kb.refresh {
+                state.notify("Refreshing...");
+                send_msg(framed, ClientMsg::Refresh).await?;
+            } else if ch == kb.open_browser {
+                if state.has_projects() {
+                    state.open_selected_mr_in_browser();
+                }
+            } else if ch == kb.copy_branch {
+                if state.has_projects() {
+                    state.copy_selected_branch();
+                }
+            } else if ch == kb.filter_projects {
+                state.open_project_filter();
+            } else if ch == kb.create_worktree {
+                state.open_create_popup();
+            } else if ch == kb.delete_worktree {
+                state.open_remove_popup();
+            } else if ch == kb.merge_worktree {
+                state.open_merge_popup();
             }
         }
-        KeyCode::Char('b') => {
-            if state.has_projects() {
-                state.copy_selected_branch();
-            }
-        }
-        KeyCode::Char('f') => state.open_project_filter(),
-        KeyCode::Char('c') => state.open_create_popup(),
-        KeyCode::Char('d') => state.open_remove_popup(),
-        KeyCode::Char('m') => state.open_merge_popup(),
         _ => {}
     }
 

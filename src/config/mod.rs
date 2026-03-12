@@ -1,86 +1,25 @@
-use serde::{Deserialize, Serialize};
+mod agent;
+mod forge;
+mod keybindings;
+
+pub use agent::AgentConfig;
+pub use forge::{GitHubSourceConfig, GitLabSourceConfig, ProjectConfig, ProjectForge};
+pub use keybindings::KeybindingsConfig;
+
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ProjectForge {
-    Gitlab,
-    Github,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitLabSourceConfig {
-    #[serde(default = "default_gitlab_host")]
-    pub host: String,
-    pub token: Option<String>,
-    // Backwards compat: old format stored project-level fields here
-    pub project: Option<String>,
-    pub local_path: Option<String>,
-    pub username: Option<String>,
-}
-
-fn default_gitlab_host() -> String {
-    "gitlab.com".to_string()
-}
-
-impl GitLabSourceConfig {
-    pub fn api_token(&self) -> Option<String> {
-        std::env::var("PERTMUX_GITLAB_TOKEN")
-            .ok()
-            .or_else(|| self.token.clone())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitHubSourceConfig {
-    #[serde(default = "default_github_host")]
-    pub host: String,
-    pub token: Option<String>,
-}
-
-fn default_github_host() -> String {
-    "github.com".to_string()
-}
-
-impl GitHubSourceConfig {
-    pub fn api_token(&self) -> Option<String> {
-        std::env::var("PERTMUX_GITHUB_TOKEN")
-            .ok()
-            .or_else(|| self.token.clone())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectConfig {
-    pub name: String,
-    pub source: ProjectForge,
-    pub project: String,
-    pub local_path: String,
-    pub username: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub refresh_interval: u64,
     pub default_agent_command: Option<String>,
+    pub keybindings: KeybindingsConfig,
     pub agent: AgentConfig,
     pub gitlab: Option<GitLabSourceConfig>,
     pub github: Option<GitHubSourceConfig>,
     pub project: Option<Vec<ProjectConfig>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct AgentConfig {
-    pub opencode: Option<OpenCodeAgentConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-#[derive(Default)]
-pub struct OpenCodeAgentConfig {
-    pub db_path: Option<String>,
 }
 
 impl Default for Config {
@@ -88,18 +27,11 @@ impl Default for Config {
         Self {
             refresh_interval: 2,
             default_agent_command: None,
+            keybindings: KeybindingsConfig::default(),
             agent: AgentConfig::default(),
             gitlab: None,
             github: None,
             project: None,
-        }
-    }
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            opencode: Some(OpenCodeAgentConfig::default()),
         }
     }
 }
@@ -201,6 +133,29 @@ impl Config {
         for (i, name) in names.iter().enumerate() {
             if names[i + 1..].contains(name) {
                 errors.push(format!("config: duplicate project name '{}'.", name));
+            }
+        }
+
+        let kb = &self.keybindings;
+        let mut key_map: HashMap<char, &str> = HashMap::new();
+        let bindings = [
+            (kb.refresh, "refresh"),
+            (kb.open_browser, "open_browser"),
+            (kb.copy_branch, "copy_branch"),
+            (kb.filter_projects, "filter_projects"),
+            (kb.create_worktree, "create_worktree"),
+            (kb.delete_worktree, "delete_worktree"),
+            (kb.merge_worktree, "merge_worktree"),
+        ];
+        for (ch, name) in &bindings {
+            if let Some(existing) = key_map.get(ch) {
+                errors.push(format!(
+                    "config: duplicate keybinding '{}' — each action must have a unique key.\n\
+                     hint: '{}' is used by both '{}' and '{}'.",
+                    ch, ch, existing, name,
+                ));
+            } else {
+                key_map.insert(*ch, name);
             }
         }
 
@@ -576,5 +531,89 @@ local_path = "/tmp/bad"
 "#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_keybindings_defaults() {
+        let cfg = load_from_str("refresh_interval = 2\n");
+        let kb = &cfg.keybindings;
+        assert_eq!(kb.refresh, 'r');
+        assert_eq!(kb.open_browser, 'o');
+        assert_eq!(kb.copy_branch, 'b');
+        assert_eq!(kb.filter_projects, 'f');
+        assert_eq!(kb.create_worktree, 'c');
+        assert_eq!(kb.delete_worktree, 'd');
+        assert_eq!(kb.merge_worktree, 'm');
+    }
+
+    #[test]
+    fn test_keybindings_custom() {
+        let cfg = load_from_str(
+            r#"
+[keybindings]
+refresh = "R"
+open_browser = "O"
+copy_branch = "y"
+filter_projects = "p"
+create_worktree = "n"
+delete_worktree = "x"
+merge_worktree = "g"
+"#,
+        );
+        let kb = &cfg.keybindings;
+        assert_eq!(kb.refresh, 'R');
+        assert_eq!(kb.open_browser, 'O');
+        assert_eq!(kb.copy_branch, 'y');
+        assert_eq!(kb.filter_projects, 'p');
+        assert_eq!(kb.create_worktree, 'n');
+        assert_eq!(kb.delete_worktree, 'x');
+        assert_eq!(kb.merge_worktree, 'g');
+    }
+
+    #[test]
+    fn test_keybindings_partial_override() {
+        let cfg = load_from_str(
+            r#"
+[keybindings]
+refresh = "R"
+"#,
+        );
+        assert_eq!(cfg.keybindings.refresh, 'R');
+        assert_eq!(cfg.keybindings.open_browser, 'o');
+        assert_eq!(cfg.keybindings.copy_branch, 'b');
+    }
+
+    #[test]
+    fn test_keybindings_duplicate_rejected() {
+        let cfg = load_from_str(
+            r#"
+[keybindings]
+refresh = "r"
+open_browser = "r"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate keybinding 'r'"));
+    }
+
+    #[test]
+    fn test_keybindings_missing_section_uses_defaults() {
+        let cfg = load_from_str(
+            r#"
+[gitlab]
+host = "gitlab.example.com"
+token = "test-token"
+project = "team/project"
+local_path = "/tmp"
+"#,
+        );
+        assert_eq!(cfg.keybindings.refresh, 'r');
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_keybindings_default_validation_passes() {
+        let cfg = load_from_str("refresh_interval = 2\n");
+        assert!(cfg.validate().is_ok());
     }
 }
