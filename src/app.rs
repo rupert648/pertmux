@@ -1,5 +1,7 @@
 use crate::coding_agent::CodingAgent;
-use crate::config::{AgentConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
+use crate::config::{
+    AgentActionConfig, AgentConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge,
+};
 use crate::forge_clients::traits::ForgeClient;
 use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
@@ -92,6 +94,7 @@ pub struct App {
     pub popup: PopupState,
     pub keybindings: KeybindingsConfig,
     pub pending_changes: Vec<MrChange>,
+    pub agent_actions: Vec<AgentActionConfig>,
 }
 
 impl App {
@@ -175,6 +178,7 @@ impl App {
             popup: PopupState::None,
             keybindings,
             pending_changes: Vec::new(),
+            agent_actions: config.agent_action,
         }
     }
 
@@ -400,6 +404,7 @@ impl App {
             default_agent_command: self.default_agent_command.clone(),
             keybindings: self.keybindings.clone(),
             pending_changes: Vec::new(),
+            agent_actions: self.agent_actions.clone(),
         }
     }
 
