@@ -800,7 +800,7 @@ async fn handle_key(
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if let PopupState::AgentActions { selected, .. } = &mut state.popup
-                    && *selected + 1 < AGENT_ACTIONS.len()
+                    && *selected + 1 < state.snapshot.agent_actions.len()
                 {
                     *selected += 1;
                 }
@@ -926,7 +926,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
     }
 }
 
-pub const AGENT_ACTIONS: &[&str] = &["Rebase with upstream", "Check pipeline & fix errors"];
+
 
 fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
     let PopupState::AgentActions {
@@ -939,6 +939,7 @@ fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
         return None;
     };
 
+    let action = state.snapshot.agent_actions.get(*selected)?;
     let proj = state.snapshot.projects.get(state.active_project)?;
 
     let linked_mr = worktree_branch.as_ref().and_then(|branch| {
@@ -948,38 +949,46 @@ fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
             .find(|l| &l.mr.source_branch == branch)
     });
 
-    let prompt = match *selected {
-        0 => {
-            let target = linked_mr
-                .map(|l| l.mr.target_branch.as_str())
-                .unwrap_or("main");
-            format!(
-                "Rebase the current branch onto origin/{}. \
-                 Pull the latest changes from origin/{} first, then rebase on top. \
-                 Resolve any conflicts.",
-                target, target,
-            )
-        }
-        1 => {
-            let mr = linked_mr?;
-            format!(
-                "Check the CI/CD pipeline status for MR: {}\n\n\
-                 Review any failing pipeline jobs. For each failure:\n\
-                 1. Identify the root cause from the job logs\n\
-                 2. Fix the issue in the code\n\
-                 3. Commit the fix\n\n\
-                 If there is no pipeline running, stop and report back.",
-                mr.mr.web_url,
-            )
-        }
-        _ => return None,
-    };
+    // If the action requires an MR but none is linked, bail out
+    if action.requires_mr && linked_mr.is_none() {
+        return None;
+    }
+
+    let prompt = substitute_template(
+        &action.prompt,
+        linked_mr.map(|l| &l.mr),
+        &proj.name,
+    );
 
     Some(ClientMsg::AgentAction {
         pane_pid: *pane_pid,
         session_id: session_id.clone(),
         prompt,
     })
+}
+
+fn substitute_template(
+    template: &str,
+    mr: Option<&crate::forge_clients::types::MergeRequestSummary>,
+    project_name: &str,
+) -> String {
+    let mut result = template.to_string();
+    result = result.replace("{project_name}", project_name);
+
+    if let Some(mr) = mr {
+        result = result.replace("{target_branch}", &mr.target_branch);
+        result = result.replace("{source_branch}", &mr.source_branch);
+        result = result.replace("{mr_url}", &mr.web_url);
+        result = result.replace("{mr_iid}", &mr.iid.to_string());
+    } else {
+        // Provide sensible defaults when no MR is linked
+        result = result.replace("{target_branch}", "main");
+        result = result.replace("{source_branch}", "");
+        result = result.replace("{mr_url}", "");
+        result = result.replace("{mr_iid}", "");
+    }
+
+    result
 }
 
 async fn maybe_send_select_mr(

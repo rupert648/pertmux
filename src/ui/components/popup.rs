@@ -1,5 +1,6 @@
 use crate::app::PopupState;
-use crate::client::{ClientState, AGENT_ACTIONS};
+use crate::client::ClientState;
+use crate::config::AgentActionConfig;
 use crate::ui::ACCENT;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -26,7 +27,7 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     }
 
     if let PopupState::AgentActions { selected, .. } = &state.popup {
-        draw_agent_actions_popup(frame, *selected, area);
+        draw_agent_actions_popup(frame, &state.snapshot.agent_actions, *selected, area);
         return;
     }
 
@@ -214,9 +215,14 @@ fn draw_project_filter_popup(
     frame.render_widget(Paragraph::new(result_lines), chunks[2]);
 }
 
-fn draw_agent_actions_popup(frame: &mut Frame, selected: usize, area: Rect) {
+fn draw_agent_actions_popup(
+    frame: &mut Frame,
+    actions: &[AgentActionConfig],
+    selected: usize,
+    area: Rect,
+) {
     let popup_w = 42u16.min(area.width.saturating_sub(4));
-    let popup_h = (AGENT_ACTIONS.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let popup_h = (actions.len() as u16 + 4).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
     let rect = Rect::new(x, y, popup_w, popup_h);
@@ -237,7 +243,7 @@ fn draw_agent_actions_popup(frame: &mut Frame, selected: usize, area: Rect) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let mut action_lines: Vec<Line> = Vec::new();
-    for (i, label) in AGENT_ACTIONS.iter().enumerate() {
+    for (i, action) in actions.iter().enumerate() {
         let style = if i == selected {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
@@ -246,7 +252,7 @@ fn draw_agent_actions_popup(frame: &mut Frame, selected: usize, area: Rect) {
         let prefix = if i == selected { " \u{25b8} " } else { "   " };
         action_lines.push(Line::from(vec![
             Span::styled(prefix, Style::default().fg(ACCENT)),
-            Span::styled(*label, style),
+            Span::styled(action.name.as_str(), style),
         ]));
     }
 
