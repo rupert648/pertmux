@@ -178,6 +178,16 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 |-----|------|---------|-------------|
 | `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
 
+#### `[[agent_action]]`
+
+Define custom agent actions sent to opencode instances. When present, replaces the built-in defaults. Omit to use the two default actions (rebase, pipeline fix).
+
+| Key | Type | Required | Default | Description |
+|-----|------|----------|---------|-------------|
+| `name` | string | yes | — | Display name in the actions popup |
+| `prompt` | string | yes | — | Prompt template (supports `{target_branch}`, `{source_branch}`, `{mr_url}`, `{mr_iid}`, `{project_name}`) |
+| `requires_mr` | boolean | no | `false` | If `true`, action is skipped when no MR is linked |
+
 #### `[keybindings]`
 
 Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable. Each action must have a unique key — duplicates are rejected at startup.
