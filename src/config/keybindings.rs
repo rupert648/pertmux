@@ -10,6 +10,7 @@ pub struct KeybindingsConfig {
     pub create_worktree: char,
     pub delete_worktree: char,
     pub merge_worktree: char,
+    pub agent_actions: char,
 }
 
 impl Default for KeybindingsConfig {
@@ -22,6 +23,7 @@ impl Default for KeybindingsConfig {
             create_worktree: 'c',
             delete_worktree: 'd',
             merge_worktree: 'm',
+            agent_actions: 'a',
         }
     }
 }

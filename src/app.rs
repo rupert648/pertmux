@@ -42,6 +42,12 @@ pub enum PopupState {
         changes: Vec<MrChange>,
         selected: usize,
     },
+    AgentActions {
+        selected: usize,
+        pane_pid: u32,
+        session_id: String,
+        worktree_branch: Option<String>,
+    },
 }
 
 pub struct ProjectState {

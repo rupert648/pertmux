@@ -361,6 +361,71 @@ impl ClientState {
         self.popup = PopupState::None;
     }
 
+    fn open_agent_actions(&mut self) {
+        let proj = match self.snapshot.projects.get(self.active_project) {
+            Some(p) => p,
+            None => {
+                self.notify("No active project");
+                return;
+            }
+        };
+
+        let wt_idx = *self
+            .worktree_selected
+            .get(self.active_project)
+            .unwrap_or(&0);
+        let wt = match proj.cached_worktrees.get(wt_idx) {
+            Some(wt) => wt,
+            None => {
+                self.notify("No worktree selected");
+                return;
+            }
+        };
+
+        let wt_path = match &wt.path {
+            Some(p) => p.clone(),
+            None => {
+                self.notify("Worktree has no path");
+                return;
+            }
+        };
+
+        let canonical_wt = std::fs::canonicalize(&wt_path).ok();
+        let pane = self.snapshot.panes.iter().find(|p| {
+            canonical_wt
+                .as_ref()
+                .and_then(|cwt| {
+                    std::fs::canonicalize(&p.pane_path)
+                        .ok()
+                        .map(|cp| cp == *cwt)
+                })
+                .unwrap_or(false)
+        });
+
+        let pane = match pane {
+            Some(p) => p,
+            None => {
+                self.notify("No opencode instance for this worktree");
+                return;
+            }
+        };
+
+        let session_id = match &pane.db_session_id {
+            Some(id) => id.clone(),
+            None => {
+                self.notify("No active opencode session");
+                return;
+            }
+        };
+
+        self.popup = PopupState::AgentActions {
+            selected: 0,
+            pane_pid: pane.pane_pid,
+            session_id,
+            worktree_branch: wt.branch.clone(),
+        };
+    }
+
     fn open_project_filter(&mut self) {
         if self.snapshot.projects.len() < 2 {
             return;
@@ -723,6 +788,35 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::AgentActions { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PopupState::AgentActions { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PopupState::AgentActions { selected, .. } = &mut state.popup
+                    && *selected + 1 < AGENT_ACTIONS.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(msg) = build_agent_action_msg(state) {
+                    state.notify("Sending to opencode...");
+                    send_msg(framed, msg).await?;
+                }
+                state.close_popup();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -794,6 +888,8 @@ async fn handle_key(
                 state.open_remove_popup();
             } else if ch == kb.merge_worktree {
                 state.open_merge_popup();
+            } else if ch == kb.agent_actions {
+                state.open_agent_actions();
             }
         }
         _ => {}
@@ -823,10 +919,67 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             project_idx,
             worktree_path: worktree_path.clone(),
         }),
-        PopupState::ProjectFilter { .. } | PopupState::ChangeSummary { .. } | PopupState::None => {
-            None
-        }
+        PopupState::ProjectFilter { .. }
+        | PopupState::ChangeSummary { .. }
+        | PopupState::AgentActions { .. }
+        | PopupState::None => None,
     }
+}
+
+pub const AGENT_ACTIONS: &[&str] = &["Rebase with upstream", "Check pipeline & fix errors"];
+
+fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
+    let PopupState::AgentActions {
+        selected,
+        pane_pid,
+        session_id,
+        worktree_branch,
+    } = &state.popup
+    else {
+        return None;
+    };
+
+    let proj = state.snapshot.projects.get(state.active_project)?;
+
+    let linked_mr = worktree_branch.as_ref().and_then(|branch| {
+        proj.dashboard
+            .linked_mrs
+            .iter()
+            .find(|l| &l.mr.source_branch == branch)
+    });
+
+    let prompt = match *selected {
+        0 => {
+            let target = linked_mr
+                .map(|l| l.mr.target_branch.as_str())
+                .unwrap_or("main");
+            format!(
+                "Rebase the current branch onto origin/{}. \
+                 Pull the latest changes from origin/{} first, then rebase on top. \
+                 Resolve any conflicts.",
+                target, target,
+            )
+        }
+        1 => {
+            let mr = linked_mr?;
+            format!(
+                "Check the CI/CD pipeline status for MR: {}\n\n\
+                 Review any failing pipeline jobs. For each failure:\n\
+                 1. Identify the root cause from the job logs\n\
+                 2. Fix the issue in the code\n\
+                 3. Commit the fix\n\n\
+                 If there is no pipeline running, stop and report back.",
+                mr.mr.web_url,
+            )
+        }
+        _ => return None,
+    };
+
+    Some(ClientMsg::AgentAction {
+        pane_pid: *pane_pid,
+        session_id: session_id.clone(),
+        prompt,
+    })
 }
 
 async fn maybe_send_select_mr(

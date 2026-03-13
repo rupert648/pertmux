@@ -152,6 +152,7 @@ impl Config {
             (kb.create_worktree, "create_worktree"),
             (kb.delete_worktree, "delete_worktree"),
             (kb.merge_worktree, "merge_worktree"),
+            (kb.agent_actions, "agent_actions"),
         ];
         for (ch, name) in &bindings {
             if let Some(existing) = key_map.get(ch) {

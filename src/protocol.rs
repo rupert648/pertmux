@@ -75,6 +75,11 @@ pub enum ClientMsg {
         project_idx: usize,
         worktree_path: String,
     },
+    AgentAction {
+        pane_pid: u32,
+        session_id: String,
+        prompt: String,
+    },
     Stop,
 }
 

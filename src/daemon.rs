@@ -120,6 +120,10 @@ pub async fn run(config: Config) -> Result<()> {
                         app.refresh().await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
                     }
+                    ClientMsg::AgentAction { pane_pid, session_id, prompt } => {
+                        let result = handle_agent_action(pane_pid, &session_id, &prompt).await;
+                        send_action_result(&broadcast_tx, result);
+                    }
                     ClientMsg::SelectMr { project_idx, mr_iid } => {
                         if let Some(proj) = app.projects.get_mut(project_idx)
                             && let Some(idx) = proj.dashboard.linked_mrs.iter().position(|l| l.mr.iid == mr_iid)
@@ -339,6 +343,36 @@ fn send_action_result(broadcast_tx: &broadcast::Sender<DaemonMsg>, result: Resul
         },
     };
     let _ = broadcast_tx.send(msg);
+}
+
+async fn handle_agent_action(pane_pid: u32, session_id: &str, prompt: &str) -> Result<String> {
+    let port = crate::discovery::discover_port(pane_pid)
+        .ok_or_else(|| anyhow::anyhow!("Could not discover opencode port"))?;
+
+    let url = format!(
+        "http://127.0.0.1:{}/session/{}/message",
+        port, session_id
+    );
+    let body = serde_json::json!({
+        "parts": [{"type": "text", "text": prompt}]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+
+    if resp.status().is_success() {
+        Ok("Message sent to opencode".to_string())
+    } else {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("opencode API error ({}): {}", status, body)
+    }
 }
 
 async fn broadcast_snapshot(
