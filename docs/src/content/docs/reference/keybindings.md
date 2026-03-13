@@ -26,6 +26,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `c` | Create new worktree | `create_worktree` |
 | `d` | Delete selected worktree | `delete_worktree` |
 | `m` | Merge selected worktree into default branch | `merge_worktree` |
+| `a` | Open agent actions panel | `agent_actions` |
 
 ## Global
 
@@ -36,7 +37,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 
 ## Configuring keybindings
 
-Add a `[keybindings]` section to your config file to remap action keys. Only single characters are supported — no modifier keys or multi-key sequences.
+Add a `[keybindings]` section to your config file to remap action keys. Only single characters are supported — no modifier keys or multi-key sequences. The `agent_actions` popup only shows when a worktree has an active opencode session.
 
 ```toml
 [keybindings]
@@ -47,6 +48,7 @@ filter_projects = "p"
 create_worktree = "n"
 delete_worktree = "x"
 merge_worktree = "g"
+agent_actions = "a"
 ```
 
 Missing keys use their defaults. Each action must have a unique key — duplicates are rejected at startup with a clear error message.

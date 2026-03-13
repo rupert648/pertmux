@@ -63,12 +63,14 @@ Communication uses `LengthDelimitedCodec` framing with `serde_json` serializatio
 
 ## Tiered refresh
 
+All refresh intervals are configurable in the TOML config file.
+
 | Data | Interval | Trigger |
 |------|----------|---------|
 | tmux panes + agent status | 2 seconds | Timer |
 | Worktrees | 30 seconds | Timer |
 | MR details | 60 seconds | Timer |
-| MR list | Manual | `r` key or daemon startup |
+| MR list | 300 seconds | Timer + manual (`r` key) |
 
 ## Paths
 
@@ -77,3 +79,4 @@ Communication uses `LengthDelimitedCodec` framing with `serde_json` serializatio
 | `/tmp/pertmux-{USER}.sock` | Daemon Unix socket |
 | `/tmp/pertmux-daemon.log` | Daemon log file |
 | `~/.local/share/pertmux/read_state.db` | Comment read/unread tracking |
+| `~/.local/share/pertmux/last_project` | Last selected project persistence |
