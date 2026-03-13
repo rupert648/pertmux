@@ -42,6 +42,18 @@ Show the daemon socket path and whether it's running.
 pertmux status
 ```
 
+### `pertmux cleanup`
+
+Clean up stale files and persistence data.
+
+```bash
+pertmux cleanup
+```
+
+- Removes the stale socket file if the daemon is not running.
+- Removes `read_state.db` (comment tracking) and `last_project` persistence files.
+- Skips the live socket if the daemon is still running.
+
 ## Global options
 
 | Option | Description |
