@@ -46,6 +46,14 @@ Select an MR to see:
 
 pertmux tracks which comments you've seen using a local SQLite database. When new comments appear on an MR, you'll see a yellow `● new` indicator.
 
+## Status change notifications
+
+pertmux provides real-time feedback on MR status changes:
+
+- **Live toasts**: While the client is connected, you'll receive toast notifications for pipeline failures/successes, new discussions, and approvals.
+- **Change summary modal**: If changes occur while the client is disconnected, a summary modal appears upon reconnection. It lists all accumulated changes across your projects.
+- **Quick navigation**: Press **`Enter`** on any item in the change summary modal to jump directly to that MR.
+
 ## Actions
 
 | Key | Action |

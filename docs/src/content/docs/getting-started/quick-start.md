@@ -5,10 +5,11 @@ description: Get up and running with pertmux in under 2 minutes.
 
 ## 1. Start the daemon
 
-The daemon runs in the background, fetching data on tiered intervals:
+The daemon backgrounds itself automatically, fetching data on tiered intervals:
 
 ```bash
 pertmux serve
+# [pertmux] daemon started (pid: 12345), logging to /tmp/pertmux-daemon.log
 ```
 
 ## 2. Connect the TUI
@@ -37,7 +38,7 @@ local_path = "/home/user/repos/my-repo"
 username = "youruser"
 ```
 
-Then restart the daemon:
+Then restart the daemon (it backgrounds automatically):
 
 ```bash
 pertmux stop

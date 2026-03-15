@@ -27,6 +27,16 @@ When an opencode agent is detected in a tmux pane, pertmux displays:
 - **Todo list**: The agent's current task progress
 - **Message timeline**: Recent conversation history
 
+## Agent actions
+
+When a worktree has an active opencode session, you can press **`a`** to open the agent actions popup. This allows you to send high-level commands to the agent without leaving the dashboard.
+
+Two built-in actions are provided by default:
+- **Rebase with upstream**: Instructs the agent to rebase the current branch.
+- **Check pipeline & fix**: Instructs the agent to analyze the latest pipeline failure and attempt a fix.
+
+You can define your own custom actions via `[[agent_action]]` in your config file, with template variables like `{target_branch}` and `{mr_url}` for dynamic prompts. See [Agent Actions](/features/agent-actions/) for full details.
+
 ## Agent-only mode
 
 If you don't need forge integration, you can run pertmux with just agent monitoring:

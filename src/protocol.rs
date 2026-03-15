@@ -1,4 +1,4 @@
-use crate::config::{KeybindingsConfig, ProjectForge};
+use crate::config::{AgentActionConfig, KeybindingsConfig, ProjectForge};
 use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
 use crate::mr_changes::MrChange;
@@ -41,6 +41,8 @@ pub struct DashboardSnapshot {
     pub keybindings: KeybindingsConfig,
     #[serde(default)]
     pub pending_changes: Vec<MrChange>,
+    #[serde(default)]
+    pub agent_actions: Vec<AgentActionConfig>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -74,6 +76,11 @@ pub enum ClientMsg {
     MergeWorktree {
         project_idx: usize,
         worktree_path: String,
+    },
+    AgentAction {
+        pane_pid: u32,
+        session_id: String,
+        prompt: String,
     },
     Stop,
 }
@@ -191,6 +198,7 @@ mod tests {
             default_agent_command: None,
             keybindings: KeybindingsConfig::default(),
             pending_changes: vec![],
+            agent_actions: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");

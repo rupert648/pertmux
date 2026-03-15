@@ -7,7 +7,7 @@ pertmux detects and monitors AI coding agent instances running in tmux panes acr
 
 ## How detection works
 
-Every 2 seconds, the daemon:
+Every 2 seconds (configurable via `refresh_interval`), the daemon:
 
 1. Lists all tmux panes across all sessions
 2. Checks each pane's running process against registered agent process names
@@ -26,6 +26,10 @@ Each detected agent shows a status badge:
 | **Unknown** | Status could not be determined |
 
 Status priority for display: Busy > Retry > Idle > Unknown.
+
+## Agent Actions
+
+Press **`a`** on a worktree with an active opencode session to send commands to the agent — rebase, fix pipeline failures, and more. See [Agent Actions](/features/agent-actions/) for details.
 
 ## Session details
 

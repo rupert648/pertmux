@@ -361,6 +361,71 @@ impl ClientState {
         self.popup = PopupState::None;
     }
 
+    fn open_agent_actions(&mut self) {
+        let proj = match self.snapshot.projects.get(self.active_project) {
+            Some(p) => p,
+            None => {
+                self.notify("No active project");
+                return;
+            }
+        };
+
+        let wt_idx = *self
+            .worktree_selected
+            .get(self.active_project)
+            .unwrap_or(&0);
+        let wt = match proj.cached_worktrees.get(wt_idx) {
+            Some(wt) => wt,
+            None => {
+                self.notify("No worktree selected");
+                return;
+            }
+        };
+
+        let wt_path = match &wt.path {
+            Some(p) => p.clone(),
+            None => {
+                self.notify("Worktree has no path");
+                return;
+            }
+        };
+
+        let canonical_wt = std::fs::canonicalize(&wt_path).ok();
+        let pane = self.snapshot.panes.iter().find(|p| {
+            canonical_wt
+                .as_ref()
+                .and_then(|cwt| {
+                    std::fs::canonicalize(&p.pane_path)
+                        .ok()
+                        .map(|cp| cp == *cwt)
+                })
+                .unwrap_or(false)
+        });
+
+        let pane = match pane {
+            Some(p) => p,
+            None => {
+                self.notify("No opencode instance for this worktree");
+                return;
+            }
+        };
+
+        let session_id = match &pane.db_session_id {
+            Some(id) => id.clone(),
+            None => {
+                self.notify("No active opencode session");
+                return;
+            }
+        };
+
+        self.popup = PopupState::AgentActions {
+            selected: 0,
+            pane_pid: pane.pane_pid,
+            session_id,
+            worktree_branch: wt.branch.clone(),
+        };
+    }
+
     fn open_project_filter(&mut self) {
         if self.snapshot.projects.len() < 2 {
             return;
@@ -723,6 +788,35 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::AgentActions { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PopupState::AgentActions { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PopupState::AgentActions { selected, .. } = &mut state.popup
+                    && *selected + 1 < state.snapshot.agent_actions.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(msg) = build_agent_action_msg(state) {
+                    state.notify("Sending to opencode...");
+                    send_msg(framed, msg).await?;
+                }
+                state.close_popup();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -794,6 +888,8 @@ async fn handle_key(
                 state.open_remove_popup();
             } else if ch == kb.merge_worktree {
                 state.open_merge_popup();
+            } else if ch == kb.agent_actions {
+                state.open_agent_actions();
             }
         }
         _ => {}
@@ -823,10 +919,70 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             project_idx,
             worktree_path: worktree_path.clone(),
         }),
-        PopupState::ProjectFilter { .. } | PopupState::ChangeSummary { .. } | PopupState::None => {
-            None
-        }
+        PopupState::ProjectFilter { .. }
+        | PopupState::ChangeSummary { .. }
+        | PopupState::AgentActions { .. }
+        | PopupState::None => None,
     }
+}
+
+fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
+    let PopupState::AgentActions {
+        selected,
+        pane_pid,
+        session_id,
+        worktree_branch,
+    } = &state.popup
+    else {
+        return None;
+    };
+
+    let action = state.snapshot.agent_actions.get(*selected)?;
+    let proj = state.snapshot.projects.get(state.active_project)?;
+
+    let linked_mr = worktree_branch.as_ref().and_then(|branch| {
+        proj.dashboard
+            .linked_mrs
+            .iter()
+            .find(|l| &l.mr.source_branch == branch)
+    });
+
+    // If the action requires an MR but none is linked, bail out
+    if action.requires_mr && linked_mr.is_none() {
+        return None;
+    }
+
+    let prompt = substitute_template(&action.prompt, linked_mr.map(|l| &l.mr), &proj.name);
+
+    Some(ClientMsg::AgentAction {
+        pane_pid: *pane_pid,
+        session_id: session_id.clone(),
+        prompt,
+    })
+}
+
+fn substitute_template(
+    template: &str,
+    mr: Option<&crate::forge_clients::types::MergeRequestSummary>,
+    project_name: &str,
+) -> String {
+    let mut result = template.to_string();
+    result = result.replace("{project_name}", project_name);
+
+    if let Some(mr) = mr {
+        result = result.replace("{target_branch}", &mr.target_branch);
+        result = result.replace("{source_branch}", &mr.source_branch);
+        result = result.replace("{mr_url}", &mr.web_url);
+        result = result.replace("{mr_iid}", &mr.iid.to_string());
+    } else {
+        // Provide sensible defaults when no MR is linked
+        result = result.replace("{target_branch}", "main");
+        result = result.replace("{source_branch}", "");
+        result = result.replace("{mr_url}", "");
+        result = result.replace("{mr_iid}", "");
+    }
+
+    result
 }
 
 async fn maybe_send_select_mr(
