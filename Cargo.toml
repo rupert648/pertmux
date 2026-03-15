@@ -2,6 +2,13 @@
 name = "pertmux"
 version = "0.1.0"
 edition = "2024"
+description = "A TUI dashboard that links GitLab/GitHub MRs to local branches, tmux sessions, and AI coding agents"
+license = "MIT"
+repository = "https://github.com/rupert648/pertmux"
+homepage = "https://pertmux.dev"
+readme = "README.md"
+keywords = ["tui", "tmux", "git", "dashboard", "worktree"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.29"
