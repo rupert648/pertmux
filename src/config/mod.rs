@@ -219,8 +219,7 @@ pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
             p
         }
         None => {
-            let xdg_path =
-                dirs::home_dir().map(|h| h.join(".config").join("pertmux.toml"));
+            let xdg_path = dirs::home_dir().map(|h| h.join(".config").join("pertmux.toml"));
             let native_path = dirs::config_dir().map(|d| d.join("pertmux.toml"));
 
             let found = xdg_path
