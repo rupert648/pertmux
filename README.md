@@ -74,15 +74,16 @@ bind-key a display-popup -h 80% -w 80% -E "pertmux connect"
 ### Commands
 
 ```sh
-pertmux serve              # start the background daemon
-pertmux connect            # open TUI client (connects to running daemon)
-pertmux stop               # stop the daemon
-pertmux status             # show socket path, daemon state
-pertmux --version          # show version
-pertmux -c config.toml serve  # start daemon with specific config
+pertmux serve                    # start daemon (backgrounds automatically)
+pertmux connect                  # open TUI client (connects to running daemon)
+pertmux stop                     # stop the daemon
+pertmux status                   # show socket path, daemon state
+pertmux --version                # show version
+pertmux -c config.toml serve     # start daemon with specific config
+pertmux serve --foreground       # run in foreground (for debugging)
 ```
 
-The daemon must be started before connecting. It logs to `/tmp/pertmux-daemon.log` and listens on `/tmp/pertmux-{USER}.sock`.
+The daemon must be started before connecting. It forks to the background automatically, logging to `/tmp/pertmux-daemon.log` and listening on `/tmp/pertmux-{USER}.sock`.
 
 ## Configuration
 

@@ -10,11 +10,14 @@ description: All pertmux command-line commands and options.
 Start the background daemon.
 
 ```bash
-pertmux serve
-pertmux -c config.toml serve
+pertmux serve                    # backgrounds automatically
+pertmux -c config.toml serve     # with specific config
+pertmux serve --foreground       # stay in terminal (for debugging)
 ```
 
-The daemon must be started before any client can connect. It runs until killed or stopped with `pertmux stop`.
+The daemon forks to the background by default, logging to `/tmp/pertmux-daemon.log`. It validates your config and checks for an existing daemon before forking — errors show immediately in your terminal. Use `--foreground` to keep the daemon in your terminal for debugging.
+
+The daemon runs until stopped with `pertmux stop`.
 
 ### `pertmux connect`
 
