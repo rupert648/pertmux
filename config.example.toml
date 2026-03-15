@@ -11,7 +11,7 @@
 # db_path = "~/.local/share/opencode/opencode.db"
 
 [github]
-token = ""  # Set PERTMUX_GITHUB_TOKEN env var or paste token here
+# token = ""  # Set PERTMUX_GITHUB_TOKEN env var or paste token here
 
 [[project]]
 name = "pertmux"
