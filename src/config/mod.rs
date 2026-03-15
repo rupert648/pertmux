@@ -6,9 +6,41 @@ pub use agent::AgentConfig;
 pub use forge::{GitHubSourceConfig, GitLabSourceConfig, ProjectConfig, ProjectForge};
 pub use keybindings::KeybindingsConfig;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentActionConfig {
+    pub name: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub requires_mr: bool,
+}
+
+pub fn default_agent_actions() -> Vec<AgentActionConfig> {
+    vec![
+        AgentActionConfig {
+            name: "Rebase with upstream".to_string(),
+            prompt: "Rebase the current branch onto origin/{target_branch}. \
+                     Pull the latest changes from origin/{target_branch} first, \
+                     then rebase on top. Resolve any conflicts."
+                .to_string(),
+            requires_mr: false,
+        },
+        AgentActionConfig {
+            name: "Check pipeline & fix errors".to_string(),
+            prompt: "Check the CI/CD pipeline status for MR: {mr_url}\n\n\
+                     Review any failing pipeline jobs. For each failure:\n\
+                     1. Identify the root cause from the job logs\n\
+                     2. Fix the issue in the code\n\
+                     3. Commit the fix\n\n\
+                     If there is no pipeline running, stop and report back."
+                .to_string(),
+            requires_mr: true,
+        },
+    ]
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -23,6 +55,8 @@ pub struct Config {
     pub gitlab: Option<GitLabSourceConfig>,
     pub github: Option<GitHubSourceConfig>,
     pub project: Option<Vec<ProjectConfig>>,
+    #[serde(default = "default_agent_actions")]
+    pub agent_action: Vec<AgentActionConfig>,
 }
 
 impl Default for Config {
@@ -38,6 +72,7 @@ impl Default for Config {
             gitlab: None,
             github: None,
             project: None,
+            agent_action: default_agent_actions(),
         }
     }
 }
@@ -152,6 +187,7 @@ impl Config {
             (kb.create_worktree, "create_worktree"),
             (kb.delete_worktree, "delete_worktree"),
             (kb.merge_worktree, "merge_worktree"),
+            (kb.agent_actions, "agent_actions"),
         ];
         for (ch, name) in &bindings {
             if let Some(existing) = key_map.get(ch) {

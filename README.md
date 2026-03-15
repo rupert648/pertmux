@@ -74,15 +74,16 @@ bind-key a display-popup -h 80% -w 80% -E "pertmux connect"
 ### Commands
 
 ```sh
-pertmux serve              # start the background daemon
-pertmux connect            # open TUI client (connects to running daemon)
-pertmux stop               # stop the daemon
-pertmux status             # show socket path, daemon state
-pertmux --version          # show version
-pertmux -c config.toml serve  # start daemon with specific config
+pertmux serve                    # start daemon (backgrounds automatically)
+pertmux connect                  # open TUI client (connects to running daemon)
+pertmux stop                     # stop the daemon
+pertmux status                   # show socket path, daemon state
+pertmux --version                # show version
+pertmux -c config.toml serve     # start daemon with specific config
+pertmux serve --foreground       # run in foreground (for debugging)
 ```
 
-The daemon must be started before connecting. It logs to `/tmp/pertmux-daemon.log` and listens on `/tmp/pertmux-{USER}.sock`.
+The daemon must be started before connecting. It forks to the background automatically, logging to `/tmp/pertmux-daemon.log` and listening on `/tmp/pertmux-{USER}.sock`.
 
 ## Configuration
 
@@ -177,6 +178,16 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
+
+#### `[[agent_action]]`
+
+Define custom agent actions sent to opencode instances. When present, replaces the built-in defaults. Omit to use the two default actions (rebase, pipeline fix).
+
+| Key | Type | Required | Default | Description |
+|-----|------|----------|---------|-------------|
+| `name` | string | yes | — | Display name in the actions popup |
+| `prompt` | string | yes | — | Prompt template (supports `{target_branch}`, `{source_branch}`, `{mr_url}`, `{mr_iid}`, `{project_name}`) |
+| `requires_mr` | boolean | no | `false` | If `true`, action is skipped when no MR is linked |
 
 #### `[keybindings]`
 

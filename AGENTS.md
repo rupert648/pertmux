@@ -21,7 +21,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 5. **tmux actions**: `switch_to_pane()` and `find_or_create_pane()` run client-side — they only need data from the snapshot, not daemon state.
 
 ## Module Guide
-- **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemon::run()`, `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`, `cleanup` → `client::cleanup()`. Requires explicit subcommand (no bare `pertmux`).
+- **main.rs**: Entry point. Uses clap for subcommands: `serve` → `daemonize()` (or `daemon::run()` with `--foreground`), `connect` → `client::run()`, `stop` → `client::stop()`, `status` → `client::status()`, `cleanup` → `client::cleanup()`. `serve` self-daemonizes by default: re-execs with `--foreground`, redirecting stdout/stderr to `/tmp/pertmux-daemon.log`, detached via `process_group(0)`. Validates config and checks for existing daemon before forking. Requires explicit subcommand (no bare `pertmux`).
 - **daemon.rs**: Background daemon. Unix socket listener with `LengthDelimitedCodec` framing. Broadcast channel for multi-client snapshot fan-out. `Arc<Mutex<DashboardSnapshot>>` for latest snapshot (sent to new clients immediately). Handles `ClientMsg` commands and runs tiered refresh intervals. Tracks client count via `Arc<AtomicUsize>` and accumulates MR changes in `pending_for_offline` when no clients are connected — drains them into the initial snapshot on reconnect.
 - **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/Tab) with no round-trip. Project switching via fuzzy finder (`f` key). Also provides `stop()`, `status()`, and `cleanup()` commands. On reconnect, if `pending_changes` is non-empty, opens `ChangeSummary` modal; for live snapshots, shows toast notifications.
 - **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
@@ -65,6 +65,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **Async runtime**: tokio + crossterm EventStream. `CodingAgent` trait stays sync (not Send) — daemon keeps `App` on main task.
 - **Daemon/Client IPC**: `tokio::net::UnixStream` with `tokio_util::codec::LengthDelimitedCodec` framing and `serde_json` serialization. Multi-client via `tokio::sync::broadcast`. Client requires daemon to be running (no auto-start).
 - **Socket path**: `/tmp/pertmux-{USER}.sock`. Stale socket cleaned up on daemon startup.
+- **Self-daemonizing**: `pertmux serve` validates config, checks for existing daemon, then re-execs itself with `--foreground` in a new process group with stdout/stderr redirected to `/tmp/pertmux-daemon.log`. The parent prints the PID and exits immediately. `--foreground` runs the daemon in the terminal for debugging.
 - **Daemon lifecycle**: Runs until killed or `pertmux stop`. No idle timeout. Single daemon per user.
 
 ## Dependencies
@@ -135,7 +136,7 @@ npm run preview   # Preview the build
 
 ## Build & Run
 - **Build**: `cargo build --release`
-- **Start daemon**: `pertmux serve`
+- **Start daemon**: `pertmux serve` (backgrounds automatically; `--foreground` to keep in terminal)
 - **Connect client**: `pertmux connect` (daemon must be running)
 - **Stop daemon**: `pertmux stop`
 - **Check status**: `pertmux status`

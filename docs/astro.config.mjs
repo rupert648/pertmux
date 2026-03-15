@@ -40,6 +40,7 @@ export default defineConfig({
             { label: 'MR Tracking & Linking', slug: 'features/mr-tracking' },
             { label: 'Worktree Management', slug: 'features/worktree-management' },
             { label: 'Agent Monitoring', slug: 'features/agent-monitoring' },
+            { label: 'Agent Actions', slug: 'features/agent-actions' },
             { label: 'Pipeline Visualization', slug: 'features/pipeline-visualization' },
           ],
         },

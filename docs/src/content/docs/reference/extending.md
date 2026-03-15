@@ -12,14 +12,16 @@ Implement the `CodingAgent` trait in `src/coding_agent/`:
 ```rust
 pub trait CodingAgent {
     fn name(&self) -> &str;
-    fn process_names(&self) -> &[&str];
-    fn enrich_pane(&self, pane: &mut AgentPane);
+    fn process_name(&self) -> &str;
+    fn query_status(&self, pane_pid: u32) -> PaneStatus;
 }
 ```
 
-- **`name()`**: Human-readable name for the agent
-- **`process_names()`**: Process names to detect in tmux panes
-- **`enrich_pane()`**: Query agent-specific data and populate the `AgentPane` struct
+- **`name()`**: Human-readable name for the agent.
+- **`process_name()`**: The process name to detect in tmux panes.
+- **`query_status()`**: Takes the pane's PID and returns a `PaneStatus` enum (Busy, Idle, Retry, Unknown).
+
+Database enrichment (e.g., fetching session details, token usage, and message history) happens separately in `db::enrich_pane()`.
 
 Register your agent in `agents_from_config()` in `src/coding_agent/mod.rs`.
 
