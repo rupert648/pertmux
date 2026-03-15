@@ -353,10 +353,7 @@ async fn handle_agent_action(pane_pid: u32, session_id: &str, prompt: &str) -> R
     let port = crate::discovery::discover_port(pane_pid)
         .ok_or_else(|| anyhow::anyhow!("Could not discover opencode port"))?;
 
-    let url = format!(
-        "http://127.0.0.1:{}/session/{}/message",
-        port, session_id
-    );
+    let url = format!("http://127.0.0.1:{}/session/{}/message", port, session_id);
     let body = serde_json::json!({
         "parts": [{"type": "text", "text": prompt}]
     });

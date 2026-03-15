@@ -926,8 +926,6 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
     }
 }
 
-
-
 fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
     let PopupState::AgentActions {
         selected,
@@ -954,11 +952,7 @@ fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
         return None;
     }
 
-    let prompt = substitute_template(
-        &action.prompt,
-        linked_mr.map(|l| &l.mr),
-        &proj.name,
-    );
+    let prompt = substitute_template(&action.prompt, linked_mr.map(|l| &l.mr), &proj.name);
 
     Some(ClientMsg::AgentAction {
         pane_pid: *pane_pid,

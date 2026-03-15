@@ -81,13 +81,11 @@ fn daemonize(config_path: Option<&str>) -> anyhow::Result<()> {
     use std::process::{Command, Stdio};
 
     let sock = daemon::socket_path();
-    if sock.exists() {
-        if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-            anyhow::bail!(
-                "another pertmux daemon is already running at {}",
-                sock.display()
-            );
-        }
+    if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+        anyhow::bail!(
+            "another pertmux daemon is already running at {}",
+            sock.display()
+        );
     }
 
     let log_path = daemon::log_path();
@@ -101,15 +99,12 @@ fn daemonize(config_path: Option<&str>) -> anyhow::Result<()> {
     let mut cmd = Command::new(exe);
 
     if let Some(cfg) = config_path {
-        let abs_cfg = std::fs::canonicalize(cfg)
-            .unwrap_or_else(|_| std::path::PathBuf::from(cfg));
+        let abs_cfg = std::fs::canonicalize(cfg).unwrap_or_else(|_| std::path::PathBuf::from(cfg));
         cmd.args(["-c", &abs_cfg.to_string_lossy()]);
     }
     cmd.args(["serve", "--foreground"]);
 
-    cmd.stdout(log_file)
-        .stderr(log_stderr)
-        .stdin(Stdio::null());
+    cmd.stdout(log_file).stderr(log_stderr).stdin(Stdio::null());
 
     #[cfg(unix)]
     {
