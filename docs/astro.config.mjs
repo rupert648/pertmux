@@ -30,7 +30,8 @@ export default defineConfig({
           items: [
             { label: 'Config Reference', slug: 'configuration/config-reference' },
             { label: 'Multi-Project Setup', slug: 'configuration/multi-project' },
-            { label: 'Forge Setup', slug: 'configuration/forge-setup' },
+            { label: 'GitHub Setup', slug: 'configuration/github-setup' },
+            { label: 'GitLab Setup', slug: 'configuration/gitlab-setup' },
             { label: 'Agent Configuration', slug: 'configuration/agent-config' },
           ],
         },
@@ -51,6 +52,8 @@ export default defineConfig({
             { label: 'Architecture', slug: 'reference/architecture' },
             { label: 'CLI Commands', slug: 'reference/cli-commands' },
             { label: 'Extending pertmux', slug: 'reference/extending' },
+            { label: 'Security & Privacy', slug: 'reference/security' },
+            { label: 'Contributing', slug: 'reference/contributing' },
           ],
         },
       ],
