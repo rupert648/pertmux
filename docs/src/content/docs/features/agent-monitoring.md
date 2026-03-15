@@ -5,14 +5,21 @@ description: Monitor AI coding agents running across your tmux sessions.
 
 pertmux detects and monitors AI coding agent instances running in tmux panes across all your sessions.
 
+## Supported agents
+
+Currently, [opencode](https://github.com/sst/opencode) is the only supported agent. opencode must be started with `--port 0` so pertmux can query its local HTTP server. See [Agent Configuration](/configuration/agent-config/) for setup details.
+
+The architecture is pluggable — new agents can be added by implementing the `CodingAgent` trait. See [Extending pertmux](/reference/extending/) and [Contributing](/reference/contributing/).
+
 ## How detection works
 
 Every 2 seconds (configurable via `refresh_interval`), the daemon:
 
 1. Lists all tmux panes across all sessions
 2. Checks each pane's running process against registered agent process names
-3. For matched panes, queries the agent's API or database for session details
-4. Links each agent pane to its corresponding MR via the worktree path
+3. For matched panes, discovers the agent's HTTP server port via process tree inspection
+4. Queries the agent's API and database for session details
+5. Links each agent pane to its corresponding MR via the worktree path
 
 ## Agent status
 

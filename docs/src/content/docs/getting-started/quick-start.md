@@ -3,28 +3,16 @@ title: Quick Start
 description: Get up and running with pertmux in under 2 minutes.
 ---
 
-## 1. Start the daemon
+## 1. Get a token
 
-The daemon backgrounds itself automatically, fetching data on tiered intervals:
+You need a personal access token from your forge:
 
-```bash
-pertmux serve
-# [pertmux] daemon started (pid: 12345), logging to /tmp/pertmux-daemon.log
-```
+- **GitHub**: [GitHub Setup](/configuration/github-setup/) — create a classic PAT with `repo` scope
+- **GitLab**: [GitLab Setup](/configuration/gitlab-setup/) — create a token with `read_api` scope
 
-## 2. Connect the TUI
+## 2. Create a config file
 
-Open the dashboard in your terminal:
-
-```bash
-pertmux connect
-```
-
-That's it for basic agent monitoring. pertmux will automatically discover coding agent instances running in your tmux panes.
-
-## 3. Add forge integration (optional)
-
-For MR/PR tracking, create a config file at `~/.config/pertmux/pertmux.toml`:
+Create `~/.config/pertmux.toml`:
 
 ```toml
 [github]
@@ -38,15 +26,32 @@ local_path = "/home/user/repos/my-repo"
 username = "youruser"
 ```
 
-Then restart the daemon (it backgrounds automatically):
+See [Config Reference](/configuration/config-reference/) for all available options.
+
+## 3. Start the daemon
 
 ```bash
-pertmux stop
-pertmux -c ~/.config/pertmux/pertmux.toml serve
+pertmux serve
 ```
+
+The daemon backgrounds itself automatically, polling your forge for MR/PR updates on tiered intervals.
+
+## 4. Connect the TUI
+
+```bash
+pertmux connect
+```
+
+You should see your open MRs/PRs, linked worktrees, and any active coding agents.
+
+:::note[Coding agent monitoring]
+pertmux can monitor [opencode](https://github.com/sst/opencode) instances running in your tmux panes (currently the only supported agent). opencode must be started with `--port 0` so pertmux can query its local server. See [Agent Configuration](/configuration/agent-config/) for setup details.
+
+If you just want agent monitoring without forge integration, skip steps 1-2 — pertmux will auto-discover opencode instances in your tmux panes.
+:::
 
 ## Next steps
 
 - [tmux Integration](/getting-started/tmux-integration/) — Set up the popup overlay
-- [Configuration](/configuration/config-reference/) — Full config reference
 - [Multi-Project Setup](/configuration/multi-project/) — Track multiple repos
+- [Worktree Management](/features/worktree-management/) — Create and manage worktrees from the dashboard

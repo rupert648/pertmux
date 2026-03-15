@@ -2,6 +2,8 @@
 
 pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/GitHub MRs to local branches/worktrees, tmux sessions, and coding agent instances. It provides a real-time view of merge request status, pipeline health, worktree management, and session progress — all from a single TUI.
 
+![pertmux demo — unified SWE dashboard linking MRs, worktrees, tmux sessions, and coding agents](assets/demo.gif)
+
 ## Features
 
 - **Multi-forge support** — GitLab and GitHub MR/PR tracking with pipeline dots, comments, and unread indicators
@@ -94,7 +96,7 @@ pertmux works out of the box with zero configuration for basic agent monitoring.
 pertmux -c ./path/to/config.toml serve
 ```
 
-If no `-c` flag is provided, pertmux looks for `~/.config/pertmux/pertmux.toml`. If that file doesn't exist, defaults are used.
+If no `-c` flag is provided, pertmux looks for `~/.config/pertmux.toml`. If that file doesn't exist, defaults are used.
 
 ### Multi-project config (recommended)
 
@@ -133,6 +135,12 @@ username = "youruser"
 ```
 
 ### Agent-only config (no forge)
+
+[opencode](https://github.com/sst/opencode) is currently the only supported coding agent. It must be started with `--port 0` so pertmux can query its local HTTP server for session status:
+
+```bash
+opencode --port 0
+```
 
 ```toml
 refresh_interval = 2

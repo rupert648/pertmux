@@ -7,6 +7,27 @@ pertmux can monitor AI coding agent instances running in your tmux panes. Agents
 
 ## opencode
 
+[opencode](https://github.com/sst/opencode) is currently the only supported coding agent. The architecture is pluggable — see [Extending pertmux](/reference/extending/) and [Contributing](/reference/contributing/) if you'd like to add support for another agent.
+
+### Requirement: `--port 0`
+
+opencode must be started with the `--port 0` flag so it launches its local HTTP server on a random port. pertmux uses this server to query session status.
+
+```bash
+opencode --port 0
+```
+
+Without `--port 0`, opencode doesn't start its HTTP server and pertmux won't be able to detect its status.
+
+:::tip
+Add an alias to your shell profile so you don't have to remember the flag:
+```bash
+alias opencode='command opencode --port 0'
+```
+:::
+
+### Config
+
 ```toml
 [agent.opencode]
 db_path = "~/.local/share/opencode/opencode.db"
