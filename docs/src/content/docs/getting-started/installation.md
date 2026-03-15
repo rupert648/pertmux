@@ -6,20 +6,21 @@ description: How to install pertmux on your system.
 ## Prerequisites
 
 - [tmux](https://github.com/tmux/tmux) 3.2+ (for popup support)
-- [Rust toolchain](https://rustup.rs/) (for building from source)
+- [Rust toolchain](https://rustup.rs/)
 - [worktrunk](https://github.com/max-sixty/worktrunk) (optional) — enables the worktree management panel
+
+## Install from crates.io
+
+```bash
+cargo install pertmux
+```
 
 ## Install from source
 
 ```bash
+git clone https://github.com/rupert648/pertmux.git
+cd pertmux
 cargo install --path .
-```
-
-Or build manually:
-
-```bash
-cargo build --release
-# Binary at target/release/pertmux
 ```
 
 ## Install worktrunk (optional)

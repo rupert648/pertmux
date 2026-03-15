@@ -135,6 +135,7 @@ npm run preview   # Preview the build
 - No React/Vue/framework components — pure Astro + HTML + Tailwind
 
 ## Build & Run
+- **Install**: `cargo install pertmux` (from crates.io) or `cargo install --path .` (from source)
 - **Build**: `cargo build --release`
 - **Start daemon**: `pertmux serve` (backgrounds automatically; `--foreground` to keep in terminal)
 - **Connect client**: `pertmux connect` (daemon must be running)

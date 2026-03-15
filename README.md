@@ -48,14 +48,15 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 ### Install
 
 ```sh
-cargo install --path .
+cargo install pertmux
 ```
 
-Or build manually:
+Or build from source:
 
 ```sh
-cargo build --release
-# Binary at target/release/pertmux
+git clone https://github.com/rupert648/pertmux.git
+cd pertmux
+cargo install --path .
 ```
 
 ### tmux Integration
