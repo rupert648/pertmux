@@ -1,5 +1,5 @@
 # pertmux configuration
-# Copy to ~/.config/pertmux/pertmux.toml or pass via: pertmux -c ./config.toml
+# Copy to ~/.config/pertmux.toml or pass via: pertmux -c ./config.toml
 
 # How often (in seconds) to poll tmux panes and refresh the dashboard.
 # refresh_interval = 2

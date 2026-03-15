@@ -3,7 +3,7 @@ title: Config Reference
 description: Complete configuration file reference for pertmux.
 ---
 
-pertmux uses a TOML configuration file. It looks for `~/.config/pertmux/pertmux.toml` by default, or you can specify a path with `-c`:
+pertmux uses a TOML configuration file. It looks for `~/.config/pertmux.toml` by default, or you can specify a path with `-c`:
 
 ```bash
 pertmux -c ./path/to/config.toml serve
