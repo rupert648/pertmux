@@ -17,6 +17,10 @@ pub fn socket_path() -> PathBuf {
     PathBuf::from(format!("/tmp/pertmux-{}.sock", name))
 }
 
+pub fn log_path() -> PathBuf {
+    PathBuf::from("/tmp/pertmux-daemon.log")
+}
+
 pub async fn run(config: Config) -> Result<()> {
     let sock = socket_path();
 
