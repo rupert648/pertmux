@@ -4,40 +4,25 @@
 # How often (in seconds) to poll tmux panes and refresh the dashboard.
 # refresh_interval = 2
 
-# Agents are enabled by including their section below.
-# Remove or comment out a section to disable that agent.
-# If [agent] is omitted entirely, all agents are enabled with defaults.
+# Command to run in a split pane when focusing a worktree (e.g. "opencode")
+# default_agent_command = "opencode"
 
 [agent.opencode]
 # db_path = "~/.local/share/opencode/opencode.db"
 
-# TODO: implement claude
-# [agent.claude_code]
+[github]
+token = ""  # Set PERTMUX_GITHUB_TOKEN env var or paste token here
 
-# GitLab integration (optional — remove this section to disable GitLab features)
-# When present, pertmux shows your open MRs and links them to local branches/worktrees/opencode.
-# [gitlab]
-# token = "glpat-xxxxxxxxxxxxxxxxxxxx"  # Or set PERTMUX_GITLAB_TOKEN env var
-# host = "gitlab.com"                   # Default: gitlab.com
-# project = "your-group/your-project"   # GitLab project path (old single-project format)
-# local_path = "/path/to/local/repo"    # Absolute path to local git repo
+[[project]]
+name = "pertmux"
+source = "github"
+project = "rupert648/pertmux"
+local_path = "/Users/rupert/Documents/personal/pertmux"
+username = "rupert648"
 
-# GitHub integration (optional — remove this section to disable GitHub features)
-# [github]
-# token = "ghp_xxxxxxxxxxxxxxxxxxxx"    # Or set PERTMUX_GITHUB_TOKEN env var
-# host = "github.com"                   # Default: github.com (use custom host for GHE)
-
-# Multi-project setup (recommended for multiple repos)
-# [[project]]
-# name = "My GitLab App"
-# source = "gitlab"
-# project = "team/my-app"
-# local_path = "/home/user/repos/my-app"
-# username = "youruser"
-#
-# [[project]]
-# name = "My GitHub App"
-# source = "github"
-# project = "org/my-app"
-# local_path = "/home/user/repos/gh-app"
-# username = "youruser"
+[[project]]
+name = "ferroxide"
+source = "github"
+project = "rupert648/ferroxide"
+local_path = "/Users/rupert/Documents/personal/ferroxide"
+username = "rupert648"
