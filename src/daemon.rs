@@ -305,7 +305,11 @@ async fn drain_changes(
 
     if client_count.load(Ordering::SeqCst) == 0 {
         let mut guard = pending_for_offline.lock().await;
-        guard.extend(changes);
+        for change in changes {
+            if !guard.contains(&change) {
+                guard.push(change);
+            }
+        }
     }
 }
 

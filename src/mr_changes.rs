@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MrChange {
     pub project_name: String,
     pub mr_iid: u64,
@@ -9,7 +9,7 @@ pub struct MrChange {
     pub change_type: MrChangeType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MrChangeType {
     PipelineFailed,
     PipelineSucceeded,
