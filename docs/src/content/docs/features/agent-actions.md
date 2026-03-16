@@ -87,9 +87,11 @@ When you confirm an action:
 
 1. The **client** composes a prompt by substituting template variables with context from the linked MR
 2. The client sends an `AgentAction` command to the daemon with the pane PID, session ID, and prompt text
-3. The **daemon** discovers the opencode HTTP port via process tree walking (same mechanism used for status polling)
-4. The daemon sends `POST /session/{id}/message` to the opencode API with the prompt
+3. The **daemon** looks up which coding agent owns the pane and calls its `send_prompt()` trait method
+4. The agent implementation delivers the prompt via its own mechanism (opencode uses `POST /session/{id}/message`)
 5. The daemon returns a success/failure toast to the client
+
+Agent actions are **agent-agnostic** — the `CodingAgent` trait's `send_prompt()` method means each agent implementation controls how prompts are delivered. See [Extending pertmux](/reference/extending/) for how to add new agents with custom prompt delivery.
 
 ## Configuration
 
