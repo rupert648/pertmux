@@ -1,6 +1,7 @@
+pub mod claude_code;
 pub mod opencode;
 
-use crate::types::PaneStatus;
+use crate::types::{AgentPane, PaneStatus, SessionDetail};
 
 /// Trait for coding agent integrations.
 ///
@@ -19,9 +20,7 @@ pub trait CodingAgent {
 
     /// Query the live status of a coding session.
     ///
-    /// Given the PID of the tmux pane's shell process, discover the agent's
-    /// communication channel and retrieve its current status.
-    fn query_status(&self, pane_pid: u32) -> PaneStatus;
+    fn query_status(&self, pane: &AgentPane) -> PaneStatus;
 
     /// Send a prompt to the coding agent.
     ///
@@ -29,12 +28,23 @@ pub trait CodingAgent {
     /// deliver the prompt text to the agent. The agent implementation determines
     /// the delivery mechanism (e.g. HTTP API, tmux send-keys, socket).
     fn send_prompt(&self, pane_pid: u32, session_id: &str, prompt: &str) -> anyhow::Result<String>;
+
+    fn enrich_pane(&self, _pane: &mut AgentPane) {}
+
+    fn fetch_session_detail(&self, _session_id: &str) -> Option<SessionDetail> {
+        None
+    }
 }
 
 pub fn agents_from_config(config: &crate::config::AgentConfig) -> Vec<Box<dyn CodingAgent>> {
     let mut agents: Vec<Box<dyn CodingAgent>> = Vec::new();
     if config.opencode.is_some() {
-        agents.push(Box::new(opencode::OpenCode));
+        agents.push(Box::new(opencode::OpenCode::new(
+            config.opencode.as_ref().and_then(|c| c.db_path.clone()),
+        )));
+    }
+    if config.claude_code.is_some() {
+        agents.push(Box::new(claude_code::ClaudeCode));
     }
     agents
 }

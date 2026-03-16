@@ -1,11 +1,19 @@
 use super::CodingAgent;
 use crate::discovery;
-use crate::types::PaneStatus;
+use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-pub struct OpenCode;
+pub struct OpenCode {
+    db_path: Option<String>,
+}
+
+impl OpenCode {
+    pub fn new(db_path: Option<String>) -> Self {
+        Self { db_path }
+    }
+}
 
 // ─── Opencode-specific API types ─────────────────────────────────────────────
 
@@ -33,8 +41,8 @@ impl CodingAgent for OpenCode {
         "opencode"
     }
 
-    fn query_status(&self, pane_pid: u32) -> PaneStatus {
-        let Some(port) = discovery::discover_port(pane_pid) else {
+    fn query_status(&self, pane: &AgentPane) -> PaneStatus {
+        let Some(port) = discovery::discover_port(pane.pane_pid) else {
             return PaneStatus::Unknown;
         };
 
@@ -72,6 +80,14 @@ impl CodingAgent for OpenCode {
             let status = response.status();
             anyhow::bail!("opencode API error ({})", status)
         }
+    }
+
+    fn enrich_pane(&self, pane: &mut AgentPane) {
+        crate::db::enrich_pane(pane, self.db_path.as_deref());
+    }
+
+    fn fetch_session_detail(&self, session_id: &str) -> Option<SessionDetail> {
+        crate::db::fetch_session_detail(session_id, self.db_path.as_deref())
     }
 }
 

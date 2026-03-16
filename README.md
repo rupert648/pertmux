@@ -136,7 +136,9 @@ username = "youruser"
 
 ### Agent-only config (no forge)
 
-[opencode](https://github.com/sst/opencode) is currently the only supported coding agent. It must be started with `--port 0` so pertmux can query its local HTTP server for session status:
+pertmux supports two coding agents: [opencode](https://github.com/sst/opencode) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Enable one or both in your config.
+
+**opencode** must be started with `--port 0` so pertmux can query its local HTTP server for session status:
 
 ```bash
 opencode --port 0
@@ -147,6 +149,18 @@ refresh_interval = 2
 
 [agent.opencode]
 # db_path = "~/.local/share/opencode/opencode.db"
+```
+
+**Claude Code** requires no special flags — pertmux reads its JSONL transcript files automatically:
+
+```bash
+claude
+```
+
+```toml
+refresh_interval = 2
+
+[agent.claude_code]
 ```
 
 ### Config reference
@@ -188,9 +202,17 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 |-----|------|---------|-------------|
 | `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
 
+#### `[agent.claude_code]`
+
+Including this section enables the Claude Code agent. Omit or comment it out to disable. Claude Code requires no special startup flags — pertmux reads its JSONL transcript files from `~/.claude/` automatically.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| *(none currently)* | — | — | No configuration options needed |
+
 #### `[[agent_action]]`
 
-Define custom agent actions sent to opencode instances. When present, replaces the built-in defaults. Omit to use the two default actions (rebase, pipeline fix).
+Define custom agent actions sent to coding agent instances. When present, replaces the built-in defaults. Omit to use the two default actions (rebase, pipeline fix).
 
 | Key | Type | Required | Default | Description |
 |-----|------|----------|---------|-------------|

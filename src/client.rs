@@ -405,7 +405,7 @@ impl ClientState {
         let pane = match pane {
             Some(p) => p,
             None => {
-                self.notify("No opencode instance for this worktree");
+                self.notify("No agent instance for this worktree");
                 return;
             }
         };
@@ -413,7 +413,7 @@ impl ClientState {
         let session_id = match &pane.db_session_id {
             Some(id) => id.clone(),
             None => {
-                self.notify("No active opencode session");
+                self.notify("No active agent session");
                 return;
             }
         };
@@ -807,7 +807,7 @@ async fn handle_key(
             }
             KeyCode::Enter => {
                 if let Some(msg) = build_agent_action_msg(state) {
-                    state.notify("Sending to opencode...");
+                    state.notify("Sending to agent...");
                     send_msg(framed, msg).await?;
                 }
                 state.close_popup();
