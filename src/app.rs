@@ -428,6 +428,25 @@ impl App {
             });
     }
 
+    pub fn send_agent_prompt(
+        &self,
+        pane_pid: u32,
+        session_id: &str,
+        prompt: &str,
+    ) -> anyhow::Result<String> {
+        let pane = self
+            .panes
+            .iter()
+            .find(|p| p.pane_pid == pane_pid)
+            .ok_or_else(|| anyhow::anyhow!("No pane found with PID {}", pane_pid))?;
+
+        let agent = self
+            .find_agent(&pane.pane_command)
+            .ok_or_else(|| anyhow::anyhow!("No agent registered for '{}'", pane.pane_command))?;
+
+        agent.send_prompt(pane_pid, session_id, prompt)
+    }
+
     fn find_agent(&self, command: &str) -> Option<&dyn CodingAgent> {
         self.agents
             .iter()
