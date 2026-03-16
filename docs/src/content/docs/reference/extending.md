@@ -13,22 +13,21 @@ Implement the `CodingAgent` trait in `src/coding_agent/`:
 pub trait CodingAgent {
     fn name(&self) -> &str;
     fn process_name(&self) -> &str;
-    fn query_status(&self, pane_pid: u32) -> PaneStatus;
-    fn send_prompt(
-        &self,
-        pane_pid: u32,
-        session_id: &str,
-        prompt: &str,
-    ) -> anyhow::Result<String>;
+    fn query_status(&self, pane: &AgentPane) -> PaneStatus;
+    fn send_prompt(&self, pane_pid: u32, session_id: &str, prompt: &str) -> anyhow::Result<String>;
+    fn enrich_pane(&self, _pane: &mut AgentPane) {}
+    fn fetch_session_detail(&self, _session_id: &str) -> Option<SessionDetail> { None }
 }
 ```
 
-- **`name()`**: Human-readable name for the agent.
-- **`process_name()`**: The process name to detect in tmux panes.
-- **`query_status()`**: Takes the pane's PID and returns a `PaneStatus` enum (Busy, Idle, Retry, Unknown).
-- **`send_prompt()`**: Delivers a prompt to the agent. The implementation determines the delivery mechanism — for example, opencode uses its HTTP API (`POST /session/{id}/message`), but another agent might use tmux `send-keys` or a Unix socket.
+- **`name()`**: Human-readable name for the agent (e.g. `"opencode"`, `"claude-code"`).
+- **`process_name()`**: The process name to detect in tmux panes (e.g. `"opencode"`, `"claude"`).
+- **`query_status()`**: Takes the pane info and returns a `PaneStatus` enum (Busy, Idle, Retry, Unknown).
+- **`send_prompt()`**: Delivers a prompt to the agent. The implementation determines the delivery mechanism — opencode uses its HTTP API, Claude Code uses tmux `send-keys`.
+- **`enrich_pane()`**: Populates pane metadata (session title, model, tokens, etc.) from the agent's data source.
+- **`fetch_session_detail()`**: Returns detailed session info for the detail panel.
 
-Database enrichment (e.g., fetching session details, token usage, and message history) happens separately in `db::enrich_pane()`.
+Each agent is responsible for its own data source — opencode uses HTTP API + SQLite, Claude Code reads JSONL transcript files.
 
 Register your agent in `agents_from_config()` in `src/coding_agent/mod.rs`.
 

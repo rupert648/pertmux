@@ -1,7 +1,6 @@
+use crate::coding_agent;
 use crate::coding_agent::CodingAgent;
-use crate::config::{
-    AgentActionConfig, AgentConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge,
-};
+use crate::config::{AgentActionConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
 use crate::forge_clients::traits::ForgeClient;
 use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
@@ -15,7 +14,6 @@ use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
-use crate::{coding_agent, db};
 use std::time::{Duration, Instant};
 
 pub enum SelectionSection {
@@ -82,7 +80,6 @@ pub struct App {
     pub groups: Vec<(String, Vec<usize>)>,
     pub error: Option<String>,
     pub detail: Option<SessionDetail>,
-    agent_config: AgentConfig,
     agents: Vec<Box<dyn CodingAgent>>,
     pub projects: Vec<ProjectState>,
     pub active_project: usize,
@@ -168,7 +165,6 @@ impl App {
             groups: Vec::new(),
             error: None,
             detail: None,
-            agent_config: config.agent,
             agents,
             projects,
             active_project: 0,
@@ -202,14 +198,9 @@ impl App {
 
         for pane in &mut panes {
             if let Some(agent) = self.find_agent(&pane.pane_command) {
-                pane.status = agent.query_status(pane.pane_pid);
+                pane.status = agent.query_status(pane);
+                agent.enrich_pane(pane);
             }
-            let db_path = self
-                .agent_config
-                .opencode
-                .as_ref()
-                .and_then(|c| c.db_path.as_deref());
-            db::enrich_pane(pane, db_path);
         }
 
         self.build_groups(&panes);
@@ -414,18 +405,11 @@ impl App {
     }
 
     fn update_detail(&mut self) {
-        self.detail = self
-            .panes
-            .get(self.selected)
-            .and_then(|pane| pane.db_session_id.as_deref())
-            .and_then(|id| {
-                let db_path = self
-                    .agent_config
-                    .opencode
-                    .as_ref()
-                    .and_then(|c| c.db_path.as_deref());
-                db::fetch_session_detail(id, db_path)
-            });
+        self.detail = self.panes.get(self.selected).and_then(|pane| {
+            let session_id = pane.db_session_id.as_deref()?;
+            let agent = self.find_agent(&pane.pane_command)?;
+            agent.fetch_session_detail(session_id)
+        });
     }
 
     pub fn send_agent_prompt(

@@ -3,14 +3,14 @@ title: Agent Actions
 description: Send commands to your coding agents directly from the dashboard.
 ---
 
-pertmux can send prompts to running opencode instances via the [opencode HTTP API](https://github.com/sst/opencode). This lets you trigger common workflows without switching to the agent's tmux pane.
+pertmux can send prompts to running coding agent instances. For opencode, it uses the [opencode HTTP API](https://github.com/sst/opencode). For Claude Code, it types the prompt directly into the tmux pane via `send-keys`. This lets you trigger common workflows without switching to the agent's pane.
 
 ## Prerequisites
 
 For agent actions to work, the selected worktree needs:
 
-1. An **opencode instance** running in a tmux pane whose working directory matches the worktree path
-2. An **active session** in that opencode instance (pertmux reads the session ID from the opencode database)
+1. A **coding agent instance** (opencode or Claude Code) running in a tmux pane whose working directory matches the worktree path
+2. An **active session** in that agent instance (pertmux reads the session ID from the agent's data source)
 
 If either is missing, pressing `a` shows an error toast explaining what's needed.
 
@@ -21,7 +21,7 @@ If either is missing, pressing `a` shows an error toast explaining what's needed
 3. Use **`j`/`k`** to select an action
 4. Press **`Enter`** to send, or **`Esc`** to cancel
 
-A "Sending to opencode..." toast confirms the message was dispatched. The agent processes it like any user message.
+A "Sending to agent..." toast confirms the message was dispatched. The agent processes it like any user message.
 
 ## Built-in actions
 
@@ -88,7 +88,9 @@ When you confirm an action:
 1. The **client** composes a prompt by substituting template variables with context from the linked MR
 2. The client sends an `AgentAction` command to the daemon with the pane PID, session ID, and prompt text
 3. The **daemon** looks up which coding agent owns the pane and calls its `send_prompt()` trait method
-4. The agent implementation delivers the prompt via its own mechanism (opencode uses `POST /session/{id}/message`)
+4. The agent implementation delivers the prompt via its own mechanism:
+   - **opencode**: HTTP POST to `/session/{id}/message`
+   - **Claude Code**: `tmux send-keys` into the agent's pane
 5. The daemon returns a success/failure toast to the client
 
 Agent actions are **agent-agnostic** — the `CodingAgent` trait's `send_prompt()` method means each agent implementation controls how prompts are delivered. See [Extending pertmux](/reference/extending/) for how to add new agents with custom prompt delivery.

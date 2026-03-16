@@ -26,12 +26,13 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **client.rs**: TUI client. Connects to daemon (fails with error screen if not running), owns `ClientState` with all UI state (selections, popup, notification). Event loop with `tokio::select!` on keyboard + daemon messages. Local navigation (j/k/Tab) with no round-trip. Project switching via fuzzy finder (`f` key). Also provides `stop()`, `status()`, and `cleanup()` commands. On reconnect, if `pending_changes` is non-empty, opens `ChangeSummary` modal; for live snapshots, shows toast notifications.
 - **protocol.rs**: IPC protocol. `DashboardSnapshot`, `ProjectSnapshot` (the serialization boundary), `ClientMsg` (commands from client to daemon), `DaemonMsg` (responses/snapshots from daemon to client), `PROTOCOL_VERSION` for handshake validation.
 - **app.rs**: Owns the `App` struct, which holds data state (panes, projects, MRs, worktrees). Manages refresh cycle, linking, and `snapshot()` method to produce `DashboardSnapshot`. UI-related methods (selection, popup) have moved to `ClientState` in `client.rs`.
-- **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. The trait requires `name()`, `process_name()`, `query_status()`, and `send_prompt()`. Currently only opencode is supported. To add a new agent, implement the trait and register it here.
+- **coding_agent/mod.rs**: Defines the `CodingAgent` trait and `agents_from_config()` factory. The trait requires `name()`, `process_name()`, `query_status()`, and `send_prompt()`. Currently supports opencode and Claude Code. To add a new agent, implement the trait and register it here.
 - **coding_agent/opencode.rs**: opencode implementation of `CodingAgent`. Queries `http://127.0.0.1:{port}/session/status` for session state. Requires opencode to be started with `--port 0` so it launches its HTTP server on a random port. Port discovery happens automatically via process tree inspection in `discovery.rs`.
+- **coding_agent/claude_code.rs**: Claude Code implementation of `CodingAgent`. Reads JSONL transcript files from `~/.claude/projects/` and `~/.claude/transcripts/` to determine session status (Busy/Idle) and extract session details (token usage, messages, model). No HTTP server or special flags required — Claude Code writes transcripts automatically.
 - **tmux.rs**: Wraps tmux CLI commands. Responsible for identifying coding agent panes (filtered by registered process names), switching focus between them, and `find_or_create_pane()` which searches all sessions for matching paths before creating new windows (prefers project-named sessions). When `default_agent_command` is configured, `find_or_create_pane()` creates a horizontal split: LEFT pane runs the agent command via `send-keys`, RIGHT pane is an empty terminal.
 - **discovery.rs**: Implements port discovery. It uses `sysinfo` to find child processes and `netstat2` to map those processes to active TCP listening ports.
 - **config.rs**: Defines `Config`, `AgentConfig`, `ProjectConfig`, `ProjectForge` enum, `KeybindingsConfig`, `GitLabSourceConfig`, `GitHubSourceConfig`, and per-agent config structs. Loads from TOML with `-c`/`--config` CLI flag or `~/.config/pertmux.toml`. Validates local_path existence, source configuration, token availability, project name uniqueness, and keybinding uniqueness at startup.
-- **db.rs**: Manages read-only access to the Claude SQLite database. Fetches session details and enriches pane information.
+- **db.rs**: Manages read-only access to the opencode SQLite database. Fetches session details and enriches pane information for opencode agents.
 - **types.rs**: Defines shared data structures like `AgentPane`, `SessionDetail`, and the `PaneStatus` enum.
 - **ui/mod.rs**: Entry point `draw_client(frame, &ClientState)`. Constants (`ACCENT`, `NOTIFICATION_DURATION`), `ProjectRenderData` adapter, layout orchestration.
 - **ui/helpers.rs**: Formatting (`truncate`, `shorten_path`, `format_tokens`), status badges, merge status display, scroll computation.
@@ -49,7 +50,7 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **read_state.rs**: Local SQLite DB for per-comment read/unread tracking. `ReadStateDb` tracks seen notes and MR view timestamps.
 
 ## Key Design Decisions
-- **Pluggable Agents**: The `CodingAgent` trait abstracts process detection, status querying, and prompt delivery. Each agent handles its own discovery mechanism and communication channel internally. The `send_prompt()` trait method allows each agent to deliver prompts through its own mechanism (e.g. opencode uses its HTTP API, another agent might use tmux send-keys).
+- **Pluggable Agents**: The `CodingAgent` trait abstracts process detection, status querying, pane enrichment, session detail fetching, and prompt delivery. Each agent handles its own discovery mechanism and communication channel internally. The `send_prompt()` trait method allows each agent to deliver prompts through its own mechanism (e.g. opencode uses its HTTP API, Claude Code uses tmux send-keys).
 - **Multi-Forge Support**: `ForgeClient` trait abstracts GitLab and GitHub behind a common interface. `ProjectState.client` is `Box<dyn ForgeClient>`. Each forge handles its own API auth, response parsing, and state normalization (e.g. GitHub `"open"` → `"opened"`, check runs → pipeline jobs).
 - **Multi-Project Support**: `[[project]]` TOML array with per-project forge config (`source = "gitlab"` or `"github"`), local paths, and worktree state. Fuzzy finder (`f` key) for project switching. Overview panel shows all projects with MR counts.
 - **Worktrunk CLI Integration**: Uses `wt list --format=json` (NOT the library crate — author warns API is unstable). `wt` supports `-C <path>` to target specific repos. Worktree actions (create/remove/merge) via popup dialogs.
@@ -141,7 +142,7 @@ npm run preview   # Preview the build
 - **Connect client**: `pertmux connect` (daemon must be running)
 - **Stop daemon**: `pertmux stop`
 - **Check status**: `pertmux status`
-- **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. opencode) to be running in other tmux panes to display data.
+- **Requirements**: Must run inside a tmux session. Requires coding agent instances (e.g. opencode, Claude Code) to be running in other tmux panes to display data.
 - **Edition**: Rust 2024.
 
 ## CI (GitHub Actions)
@@ -168,8 +169,9 @@ Both workflows use `concurrency` groups to cancel in-progress runs when new comm
 ## Important Paths & Endpoints
 - **Daemon socket**: `/tmp/pertmux-{USER}.sock`
 - **Daemon log**: `/tmp/pertmux-daemon.log`
-- **Database**: `~/.local/share/opencode/opencode.db`
-- **API Endpoint**: `http://127.0.0.1:{port}/session/status`
+- **opencode Database**: `~/.local/share/opencode/opencode.db`
+- **opencode API Endpoint**: `http://127.0.0.1:{port}/session/status`
+- **Claude Code Transcripts**: `~/.claude/projects/` and `~/.claude/transcripts/`
 - **GitLab API**: `https://{host}/api/v4/projects/{project}/merge_requests`
 - **GitHub API**: `https://api.github.com/repos/{owner}/{repo}/pulls` (or `https://{host}/api/v3/` for GHE)
 - **Read state DB**: `~/.local/share/pertmux/read_state.db`
