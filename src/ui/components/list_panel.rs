@@ -190,12 +190,12 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  No opencode panes found.",
+                "  No agent panes found.",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  Make sure opencode is running in a tmux pane.",
+                "  Make sure a coding agent is running in a tmux pane.",
                 Style::default().fg(Color::DarkGray),
             )),
         ];
