@@ -14,12 +14,19 @@ pub trait CodingAgent {
     fn name(&self) -> &str;
     fn process_name(&self) -> &str;
     fn query_status(&self, pane_pid: u32) -> PaneStatus;
+    fn send_prompt(
+        &self,
+        pane_pid: u32,
+        session_id: &str,
+        prompt: &str,
+    ) -> anyhow::Result<String>;
 }
 ```
 
 - **`name()`**: Human-readable name for the agent.
 - **`process_name()`**: The process name to detect in tmux panes.
 - **`query_status()`**: Takes the pane's PID and returns a `PaneStatus` enum (Busy, Idle, Retry, Unknown).
+- **`send_prompt()`**: Delivers a prompt to the agent. The implementation determines the delivery mechanism — for example, opencode uses its HTTP API (`POST /session/{id}/message`), but another agent might use tmux `send-keys` or a Unix socket.
 
 Database enrichment (e.g., fetching session details, token usage, and message history) happens separately in `db::enrich_pane()`.
 
