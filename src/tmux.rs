@@ -1,6 +1,7 @@
 use crate::types::{AgentPane, PaneStatus};
 use std::path::Path;
 use std::process::Command;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>> {
     let format_str = "#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_title}\t#{pane_current_path}\t#{pane_pid}\t#{pane_current_command}";
@@ -20,36 +21,99 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut panes = Vec::new();
 
+    // Collect unmatched panes for secondary child-process check.
+    // Some agents (e.g. Claude Code) run under an interpreter (node) so
+    // pane_current_command won't match the agent name directly.
+    struct UnmatchedPane {
+        fields: [String; 8],
+    }
+    let mut unmatched: Vec<UnmatchedPane> = Vec::new();
+
     for line in stdout.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() < 8 {
             continue;
         }
 
-        if !process_names.iter().any(|name| *name == fields[7]) {
-            continue;
+        if process_names.iter().any(|name| *name == fields[7]) {
+            panes.push(make_agent_pane(&fields));
+        } else {
+            unmatched.push(UnmatchedPane {
+                fields: std::array::from_fn(|i| fields[i].to_string()),
+            });
         }
+    }
 
-        panes.push(AgentPane {
-            pane_id: fields[0].to_string(),
-            session_name: fields[1].to_string(),
-            window_index: fields[2].parse().unwrap_or(0),
-            pane_index: fields[3].parse().unwrap_or(0),
-            pane_title: fields[4].to_string(),
-            pane_path: fields[5].to_string(),
-            pane_pid: fields[6].parse().unwrap_or(0),
-            pane_command: fields[7].to_string(),
-            status: PaneStatus::Unknown,
-            db_session_title: None,
-            agent: None,
-            model: None,
-            last_activity: None,
-            db_session_id: None,
-            last_response: None,
-        });
+    // Secondary check: scan child processes of unmatched pane shells.
+    // Only pay the sysinfo cost if there are unmatched panes to check.
+    if !unmatched.is_empty() {
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+
+        for raw in &unmatched {
+            let shell_pid = raw.fields[6].parse::<u32>().unwrap_or(0);
+            if shell_pid == 0 {
+                continue;
+            }
+            if let Some(agent_name) = find_agent_child(&sys, shell_pid, process_names) {
+                let field_refs: Vec<&str> = raw.fields.iter().map(String::as_str).collect();
+                let mut pane = make_agent_pane(&field_refs);
+                pane.pane_command = agent_name;
+                panes.push(pane);
+            }
+        }
     }
 
     Ok(panes)
+}
+
+fn make_agent_pane(fields: &[&str]) -> AgentPane {
+    AgentPane {
+        pane_id: fields[0].to_string(),
+        session_name: fields[1].to_string(),
+        window_index: fields[2].parse().unwrap_or(0),
+        pane_index: fields[3].parse().unwrap_or(0),
+        pane_title: fields[4].to_string(),
+        pane_path: fields[5].to_string(),
+        pane_pid: fields[6].parse().unwrap_or(0),
+        pane_command: fields[7].to_string(),
+        status: PaneStatus::Unknown,
+        db_session_title: None,
+        agent: None,
+        model: None,
+        last_activity: None,
+        db_session_id: None,
+        last_response: None,
+    }
+}
+
+/// Check if any direct child of `shell_pid` is a registered agent.
+/// Checks both the process name and argv[0] to handle interpreter-based
+/// agents (e.g. `claude` runs as `node` but argv[0] is `"claude"`).
+fn find_agent_child(sys: &System, shell_pid: u32, process_names: &[&str]) -> Option<String> {
+    let parent = Pid::from_u32(shell_pid);
+    for proc_ in sys.processes().values() {
+        if proc_.parent() != Some(parent) {
+            continue;
+        }
+        let name = proc_.name().to_string_lossy();
+        for &agent_name in process_names {
+            if name.eq_ignore_ascii_case(agent_name) {
+                return Some(agent_name.to_string());
+            }
+            if let Some(arg0) = proc_.cmd().first() {
+                let arg0 = arg0.to_string_lossy();
+                if arg0 == agent_name || arg0.ends_with(&format!("/{}", agent_name)) {
+                    return Some(agent_name.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn find_or_create_pane(
