@@ -1,7 +1,6 @@
+use crate::coding_agent;
 use crate::coding_agent::CodingAgent;
-use crate::config::{
-    AgentActionConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge,
-};
+use crate::config::{AgentActionConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
 use crate::forge_clients::traits::ForgeClient;
 use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
@@ -15,7 +14,6 @@ use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
-use crate::coding_agent;
 use std::time::{Duration, Instant};
 
 pub enum SelectionSection {

@@ -45,7 +45,12 @@ impl CodingAgent for ClaudeCode {
         "claude"
     }
 
-    fn send_prompt(&self, pane_pid: u32, _session_id: &str, prompt: &str) -> anyhow::Result<String> {
+    fn send_prompt(
+        &self,
+        pane_pid: u32,
+        _session_id: &str,
+        prompt: &str,
+    ) -> anyhow::Result<String> {
         let pane_id = find_tmux_pane_by_pid(pane_pid)
             .ok_or_else(|| anyhow::anyhow!("Could not find tmux pane for PID {}", pane_pid))?;
 
@@ -105,7 +110,10 @@ impl CodingAgent for ClaudeCode {
                 .message
                 .as_ref()
                 .and_then(|m| m.model.clone());
-            pane.last_activity = last_assistant.timestamp.as_deref().and_then(parse_timestamp);
+            pane.last_activity = last_assistant
+                .timestamp
+                .as_deref()
+                .and_then(parse_timestamp);
             pane.last_response = last_assistant
                 .message
                 .as_ref()
