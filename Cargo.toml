@@ -1,6 +1,6 @@
 [package]
 name = "pertmux"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "A TUI dashboard that links GitLab/GitHub MRs to local branches, tmux sessions, and AI coding agents"
 license = "MIT"
