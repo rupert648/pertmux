@@ -316,6 +316,70 @@ impl ForgeClient for GitHubClient {
 
         Ok(threads)
     }
+
+    async fn fetch_user_mrs(&self) -> Result<Vec<UserMrSummary>> {
+        let mut user_mrs = Vec::new();
+
+        for page in 1..=3 {
+            let url = if page == 1 {
+                format!(
+                    "{}/issues?filter=created&state=open&per_page=100",
+                    self.base_url
+                )
+            } else {
+                format!(
+                    "{}/issues?filter=created&state=open&per_page=100&page={}",
+                    self.base_url, page
+                )
+            };
+
+            let items: Vec<GhIssueItem> = self
+                .client
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", self.token))
+                .send()
+                .await
+                .context(format!(
+                    "Failed to fetch created issues/PRs from {} (page {})",
+                    url, page
+                ))?
+                .error_for_status()
+                .context("GitHub API returned error status for created issues/PRs")?
+                .json()
+                .await
+                .context("Failed to parse created issues/PRs response")?;
+
+            let item_count = items.len();
+
+            user_mrs.extend(items.into_iter().filter_map(|item| {
+                item.pull_request.as_ref()?;
+
+                Some(UserMrSummary {
+                    iid: item.number,
+                    title: item.title,
+                    web_url: item.html_url,
+                    project_path: item
+                        .repository
+                        .as_ref()
+                        .map(|r| r.full_name.clone())
+                        .unwrap_or_else(|| format!("{}/{}", self.owner, self.repo)),
+                    author: ForgeUser {
+                        id: item.user.id,
+                        username: item.user.login.clone(),
+                        name: item.user.name.unwrap_or_else(|| item.user.login.clone()),
+                    },
+                    draft: item.draft.unwrap_or(false),
+                    updated_at: item.updated_at,
+                })
+            }));
+
+            if item_count < 100 {
+                break;
+            }
+        }
+
+        Ok(user_mrs)
+    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
-use crate::protocol::{DashboardSnapshot, ProjectSnapshot};
+use crate::protocol::{DashboardSnapshot, GlobalMrEntry, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
@@ -50,6 +50,9 @@ pub enum PopupState {
         pane_pid: u32,
         session_id: String,
         worktree_branch: Option<String>,
+    },
+    MrOverview {
+        selected: usize,
     },
 }
 
@@ -97,6 +100,7 @@ pub struct App {
     pub pending_agent_changes: Vec<AgentChange>,
     previous_pane_statuses: HashMap<String, PaneStatus>,
     pub agent_actions: Vec<AgentActionConfig>,
+    pub global_mrs: Vec<GlobalMrEntry>,
 }
 
 impl App {
@@ -182,6 +186,7 @@ impl App {
             pending_agent_changes: Vec::new(),
             previous_pane_statuses: HashMap::new(),
             agent_actions: config.agent_action,
+            global_mrs: Vec::new(),
         }
     }
 
@@ -322,6 +327,68 @@ impl App {
         }
     }
 
+    pub async fn refresh_global_mrs(&mut self) {
+        let mut all_entries: Vec<GlobalMrEntry> = Vec::new();
+
+        let has_gitlab = self
+            .projects
+            .iter()
+            .any(|p| matches!(p.config.source, ProjectForge::Gitlab));
+        let has_github = self
+            .projects
+            .iter()
+            .any(|p| matches!(p.config.source, ProjectForge::Github));
+
+        if has_gitlab {
+            let idx = self
+                .projects
+                .iter()
+                .position(|p| matches!(p.config.source, ProjectForge::Gitlab))
+                .unwrap();
+            match self.projects[idx].client.fetch_user_mrs().await {
+                Ok(mrs) => {
+                    all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
+                        forge: ProjectForge::Gitlab,
+                        configured_project: None,
+                        mr,
+                    }));
+                }
+                Err(e) => eprintln!("[pertmux] global GitLab MR fetch error: {}", e),
+            }
+        }
+
+        if has_github {
+            let idx = self
+                .projects
+                .iter()
+                .position(|p| matches!(p.config.source, ProjectForge::Github))
+                .unwrap();
+            match self.projects[idx].client.fetch_user_mrs().await {
+                Ok(mrs) => {
+                    all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
+                        forge: ProjectForge::Github,
+                        configured_project: None,
+                        mr,
+                    }));
+                }
+                Err(e) => eprintln!("[pertmux] global GitHub MR fetch error: {}", e),
+            }
+        }
+
+        for entry in &mut all_entries {
+            for proj in &self.projects {
+                if proj.config.project.to_lowercase() == entry.mr.project_path.to_lowercase() {
+                    entry.configured_project = Some(proj.config.name.clone());
+                    break;
+                }
+            }
+        }
+
+        all_entries.sort_by(|a, b| b.mr.updated_at.cmp(&a.mr.updated_at));
+
+        self.global_mrs = all_entries;
+    }
+
     pub async fn refresh_mr_detail(&mut self) {
         let Some(proj) = self.projects.get_mut(self.active_project) else {
             return;
@@ -436,6 +503,7 @@ impl App {
             pending_changes: Vec::new(),
             agent_actions: self.agent_actions.clone(),
             pending_agent_changes: Vec::new(),
+            global_mrs: self.global_mrs.clone(),
         }
     }
 

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestNote, MergeRequestSummary, MergeRequestThread, PipelineJob,
+    UserMrSummary,
 };
 
 #[async_trait(?Send)]
@@ -14,4 +15,5 @@ pub trait ForgeClient {
     ) -> anyhow::Result<Vec<PipelineJob>>;
     async fn fetch_notes(&self, iid: u64) -> anyhow::Result<Vec<MergeRequestNote>>;
     async fn fetch_discussions(&self, iid: u64) -> anyhow::Result<Vec<MergeRequestThread>>;
+    async fn fetch_user_mrs(&self) -> anyhow::Result<Vec<UserMrSummary>>;
 }

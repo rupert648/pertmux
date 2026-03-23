@@ -11,6 +11,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 - **Multi-project support** — fuzzy finder (`f` key) with overview panel showing MR counts
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
 - **Coding agent monitoring** — track Claude/opencode instances across tmux panes
+- **MR Overview** — press `m` to see all your open MRs across all configured forges, with quick navigation to configured projects or browser-open for unconfigured ones
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
 ## Architecture
@@ -227,12 +228,13 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `refresh` | string | `"r"` | Refresh all data |
+| `mr_overview` | string | `"m"` | Open MR Overview popup showing all open MRs across forges |
 | `open_browser` | string | `"o"` | Open selected MR in browser |
 | `copy_branch` | string | `"b"` | Copy selected branch name to clipboard |
 | `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
 | `create_worktree` | string | `"c"` | Create new worktree |
 | `delete_worktree` | string | `"d"` | Delete selected worktree |
-| `merge_worktree` | string | `"m"` | Merge selected worktree into default branch |
+| `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
 
 ## Keybindings
 
@@ -251,12 +253,13 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | Key | Context | Action |
 |-----|---------|--------|
 | `r` | Global | Refresh all data |
+| `m` | Global | Open MR Overview — all your open MRs across forges |
 | `o` | MR selected | Open MR in browser |
 | `b` | Any | Copy selected branch name |
 | `f` | Global | Fuzzy filter to switch project |
 | `c` | Worktree panel | Create new worktree |
 | `d` | Worktree panel | Delete selected worktree |
-| `m` | Worktree panel | Merge selected worktree into default branch |
+| `M` | Worktree panel | Merge selected worktree into default branch |
 | `q`/`Esc` | Global | Quit client (daemon keeps running) |
 | `prefix+a` | tmux | Toggle dashboard popup |
 

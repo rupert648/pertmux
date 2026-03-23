@@ -1,6 +1,8 @@
 use crate::agent_changes::AgentChange;
 use crate::config::{AgentActionConfig, KeybindingsConfig, ProjectForge};
-use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
+use crate::forge_clients::types::{
+    MergeRequestDetail, MergeRequestThread, PipelineJob, UserMrSummary,
+};
 use crate::linking::DashboardState;
 use crate::mr_changes::MrChange;
 use crate::types::{AgentPane, SessionDetail};
@@ -29,6 +31,14 @@ pub struct ProjectSnapshot {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalMrEntry {
+    pub mr: UserMrSummary,
+    pub forge: ProjectForge,
+    pub configured_project: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardSnapshot {
     pub projects: Vec<ProjectSnapshot>,
     pub panes: Vec<AgentPane>,
@@ -46,6 +56,8 @@ pub struct DashboardSnapshot {
     pub agent_actions: Vec<AgentActionConfig>,
     #[serde(default)]
     pub pending_agent_changes: Vec<AgentChange>,
+    #[serde(default)]
+    pub global_mrs: Vec<GlobalMrEntry>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -204,6 +216,7 @@ mod tests {
             pending_changes: vec![],
             agent_actions: vec![],
             pending_agent_changes: vec![],
+            global_mrs: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");

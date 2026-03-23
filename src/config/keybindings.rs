@@ -11,6 +11,7 @@ pub struct KeybindingsConfig {
     pub delete_worktree: char,
     pub merge_worktree: char,
     pub agent_actions: char,
+    pub mr_overview: char,
 }
 
 impl Default for KeybindingsConfig {
@@ -22,8 +23,9 @@ impl Default for KeybindingsConfig {
             filter_projects: 'f',
             create_worktree: 'c',
             delete_worktree: 'd',
-            merge_worktree: 'm',
+            merge_worktree: 'M',
             agent_actions: 'a',
+            mr_overview: 'm',
         }
     }
 }
