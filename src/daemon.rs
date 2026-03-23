@@ -49,6 +49,7 @@ pub async fn run(config: Config) -> Result<()> {
     let mut app = App::new(config);
     if app.has_projects() {
         app.refresh_mrs().await;
+        app.refresh_global_mrs().await;
     }
     app.refresh().await;
     app.refresh_worktrees().await;
@@ -99,6 +100,7 @@ pub async fn run(config: Config) -> Result<()> {
                     ClientMsg::Refresh => {
                         app.refresh().await;
                         app.refresh_mrs().await;
+                        app.refresh_global_mrs().await;
                         app.refresh_worktrees().await;
                         drain_changes(&mut app, &client_count, &pending_for_offline).await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
@@ -158,6 +160,7 @@ pub async fn run(config: Config) -> Result<()> {
             }
             _ = mr_list_interval.tick() => {
                 app.refresh_mrs().await;
+                app.refresh_global_mrs().await;
                 drain_changes(&mut app, &client_count, &pending_for_offline).await;
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }

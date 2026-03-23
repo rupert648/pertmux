@@ -70,6 +70,30 @@ pub struct GhIssueComment {
     pub created_at: Timestamp,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhIssueItem {
+    pub number: u64,
+    pub title: String,
+    pub html_url: String,
+    #[serde(default)]
+    pub draft: Option<bool>,
+    pub user: GhUser,
+    pub pull_request: Option<GhPullRequestStub>,
+    pub repository: Option<GhRepository>,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhPullRequestStub {
+    #[allow(dead_code)]
+    pub html_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GhRepository {
+    pub full_name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +197,45 @@ mod tests {
         assert_eq!(comment.id, 200);
         assert_eq!(comment.body, Some("LGTM!".to_string()));
         assert_eq!(comment.user.login, "reviewer");
+    }
+
+    #[test]
+    fn test_gh_issue_item_with_pr_deserializes() {
+        let json = r#"{
+            "number": 55,
+            "title": "feat: new thing",
+            "html_url": "https://github.com/org/repo/pull/55",
+            "draft": false,
+            "user": {"id": 1, "login": "alice"},
+            "pull_request": {"html_url": "https://github.com/org/repo/pull/55"},
+            "repository": {"full_name": "org/repo"},
+            "updated_at": "2026-03-01T12:00:00Z"
+        }"#;
+        let item: GhIssueItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.number, 55);
+        assert!(item.pull_request.is_some());
+        assert_eq!(
+            item.pull_request
+                .as_ref()
+                .and_then(|pr| pr.html_url.as_deref()),
+            Some("https://github.com/org/repo/pull/55")
+        );
+        assert_eq!(item.repository.as_ref().unwrap().full_name, "org/repo");
+    }
+
+    #[test]
+    fn test_gh_issue_item_without_pr_deserializes() {
+        let json = r#"{
+            "number": 10,
+            "title": "bug: something broken",
+            "html_url": "https://github.com/org/repo/issues/10",
+            "user": {"id": 2, "login": "bob"},
+            "updated_at": "2026-03-02T00:00:00Z"
+        }"#;
+        let item: GhIssueItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.number, 10);
+        assert!(item.pull_request.is_none());
+        assert!(item.repository.is_none());
+        assert!(item.draft.is_none());
     }
 }

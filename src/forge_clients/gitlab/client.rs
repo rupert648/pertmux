@@ -4,6 +4,28 @@ use crate::forge_clients::types::*;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct GitLabUserMr {
+    iid: u64,
+    title: String,
+    web_url: String,
+    draft: bool,
+    updated_at: jiff::Timestamp,
+    author: crate::forge_clients::types::ForgeUser,
+}
+
+fn extract_gitlab_project_path(web_url: &str) -> Option<String> {
+    let path_end = web_url.find("/-/")?;
+    let prefix = &web_url[..path_end];
+    let path_without_host = prefix.split('/').skip(3).collect::<Vec<_>>().join("/");
+    if path_without_host.is_empty() {
+        None
+    } else {
+        Some(path_without_host)
+    }
+}
 
 pub struct GitLabClient {
     client: Client,
@@ -159,5 +181,42 @@ impl ForgeClient for GitLabClient {
             .collect();
 
         Ok(threads)
+    }
+
+    async fn fetch_user_mrs(&self) -> Result<Vec<UserMrSummary>> {
+        let url = format!(
+            "{}/merge_requests?scope=created_by_me&state=opened&per_page=100",
+            self.base_url
+        );
+        let mrs: Vec<GitLabUserMr> = self
+            .client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .context(format!("Failed to fetch user MR list from {}", url))?
+            .error_for_status()
+            .context("GitLab API returned error status for user MR list")?
+            .json()
+            .await
+            .context("Failed to parse user MR list response")?;
+
+        let user_mrs = mrs
+            .into_iter()
+            .filter_map(|mr| {
+                let project_path = extract_gitlab_project_path(&mr.web_url)?;
+                Some(UserMrSummary {
+                    iid: mr.iid,
+                    title: mr.title,
+                    web_url: mr.web_url,
+                    project_path,
+                    author: mr.author,
+                    draft: mr.draft,
+                    updated_at: mr.updated_at,
+                })
+            })
+            .collect();
+
+        Ok(user_mrs)
     }
 }
