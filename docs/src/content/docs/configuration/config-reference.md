@@ -63,7 +63,8 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
 | `create_worktree` | string | `"c"` | Create new worktree |
 | `delete_worktree` | string | `"d"` | Delete selected worktree |
-| `merge_worktree` | string | `"m"` | Merge selected worktree into default branch |
+| `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
+| `mr_overview` | string | `"m"` | Open MR Overview popup (all your open MRs across all forges) |
 | `agent_actions` | string | `"a"` | Open agent actions panel |
 
 ## `[[agent_action]]`
