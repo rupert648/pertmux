@@ -50,6 +50,10 @@ pub struct Config {
     pub worktree_interval: u64,
     pub mr_list_interval: u64,
     pub default_agent_command: Option<String>,
+    /// Command template for creating a worktree and immediately injecting a prompt.
+    /// Use `{{msg}}` as the placeholder for the user-supplied message.
+    /// Example: `"opencode run {{msg}}"` → user types a message → runs `opencode run <message>`.
+    pub default_worktree_with_prompt: Option<String>,
     pub keybindings: KeybindingsConfig,
     pub agent: AgentConfig,
     pub gitlab: Option<GitLabSourceConfig>,
@@ -67,6 +71,7 @@ impl Default for Config {
             worktree_interval: 30,
             mr_list_interval: 300,
             default_agent_command: None,
+            default_worktree_with_prompt: None,
             keybindings: KeybindingsConfig::default(),
             agent: AgentConfig::default(),
             gitlab: None,
@@ -190,6 +195,7 @@ impl Config {
             (kb.agent_actions, "agent_actions"),
             (kb.mr_overview, "mr_overview"),
             (kb.activity_feed, "activity_feed"),
+            (kb.open_worktree_with_prompt, "open_worktree_with_prompt"),
         ];
         for (ch, name) in &bindings {
             if let Some(existing) = key_map.get(ch) {
@@ -589,6 +595,7 @@ local_path = "/tmp/bad"
         assert_eq!(kb.merge_worktree, 'M');
         assert_eq!(kb.mr_overview, 'm');
         assert_eq!(kb.activity_feed, 'A');
+        assert_eq!(kb.open_worktree_with_prompt, 'w');
     }
 
     #[test]

@@ -161,6 +161,10 @@ pub struct DashboardSnapshot {
     pub seconds_since_refresh: u64,
     #[serde(default)]
     pub default_agent_command: Option<String>,
+    /// Command template for creating a worktree with an injected prompt.
+    /// Contains `{{msg}}` as a placeholder for the user-supplied message.
+    #[serde(default)]
+    pub default_worktree_with_prompt: Option<String>,
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
     #[serde(default)]
@@ -201,6 +205,14 @@ pub enum ClientMsg {
     CreateWorktree {
         project_idx: usize,
         branch: String,
+    },
+    /// Create a worktree and immediately open it with an agent command derived
+    /// from `default_worktree_with_prompt` (with `{{msg}}` replaced by `prompt`).
+    CreateWorktreeWithPrompt {
+        project_idx: usize,
+        branch: String,
+        /// The user-supplied message to inject into the command template.
+        prompt: String,
     },
     RemoveWorktree {
         project_idx: usize,
@@ -330,6 +342,7 @@ mod tests {
             error: None,
             seconds_since_refresh: 2,
             default_agent_command: None,
+            default_worktree_with_prompt: None,
             keybindings: KeybindingsConfig::default(),
             pending_changes: vec![],
             agent_actions: vec![],

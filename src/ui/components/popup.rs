@@ -47,6 +47,23 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
         return;
     }
 
+    if let PopupState::CreateWorktreeWithPrompt {
+        branch_input,
+        prompt_input,
+        focused_field,
+    } = &state.popup
+    {
+        draw_create_with_prompt_popup(
+            frame,
+            branch_input,
+            prompt_input,
+            *focused_field,
+            state,
+            area,
+        );
+        return;
+    }
+
     let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None
         | PopupState::ProjectFilter { .. }
@@ -54,7 +71,8 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
         | PopupState::ActivityFeed { .. }
-        | PopupState::KeybindingsHelp => {
+        | PopupState::KeybindingsHelp
+        | PopupState::CreateWorktreeWithPrompt { .. } => {
             return;
         }
         PopupState::ConfirmKillTmuxWindow { branch, .. } => {
@@ -624,6 +642,138 @@ fn activity_kind_color(kind: &ActivityKind) -> Color {
         ActivityKind::MrNewDiscussions => Color::Rgb(80, 200, 220),
         ActivityKind::MrApproved => Color::Rgb(100, 220, 100),
     }
+}
+
+fn draw_create_with_prompt_popup(
+    frame: &mut Frame,
+    branch_input: &str,
+    prompt_input: &str,
+    focused_field: usize,
+    state: &ClientState,
+    area: Rect,
+) {
+    // Show the template hint so users know what the command will look like.
+    let template_hint = state
+        .snapshot
+        .default_worktree_with_prompt
+        .as_deref()
+        .unwrap_or("");
+
+    let popup_w = 64u16.min(area.width.saturating_sub(4));
+    // 2 border + title/hint line + blank + branch label + branch input + blank
+    // + prompt label + prompt input + blank + hint = ~12 inner rows + 2 border
+    let popup_h = 14u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Create Worktree with Prompt ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    // Layout: template hint, blank, branch field, blank, prompt field, blank, help
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // template hint
+        Constraint::Length(1), // blank
+        Constraint::Length(1), // branch label
+        Constraint::Length(1), // branch input
+        Constraint::Length(1), // blank
+        Constraint::Length(1), // prompt label
+        Constraint::Length(1), // prompt input
+        Constraint::Min(1),    // blank / overflow
+        Constraint::Length(1), // help line
+    ])
+    .split(inner);
+
+    // Template hint
+    let hint_text = if template_hint.is_empty() {
+        "no template configured".to_string()
+    } else {
+        format!("template: {}", template_hint)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            hint_text,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[0],
+    );
+
+    // Branch label
+    let branch_label_style = if focused_field == 0 {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("Branch name:", branch_label_style))),
+        chunks[2],
+    );
+
+    // Branch input
+    let branch_line = if focused_field == 0 {
+        Line::from(vec![
+            Span::styled(
+                format!(" {}", branch_input),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            format!(" {}", branch_input),
+            Style::default().fg(Color::White),
+        ))
+    };
+    frame.render_widget(Paragraph::new(branch_line), chunks[3]);
+
+    // Prompt label
+    let prompt_label_style = if focused_field == 1 {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("Message:", prompt_label_style))),
+        chunks[5],
+    );
+
+    // Prompt input
+    let prompt_line = if focused_field == 1 {
+        Line::from(vec![
+            Span::styled(
+                format!(" {}", prompt_input),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            format!(" {}", prompt_input),
+            Style::default().fg(Color::White),
+        ))
+    };
+    frame.render_widget(Paragraph::new(prompt_line), chunks[6]);
+
+    // Help line
+    let help = Line::from(Span::styled(
+        "Tab switch field \u{00b7} Enter confirm \u{00b7} Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Paragraph::new(help), chunks[8]);
 }
 
 fn format_entry_age(ts: &jiff::Timestamp) -> String {

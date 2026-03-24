@@ -49,6 +49,17 @@ fn open_url_in_browser(url: &str) {
     let _ = std::process::Command::new("open").arg(url).spawn();
 }
 
+/// Stores everything needed to open a tmux pane for a newly-created worktree.
+/// Set when `CreateWorktreeWithPrompt` ActionResult comes back ok; fulfilled on
+/// the next snapshot that contains the new worktree path.
+struct WorktreeOpenRequest {
+    project_idx: usize,
+    branch: String,
+    /// Full command to send to the pane (template already filled).
+    command: String,
+    project_name: String,
+}
+
 pub struct ClientState {
     pub snapshot: DashboardSnapshot,
     pub active_project: usize,
@@ -59,6 +70,11 @@ pub struct ClientState {
     pub popup: PopupState,
     pub notification: Option<(String, Instant)>,
     pub running: bool,
+    /// Set when `CreateWorktreeWithPrompt` is submitted, cleared on ActionResult.
+    pending_create_with_prompt: Option<WorktreeOpenRequest>,
+    /// Set when ActionResult ok is received for a `CreateWorktreeWithPrompt`.
+    /// On the next snapshot update we find the worktree path and open the pane.
+    pending_open_worktree: Option<WorktreeOpenRequest>,
 }
 
 impl ClientState {
@@ -86,6 +102,8 @@ impl ClientState {
             popup,
             notification: None,
             running: true,
+            pending_create_with_prompt: None,
+            pending_open_worktree: None,
         }
     }
 
@@ -130,6 +148,35 @@ impl ClientState {
         }
 
         self.snapshot = snapshot;
+
+        // After updating the snapshot, try to fulfil a pending "open worktree pane"
+        // request. The worktree path arrives in the snapshot broadcast that follows
+        // the ActionResult ok message, so we check here rather than in ActionResult.
+        if let Some(pending) = self.pending_open_worktree.take() {
+            let result = self
+                .snapshot
+                .projects
+                .get(pending.project_idx)
+                .and_then(|proj| {
+                    proj.cached_worktrees
+                        .iter()
+                        .find(|wt| wt.branch.as_deref() == Some(pending.branch.as_str()))
+                        .and_then(|wt| wt.path.clone())
+                        .map(|path| (path, pending.project_name.clone(), pending.command.clone()))
+                });
+            match result {
+                Some((path, project_name, command)) => {
+                    if let Err(e) = tmux::find_or_create_pane(&path, &project_name, Some(&command))
+                    {
+                        self.notify(format!("Failed to open pane: {}", e));
+                    }
+                }
+                None => {
+                    // Worktree not in snapshot yet — keep pending for next update.
+                    self.pending_open_worktree = Some(pending);
+                }
+            }
+        }
     }
 
     fn has_projects(&self) -> bool {
@@ -321,6 +368,27 @@ impl ClientState {
         }
     }
 
+    fn open_create_with_prompt_popup(&mut self) {
+        if self.snapshot.default_worktree_with_prompt.is_none() {
+            self.notify(
+                "No worktree prompt template configured (set default_worktree_with_prompt)",
+            );
+            return;
+        }
+        if let Some(_proj) = self.snapshot.projects.get(self.active_project)
+            && matches!(
+                self.selection_section.get(self.active_project),
+                Some(SelectionSection::Worktrees)
+            )
+        {
+            self.popup = PopupState::CreateWorktreeWithPrompt {
+                branch_input: String::new(),
+                prompt_input: String::new(),
+                focused_field: 0,
+            };
+        }
+    }
+
     fn open_remove_popup(&mut self) {
         if let Some(proj) = self.snapshot.projects.get(self.active_project)
             && matches!(
@@ -386,6 +454,48 @@ impl ClientState {
     fn popup_input_pop(&mut self) {
         if let PopupState::CreateWorktree { ref mut input } = self.popup {
             input.pop();
+        }
+    }
+
+    fn popup_with_prompt_push(&mut self, ch: char) {
+        if let PopupState::CreateWorktreeWithPrompt {
+            ref mut branch_input,
+            ref mut prompt_input,
+            focused_field,
+        } = self.popup
+        {
+            match focused_field {
+                0 => branch_input.push(ch),
+                _ => prompt_input.push(ch),
+            }
+        }
+    }
+
+    fn popup_with_prompt_pop(&mut self) {
+        if let PopupState::CreateWorktreeWithPrompt {
+            ref mut branch_input,
+            ref mut prompt_input,
+            focused_field,
+        } = self.popup
+        {
+            match focused_field {
+                0 => {
+                    branch_input.pop();
+                }
+                _ => {
+                    prompt_input.pop();
+                }
+            }
+        }
+    }
+
+    fn popup_with_prompt_toggle_field(&mut self) {
+        if let PopupState::CreateWorktreeWithPrompt {
+            ref mut focused_field,
+            ..
+        } = self.popup
+        {
+            *focused_field = if *focused_field == 0 { 1 } else { 0 };
         }
     }
 
@@ -727,6 +837,14 @@ async fn run_client_loop(
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notify(message);
                                 if ok {
+                                    // If a CreateWorktreeWithPrompt was submitted, move the
+                                    // pending open request so it fires on the next snapshot.
+                                    if let Some(pending) =
+                                        state.pending_create_with_prompt.take()
+                                    {
+                                        state.pending_open_worktree = Some(pending);
+                                    }
+
                                     // After a successful worktree removal, offer to kill
                                     // the linked tmux window using the pane_id that was
                                     // captured when the popup was opened (before deletion).
@@ -742,6 +860,9 @@ async fn run_client_loop(
                                     } else {
                                         state.popup = PopupState::None;
                                     }
+                                } else {
+                                    // Creation failed — discard any pending open request.
+                                    state.pending_create_with_prompt = None;
                                 }
                             }
                             DaemonMsg::HandshakeAck { .. } => {}
@@ -1031,6 +1152,61 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::CreateWorktreeWithPrompt { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Tab => state.popup_with_prompt_toggle_field(),
+            KeyCode::Backspace => state.popup_with_prompt_pop(),
+            KeyCode::Enter => {
+                if let PopupState::CreateWorktreeWithPrompt {
+                    ref branch_input,
+                    ref prompt_input,
+                    ..
+                } = state.popup
+                {
+                    let branch = branch_input.trim().to_string();
+                    let prompt = prompt_input.trim().to_string();
+                    if !branch.is_empty() && !prompt.is_empty() {
+                        // Build the filled command from the template.
+                        let command = state
+                            .snapshot
+                            .default_worktree_with_prompt
+                            .as_deref()
+                            .unwrap_or("")
+                            .replace("{{msg}}", &prompt);
+
+                        let project_idx = state.active_project;
+                        let project_name = state
+                            .snapshot
+                            .projects
+                            .get(project_idx)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_default();
+
+                        state.pending_create_with_prompt = Some(WorktreeOpenRequest {
+                            project_idx,
+                            branch: branch.clone(),
+                            command,
+                            project_name,
+                        });
+
+                        state.notify("Creating worktree...");
+                        let msg = ClientMsg::CreateWorktreeWithPrompt {
+                            project_idx,
+                            branch,
+                            prompt,
+                        };
+                        state.close_popup();
+                        send_msg(framed, msg).await?;
+                    }
+                }
+            }
+            KeyCode::Char(ch) => state.popup_with_prompt_push(ch),
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -1098,6 +1274,8 @@ async fn handle_key(
                 state.open_project_filter();
             } else if ch == kb.create_worktree {
                 state.open_create_popup();
+            } else if ch == kb.open_worktree_with_prompt {
+                state.open_create_with_prompt_popup();
             } else if ch == kb.delete_worktree {
                 state.open_remove_popup();
             } else if ch == kb.merge_worktree {
@@ -1146,6 +1324,9 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::ActivityFeed { .. }
         | PopupState::ConfirmKillTmuxWindow { .. }
         | PopupState::KeybindingsHelp
+        // CreateWorktreeWithPrompt is handled in its own if block above — it never
+        // reaches popup_action_msg.
+        | PopupState::CreateWorktreeWithPrompt { .. }
         | PopupState::None => None,
     }
 }
