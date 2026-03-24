@@ -5,7 +5,7 @@ use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION}
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{UnixListener, UnixStream};
@@ -27,6 +27,37 @@ pub fn log_path() -> PathBuf {
     PathBuf::from(format!("/tmp/pertmux-daemon-{}.log", ts))
 }
 
+/// RAII guard that runs daemon cleanup when dropped.
+///
+/// Covers all exit paths — `Ok` return, `Err` return, and main-task panics
+/// (Drop runs during stack unwinding). The panic hook in `run` calls
+/// `DaemonShutdown::perform` directly for panics in spawned tasks, which tokio
+/// catches internally and which therefore never reach this stack frame.
+struct DaemonShutdown {
+    sock: PathBuf,
+}
+
+impl DaemonShutdown {
+    fn new(sock: PathBuf) -> Self {
+        Self { sock }
+    }
+
+    /// Execute all daemon shutdown work.
+    ///
+    /// Must be safe to call from a panic hook: uses only infallible operations
+    /// and never touches tracing (which may hold internal locks during a panic).
+    fn perform(sock: &Path) {
+        let _ = std::fs::remove_file(sock);
+        // Expand here for future cleanup: flush metrics, notify clients, etc.
+    }
+}
+
+impl Drop for DaemonShutdown {
+    fn drop(&mut self) {
+        Self::perform(&self.sock);
+    }
+}
+
 pub async fn run(config: Config) -> Result<()> {
     // Initialize structured logging to stderr (redirected to the log file in daemon mode).
     // RUST_LOG overrides the default info level, e.g. RUST_LOG=debug pertmux serve --foreground
@@ -40,17 +71,6 @@ pub async fn run(config: Config) -> Result<()> {
         .try_init();
 
     let sock = socket_path();
-
-    // Install a panic hook that removes the socket file before the process dies.
-    // Without this, a crash leaves the socket behind and clients hang trying to connect.
-    let sock_for_panic = sock.clone();
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        // Use eprintln! here — tracing internals may hold locks during a panic.
-        eprintln!("[pertmux-daemon] PANIC: {info}");
-        let _ = std::fs::remove_file(&sock_for_panic);
-        prev_hook(info);
-    }));
 
     if sock.exists() {
         match UnixStream::connect(&sock).await {
@@ -67,6 +87,22 @@ pub async fn run(config: Config) -> Result<()> {
     }
 
     let listener = UnixListener::bind(&sock)?;
+
+    // Bind the shutdown guard now that we own the socket.
+    // Its Drop runs on every exit path: Ok, Err, and main-task panic (via unwinding).
+    let _guard = DaemonShutdown::new(sock.clone());
+
+    // Panic hook: handles panics in spawned tasks, which tokio catches at the task
+    // boundary so they never unwind through this frame and would otherwise bypass _guard.
+    let sock_for_panic = sock.clone();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // eprintln! only — tracing internals may hold locks during a panic.
+        eprintln!("[pertmux-daemon] PANIC: {info}");
+        DaemonShutdown::perform(&sock_for_panic);
+        prev_hook(info);
+    }));
+
     info!("listening on {}", sock.display());
 
     config.validate()?;
@@ -199,7 +235,9 @@ pub async fn run(config: Config) -> Result<()> {
         }
     }
 
-    let _ = std::fs::remove_file(&sock);
+    // Explicitly drop the guard before logging so the socket is gone by the time
+    // we declare "stopped".
+    drop(_guard);
     info!("stopped");
     Ok(())
 }
