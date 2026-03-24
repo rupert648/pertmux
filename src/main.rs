@@ -1,5 +1,6 @@
 mod agent_changes;
 mod app;
+mod banner;
 mod client;
 mod coding_agent;
 mod config;
@@ -115,11 +116,16 @@ fn daemonize(config_path: Option<&str>) -> anyhow::Result<()> {
 
     let child = cmd.spawn()?;
 
-    eprintln!(
-        "[pertmux] daemon started (pid: {}), logging to {}",
-        child.id(),
-        log_path.display()
-    );
+    use banner::{DIM, GRAY, ORANGE, RESET, WHITE};
+    banner::eprint();
+    eprintln!("  {GRAY}daemon started{RESET}");
+    eprintln!();
+    eprintln!("  {GRAY}pid   {RESET}  {WHITE}{}{RESET}", child.id());
+    eprintln!("  {GRAY}socket{RESET}  {}", sock.display());
+    eprintln!("  {GRAY}log   {RESET}  {DIM}{}{RESET}", log_path.display());
+    eprintln!();
+    eprintln!("  {DIM}connect with{RESET}  {ORANGE}pertmux connect{RESET}");
+    eprintln!();
 
     Ok(())
 }
