@@ -1,3 +1,4 @@
+use crate::agent_changes::{AgentChange, AgentChangeType};
 use crate::coding_agent;
 use crate::coding_agent::CodingAgent;
 use crate::config::{AgentActionConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
@@ -12,8 +13,10 @@ use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{DashboardSnapshot, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
-use crate::types::{AgentPane, SessionDetail};
+use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
+use jiff::Timestamp as JiffTimestamp;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 pub enum SelectionSection {
@@ -91,6 +94,8 @@ pub struct App {
     pub popup: PopupState,
     pub keybindings: KeybindingsConfig,
     pub pending_changes: Vec<MrChange>,
+    pub pending_agent_changes: Vec<AgentChange>,
+    previous_pane_statuses: HashMap<String, PaneStatus>,
     pub agent_actions: Vec<AgentActionConfig>,
 }
 
@@ -174,6 +179,8 @@ impl App {
             popup: PopupState::None,
             keybindings,
             pending_changes: Vec::new(),
+            pending_agent_changes: Vec::new(),
+            previous_pane_statuses: HashMap::new(),
             agent_actions: config.agent_action,
         }
     }
@@ -201,6 +208,38 @@ impl App {
                 pane.status = agent.query_status(pane);
                 agent.enrich_pane(pane);
             }
+        }
+
+        let prev_changed_at: HashMap<String, Option<JiffTimestamp>> = self
+            .panes
+            .iter()
+            .map(|p| (p.pane_id.clone(), p.status_changed_at))
+            .collect();
+
+        for pane in &mut panes {
+            let prev_status = self.previous_pane_statuses.get(&pane.pane_id);
+            match prev_status {
+                None => {}
+                Some(prev) if statuses_match(prev, &pane.status) => {
+                    if let Some(prev_ts) = prev_changed_at.get(&pane.pane_id) {
+                        pane.status_changed_at = *prev_ts;
+                    }
+                }
+                Some(prev) => {
+                    pane.status_changed_at = Some(JiffTimestamp::now());
+                    if let Some(change_type) = agent_change_type(prev, &pane.status) {
+                        self.pending_agent_changes.push(AgentChange {
+                            pane_id: pane.pane_id.clone(),
+                            pane_path: pane.pane_path.clone(),
+                            session_name: pane.session_name.clone(),
+                            change_type,
+                        });
+                    }
+                }
+            }
+
+            self.previous_pane_statuses
+                .insert(pane.pane_id.clone(), pane.status.clone());
         }
 
         self.build_groups(&panes);
@@ -396,12 +435,17 @@ impl App {
             keybindings: self.keybindings.clone(),
             pending_changes: Vec::new(),
             agent_actions: self.agent_actions.clone(),
+            pending_agent_changes: Vec::new(),
         }
     }
 
     /// Take accumulated pending changes, leaving the internal list empty.
     pub fn take_pending_changes(&mut self) -> Vec<MrChange> {
         std::mem::take(&mut self.pending_changes)
+    }
+
+    pub fn take_pending_agent_changes(&mut self) -> Vec<AgentChange> {
+        std::mem::take(&mut self.pending_agent_changes)
     }
 
     fn update_detail(&mut self) {
@@ -519,4 +563,25 @@ fn detect_mr_detail_changes(
     }
 
     changes
+}
+
+fn statuses_match(a: &PaneStatus, b: &PaneStatus) -> bool {
+    matches!(
+        (a, b),
+        (PaneStatus::Idle, PaneStatus::Idle)
+            | (PaneStatus::Busy, PaneStatus::Busy)
+            | (PaneStatus::Unknown, PaneStatus::Unknown)
+            | (PaneStatus::Retry { .. }, PaneStatus::Retry { .. })
+    )
+}
+
+fn agent_change_type(from: &PaneStatus, to: &PaneStatus) -> Option<AgentChangeType> {
+    match (from, to) {
+        (_, PaneStatus::Busy) => Some(AgentChangeType::Busy),
+        (PaneStatus::Busy | PaneStatus::Retry { .. }, PaneStatus::Idle) => {
+            Some(AgentChangeType::Idle)
+        }
+        (_, PaneStatus::Retry { .. }) => Some(AgentChangeType::Retry),
+        _ => None,
+    }
 }
