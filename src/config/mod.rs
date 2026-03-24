@@ -182,6 +182,17 @@ impl Config {
             }
         }
 
+        if let Some(ref template) = self.default_worktree_with_prompt
+            && !template.contains("{{msg}}")
+        {
+            errors.push(
+                "config: default_worktree_with_prompt is missing the {{msg}} placeholder.\n\
+                     hint: use {{msg}} where the user message should be injected, e.g.:\n\
+                     \tdefault_worktree_with_prompt = \"opencode run {{msg}}\""
+                    .to_string(),
+            );
+        }
+
         let kb = &self.keybindings;
         let mut key_map: HashMap<char, &str> = HashMap::new();
         let bindings = [
@@ -566,6 +577,26 @@ local_path = "/nonexistent/path/here"
         );
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("local_path does not exist"));
+    }
+
+    #[test]
+    fn test_validate_worktree_with_prompt_missing_placeholder() {
+        let cfg = load_from_str(
+            r#"default_worktree_with_prompt = "opencode run"
+"#,
+        );
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("{{msg}}"));
+        assert!(err.to_string().contains("placeholder"));
+    }
+
+    #[test]
+    fn test_validate_worktree_with_prompt_valid() {
+        let cfg = load_from_str(
+            r#"default_worktree_with_prompt = "opencode run {{msg}}"
+"#,
+        );
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]
