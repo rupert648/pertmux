@@ -12,6 +12,7 @@ pub struct KeybindingsConfig {
     pub merge_worktree: char,
     pub agent_actions: char,
     pub mr_overview: char,
+    pub activity_feed: char,
 }
 
 impl Default for KeybindingsConfig {
@@ -26,6 +27,7 @@ impl Default for KeybindingsConfig {
             merge_worktree: 'M',
             agent_actions: 'a',
             mr_overview: 'm',
+            activity_feed: 'A',
         }
     }
 }

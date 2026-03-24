@@ -10,11 +10,10 @@ use ratatui::{
 };
 
 pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: Rect) {
+    let kb_hint = state.snapshot.keybindings.activity_feed;
+    let title = format!(" Activity [{}] ", kb_hint);
     let block = Block::default()
-        .title(Span::styled(
-            " Activity ",
-            Style::default().fg(Color::DarkGray),
-        ))
+        .title(Span::styled(title, Style::default().fg(Color::DarkGray)))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Indexed(235)))
@@ -35,6 +34,10 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
     // How many rows fit in the inner area
     let visible = inner.height as usize;
 
+    // Reserve: 2 (node+space) + 21 (message 20+space) + 5 (time up to "120m") = 28 chars.
+    // Give the remainder to the label so long worktree names are not cut off.
+    let max_label = (inner.width as usize).saturating_sub(28).max(8);
+
     let items: Vec<ListItem> = state
         .snapshot
         .activity_feed
@@ -46,13 +49,16 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
             let (node, node_style) = node_for_recency(r, base);
             let (label_style, msg_style, time_style) = text_styles_for_recency(r, base);
 
-            let label = truncate_to(&entry.label, 18);
+            let label = truncate_to(&entry.label, max_label);
             let message = truncate_to(&entry.message, 20);
             let time = feed_time_ago(entry);
 
             Line::from(vec![
                 Span::styled(format!("{} ", node), node_style),
-                Span::styled(format!("{:<18} ", label), label_style),
+                Span::styled(
+                    format!("{:<width$} ", label, width = max_label),
+                    label_style,
+                ),
                 Span::styled(format!("{:<20} ", message), msg_style),
                 Span::styled(time, time_style),
             ])
@@ -65,7 +71,7 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
 
 /// Returns 0.0 (old) to 1.0 (brand new), fading over GLOW_SECS.
 fn recency(entry: &ActivityEntry) -> f32 {
-    const GLOW_SECS: f32 = 30.0;
+    const GLOW_SECS: f32 = 1800.0; // 30 minutes
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
