@@ -30,6 +30,14 @@ pub enum PopupState {
     CreateWorktree {
         input: String,
     },
+    /// Two-field popup: enter a branch name and a message to inject into the
+    /// `default_worktree_with_prompt` command template (`{{msg}}` placeholder).
+    CreateWorktreeWithPrompt {
+        branch_input: String,
+        prompt_input: String,
+        /// 0 = branch field focused, 1 = prompt field focused.
+        focused_field: usize,
+    },
     ConfirmRemove {
         branch: String,
         /// Pane ID of the tmux window at the worktree path, captured before deletion.
@@ -104,6 +112,8 @@ pub struct App {
     pub active_project: usize,
     pub read_state: Option<ReadStateDb>,
     pub default_agent_command: Option<String>,
+    /// Command template for "create worktree with prompt". Contains `{{msg}}` placeholder.
+    pub default_worktree_with_prompt: Option<String>,
     #[allow(dead_code)]
     pub notification: Option<(String, Instant)>,
     #[allow(dead_code)]
@@ -177,6 +187,7 @@ impl App {
             .collect();
 
         let agents = coding_agent::agents_from_config(&config.agent);
+        let default_worktree_with_prompt = config.default_worktree_with_prompt.clone();
 
         Self {
             panes: Vec::new(),
@@ -195,6 +206,7 @@ impl App {
             active_project: 0,
             read_state,
             default_agent_command,
+            default_worktree_with_prompt,
             notification: None,
             popup: PopupState::None,
             keybindings,
@@ -520,6 +532,7 @@ impl App {
             error: self.error.clone(),
             seconds_since_refresh: self.seconds_since_refresh(),
             default_agent_command: self.default_agent_command.clone(),
+            default_worktree_with_prompt: self.default_worktree_with_prompt.clone(),
             keybindings: self.keybindings.clone(),
             pending_changes: Vec::new(),
             agent_actions: self.agent_actions.clone(),

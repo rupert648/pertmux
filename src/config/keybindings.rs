@@ -13,6 +13,7 @@ pub struct KeybindingsConfig {
     pub agent_actions: char,
     pub mr_overview: char,
     pub activity_feed: char,
+    pub open_worktree_with_prompt: char,
 }
 
 impl Default for KeybindingsConfig {
@@ -28,6 +29,7 @@ impl Default for KeybindingsConfig {
             agent_actions: 'a',
             mr_overview: 'm',
             activity_feed: 'A',
+            open_worktree_with_prompt: 'w',
         }
     }
 }
@@ -50,6 +52,7 @@ impl KeybindingsConfig {
             agent_actions,
             mr_overview,
             activity_feed,
+            open_worktree_with_prompt,
         } = self;
         vec![
             (*refresh, "Refresh data"),
@@ -60,6 +63,7 @@ impl KeybindingsConfig {
             (*activity_feed, "Activity feed"),
             (*agent_actions, "Agent actions"),
             (*create_worktree, "Create worktree"),
+            (*open_worktree_with_prompt, "Create worktree with prompt"),
             (*delete_worktree, "Delete worktree"),
             (*merge_worktree, "Merge worktree"),
         ]

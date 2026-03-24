@@ -176,6 +176,17 @@ pub async fn run(config: Config) -> Result<()> {
                         app.refresh().await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
+                    // Same as CreateWorktree — the daemon only needs to create the
+                    // worktree and broadcast the updated snapshot.  The client handles
+                    // opening the tmux pane with the filled-in prompt command once it
+                    // receives the new snapshot containing the worktree path.
+                    ClientMsg::CreateWorktreeWithPrompt { project_idx, branch, .. } => {
+                        let result = handle_create_worktree(&app, project_idx, &branch).await;
+                        send_action_result(&broadcast_tx, result);
+                        app.refresh_worktrees().await;
+                        app.refresh().await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                    }
                     ClientMsg::RemoveWorktree { project_idx, branch } => {
                         let result = handle_remove_worktree(&app, project_idx, &branch).await;
                         send_action_result(&broadcast_tx, result);
