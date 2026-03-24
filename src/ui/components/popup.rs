@@ -314,8 +314,39 @@ pub(crate) fn draw_mr_overview_popup(
         return;
     }
 
+    // Build render items: project-group headers interleaved with entry indices.
+    // entries are pre-sorted by project_path in the daemon, so groups are contiguous.
+    enum RenderItem {
+        Header {
+            project: String,
+            forge: ProjectForge,
+        },
+        Entry(usize), // index into entries
+    }
+
+    let mut render_items: Vec<RenderItem> = Vec::new();
+    let mut last_project = "";
+    for (idx, entry) in entries.iter().enumerate() {
+        if entry.mr.project_path.as_str() != last_project {
+            render_items.push(RenderItem::Header {
+                project: entry.mr.project_path.clone(),
+                forge: entry.forge.clone(),
+            });
+            last_project = entry.mr.project_path.as_str();
+        }
+        render_items.push(RenderItem::Entry(idx));
+    }
+
+    // Find the visual (render) line of the selected entry so we can scroll correctly.
+    let selected_visual = render_items
+        .iter()
+        .position(|item| matches!(item, RenderItem::Entry(i) if *i == selected))
+        .unwrap_or(0);
+
     let max_visible = 15usize;
-    let visible_count = entries.len().min(max_visible);
+    let total_lines = render_items.len();
+    let visible_count = total_lines.min(max_visible);
+
     let popup_w = (area.width * 3 / 4)
         .max(60)
         .min(area.width.saturating_sub(4));
@@ -344,8 +375,9 @@ pub(crate) fn draw_mr_overview_popup(
     ])
     .split(inner);
 
-    let scroll_offset = if selected >= visible_count {
-        selected - visible_count + 1
+    // Scroll so the selected entry's visual line stays within the visible window.
+    let scroll_offset = if selected_visual >= visible_count {
+        selected_visual - visible_count + 1
     } else {
         0
     };
@@ -353,68 +385,83 @@ pub(crate) fn draw_mr_overview_popup(
     let available_width = inner.width as usize;
     let mut item_lines: Vec<Line> = Vec::new();
 
-    for (i, entry) in entries
-        .iter()
-        .enumerate()
-        .skip(scroll_offset)
-        .take(visible_count)
-    {
-        let is_selected = i == selected;
-        let prefix = if is_selected { " \u{25b8} " } else { "   " };
+    for item in render_items.iter().skip(scroll_offset).take(visible_count) {
+        match item {
+            RenderItem::Header { project, forge } => {
+                let badge = match forge {
+                    ProjectForge::Gitlab => "[GL]",
+                    ProjectForge::Github => "[GH]",
+                };
+                item_lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", badge),
+                        Style::default()
+                            .fg(Color::Indexed(244))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        project.as_str(),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+            RenderItem::Entry(idx) => {
+                let entry = &entries[*idx];
+                let is_selected = *idx == selected;
+                let prefix = if is_selected { " \u{25b8} " } else { "   " };
 
-        let forge_badge = match entry.forge {
-            ProjectForge::Gitlab => "[GL]",
-            ProjectForge::Github => "[GH]",
-        };
+                let iid_prefix = match entry.forge {
+                    ProjectForge::Gitlab => "!",
+                    ProjectForge::Github => "#",
+                };
 
-        let iid_prefix = match entry.forge {
-            ProjectForge::Gitlab => "!",
-            ProjectForge::Github => "#",
-        };
+                let linked_badge = if entry.configured_project.is_some() {
+                    " [linked]"
+                } else {
+                    ""
+                };
 
-        let linked_badge = if entry.configured_project.is_some() {
-            " [linked]"
-        } else {
-            ""
-        };
+                let age = format_entry_age(&entry.mr.updated_at);
+                let iid_str = format!("{}{}", iid_prefix, entry.mr.iid);
 
-        let age = format_entry_age(&entry.mr.updated_at);
+                let (title_style, iid_style, badge_style) = if is_selected {
+                    (
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    )
+                } else if entry.mr.draft {
+                    (
+                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::DarkGray),
+                    )
+                } else {
+                    (
+                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::Indexed(242)),
+                        Style::default().fg(ACCENT),
+                    )
+                };
 
-        let (text_style, badge_style) = if is_selected {
-            (
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            )
-        } else if entry.mr.draft {
-            (
-                Style::default().fg(Color::DarkGray),
-                Style::default().fg(Color::DarkGray),
-            )
-        } else {
-            (
-                Style::default().fg(Color::White),
-                Style::default().fg(ACCENT),
-            )
-        };
+                let age_style = Style::default().fg(Color::DarkGray);
 
-        let age_style = Style::default().fg(Color::DarkGray);
+                // prefix(3) + iid + space(1) + title + badge + "  " + age
+                let fixed_len = 3 + iid_str.len() + 1 + linked_badge.len() + 2 + age.len();
+                let title_max = available_width.saturating_sub(fixed_len);
+                let title = crate::ui::helpers::truncate(&entry.mr.title, title_max);
 
-        let meta = format!(
-            "{} {} {}{} ",
-            forge_badge, entry.mr.project_path, iid_prefix, entry.mr.iid
-        );
-        let suffix = format!("{}  {}", linked_badge, age);
-        let meta_and_suffix_len = meta.len() + suffix.len() + 3;
-        let title_max = available_width.saturating_sub(meta_and_suffix_len);
-        let title = crate::ui::helpers::truncate(&entry.mr.title, title_max);
-
-        item_lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(ACCENT)),
-            Span::styled(meta, text_style),
-            Span::styled(title, text_style),
-            Span::styled(linked_badge, badge_style),
-            Span::styled(format!("  {}", age), age_style),
-        ]));
+                item_lines.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(ACCENT)),
+                    Span::styled(format!("{} ", iid_str), iid_style),
+                    Span::styled(title, title_style),
+                    Span::styled(linked_badge, badge_style),
+                    Span::styled(format!("  {}", age), age_style),
+                ]));
+            }
+        }
     }
 
     if item_lines.is_empty() {
