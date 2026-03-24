@@ -51,6 +51,31 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
         | PopupState::ActivityFeed { .. } => {
             return;
         }
+        PopupState::ConfirmKillTmuxWindow { branch, .. } => {
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled("Kill tmux window for ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        branch.as_str(),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("?", Style::default().fg(Color::Gray)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "The linked tmux window will be closed.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Enter confirm \u{00b7} Esc skip",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            (" Kill Tmux Window ", lines, false)
+        }
         PopupState::CreateWorktree { input } => {
             let lines = vec![
                 Line::from(Span::styled(
@@ -75,7 +100,7 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
             ];
             (" Create Worktree ", lines, true)
         }
-        PopupState::ConfirmRemove { branch } => {
+        PopupState::ConfirmRemove { branch, .. } => {
             let lines = vec![
                 Line::from(vec![
                     Span::styled("Remove worktree ", Style::default().fg(Color::Gray)),

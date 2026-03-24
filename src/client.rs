@@ -336,6 +336,7 @@ impl ClientState {
             if let Some(ref branch) = wt.branch {
                 self.popup = PopupState::ConfirmRemove {
                     branch: branch.clone(),
+                    worktree_path: wt.path.clone(),
                 };
             }
         }
@@ -671,7 +672,39 @@ async fn run_client_loop(
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notify(message);
                                 if ok {
-                                    state.popup = PopupState::None;
+                                    // After a successful worktree removal, offer to kill the
+                                    // linked tmux window if one is associated with that path.
+                                    let kill_window_data =
+                                        if let PopupState::ConfirmRemove { branch, worktree_path } =
+                                            &state.popup
+                                        {
+                                            let maybe_pane_id =
+                                                worktree_path.as_ref().and_then(|path| {
+                                                    let canonical =
+                                                        std::fs::canonicalize(path).ok();
+                                                    state.snapshot.panes.iter().find(|p| {
+                                                        canonical
+                                                            .as_ref()
+                                                            .and_then(|cp| {
+                                                                std::fs::canonicalize(&p.pane_path)
+                                                                    .ok()
+                                                                    .map(|pp| pp == *cp)
+                                                            })
+                                                            .unwrap_or(false)
+                                                    })
+                                                }).map(|p| p.pane_id.clone());
+                                            maybe_pane_id
+                                                .map(|pane_id| (branch.clone(), pane_id))
+                                        } else {
+                                            None
+                                        };
+
+                                    if let Some((branch, pane_id)) = kill_window_data {
+                                        state.popup =
+                                            PopupState::ConfirmKillTmuxWindow { branch, pane_id };
+                                    } else {
+                                        state.popup = PopupState::None;
+                                    }
                                 }
                             }
                             DaemonMsg::HandshakeAck { .. } => {}
@@ -937,6 +970,30 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::ConfirmKillTmuxWindow { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Enter => {
+                let pane_id =
+                    if let PopupState::ConfirmKillTmuxWindow { ref pane_id, .. } = state.popup {
+                        Some(pane_id.clone())
+                    } else {
+                        None
+                    };
+                if let Some(pane_id) = pane_id {
+                    if let Err(e) = tmux::kill_window(&pane_id) {
+                        state.notify(format!("Kill window failed: {}", e));
+                    } else {
+                        state.notify("Tmux window closed");
+                    }
+                }
+                state.close_popup();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.has_popup() {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -1035,7 +1092,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
                 branch,
             })
         }
-        PopupState::ConfirmRemove { branch } => Some(ClientMsg::RemoveWorktree {
+        PopupState::ConfirmRemove { branch, .. } => Some(ClientMsg::RemoveWorktree {
             project_idx,
             branch: branch.clone(),
         }),
@@ -1048,6 +1105,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
         | PopupState::ActivityFeed { .. }
+        | PopupState::ConfirmKillTmuxWindow { .. }
         | PopupState::None => None,
     }
 }
