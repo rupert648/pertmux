@@ -260,6 +260,10 @@ impl ClientState {
         self.popup = PopupState::ActivityFeed { selected: 0 };
     }
 
+    fn open_keybindings_help(&mut self) {
+        self.popup = PopupState::KeybindingsHelp;
+    }
+
     fn copy_selected_branch(&mut self) {
         let branch = if let Some(proj) = self.snapshot.projects.get(self.active_project) {
             match self
@@ -1118,6 +1122,8 @@ async fn handle_key(
                 state.open_mr_overview();
             } else if ch == kb.activity_feed {
                 state.open_activity_feed();
+            } else if ch == 'K' {
+                state.open_keybindings_help();
             }
         }
         _ => {}
@@ -1153,6 +1159,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::MrOverview { .. }
         | PopupState::ActivityFeed { .. }
         | PopupState::ConfirmKillTmuxWindow { .. }
+        | PopupState::KeybindingsHelp
         | PopupState::None => None,
     }
 }
