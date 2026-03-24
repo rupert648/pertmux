@@ -339,9 +339,13 @@ impl ClientState {
                 return;
             }
             if let Some(ref branch) = wt.branch {
+                // Look up the linked tmux pane NOW, while the worktree still exists on
+                // disk. canonicalize (used inside find_window_for_path) requires the path
+                // to exist, and by the time ActionResult arrives the directory is gone.
+                let linked_pane_id = wt.path.as_deref().and_then(tmux::find_window_for_path);
                 self.popup = PopupState::ConfirmRemove {
                     branch: branch.clone(),
-                    worktree_path: wt.path.clone(),
+                    linked_pane_id,
                 };
             }
         }
@@ -723,34 +727,16 @@ async fn run_client_loop(
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notify(message);
                                 if ok {
-                                    // After a successful worktree removal, offer to kill the
-                                    // linked tmux window if one is associated with that path.
-                                    let kill_window_data =
-                                        if let PopupState::ConfirmRemove { branch, worktree_path } =
-                                            &state.popup
-                                        {
-                                            let maybe_pane_id =
-                                                worktree_path.as_ref().and_then(|path| {
-                                                    let canonical =
-                                                        std::fs::canonicalize(path).ok();
-                                                    state.snapshot.panes.iter().find(|p| {
-                                                        canonical
-                                                            .as_ref()
-                                                            .and_then(|cp| {
-                                                                std::fs::canonicalize(&p.pane_path)
-                                                                    .ok()
-                                                                    .map(|pp| pp == *cp)
-                                                            })
-                                                            .unwrap_or(false)
-                                                    })
-                                                }).map(|p| p.pane_id.clone());
-                                            maybe_pane_id
-                                                .map(|pane_id| (branch.clone(), pane_id))
-                                        } else {
-                                            None
-                                        };
-
-                                    if let Some((branch, pane_id)) = kill_window_data {
+                                    // After a successful worktree removal, offer to kill
+                                    // the linked tmux window using the pane_id that was
+                                    // captured when the popup was opened (before deletion).
+                                    if let PopupState::ConfirmRemove {
+                                        branch,
+                                        linked_pane_id: Some(pane_id),
+                                    } = &state.popup
+                                    {
+                                        let branch = branch.clone();
+                                        let pane_id = pane_id.clone();
                                         state.popup =
                                             PopupState::ConfirmKillTmuxWindow { branch, pane_id };
                                     } else {
