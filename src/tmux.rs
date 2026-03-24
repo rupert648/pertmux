@@ -200,6 +200,17 @@ pub fn find_or_create_pane(
     Ok(())
 }
 
+/// Find the pane ID of any tmux pane (across all sessions) whose current path matches
+/// `path`. Canonicalization is attempted on both sides to handle symlinks; falls back to
+/// the raw path string when the filesystem cannot resolve it.
+///
+/// This searches ALL panes — not just agent panes — so it works for plain terminal windows too.
+/// Must be called while the path still exists on disk (canonicalize requires the path to exist).
+pub fn find_window_for_path(path: &str) -> Option<String> {
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+    find_pane_by_path(&target).ok().flatten()
+}
+
 fn find_pane_by_path(target: &Path) -> anyhow::Result<Option<String>> {
     let output = Command::new("tmux")
         .args(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_path}"])
