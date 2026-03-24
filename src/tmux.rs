@@ -227,6 +227,17 @@ fn find_pane_by_path(target: &Path) -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
+pub fn kill_window(pane_id: &str) -> anyhow::Result<()> {
+    let output = Command::new("tmux")
+        .args(["kill-window", "-t", pane_id])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("tmux kill-window failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
 pub fn switch_to_pane(pane_id: &str) -> anyhow::Result<()> {
     let our_session = get_own_session().unwrap_or_default();
 

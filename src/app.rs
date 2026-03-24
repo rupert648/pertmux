@@ -32,6 +32,13 @@ pub enum PopupState {
     },
     ConfirmRemove {
         branch: String,
+        /// Path of the worktree being removed — used to locate the linked tmux window.
+        worktree_path: Option<String>,
+    },
+    /// After a successful worktree removal, ask whether to also kill the linked tmux window.
+    ConfirmKillTmuxWindow {
+        branch: String,
+        pane_id: String,
     },
     ConfirmMerge {
         branch: String,
