@@ -18,6 +18,7 @@ use crate::worktrunk::{self, WtWorktree};
 use jiff::Timestamp as JiffTimestamp;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use tracing::{error, warn};
 
 pub enum SelectionSection {
     MergeRequests,
@@ -353,7 +354,7 @@ impl App {
                         mr,
                     }));
                 }
-                Err(e) => eprintln!("[pertmux] global GitLab MR fetch error: {}", e),
+                Err(e) => error!("global GitLab MR fetch error: {}", e),
             }
         }
 
@@ -371,7 +372,7 @@ impl App {
                         mr,
                     }));
                 }
-                Err(e) => eprintln!("[pertmux] global GitHub MR fetch error: {}", e),
+                Err(e) => error!("global GitHub MR fetch error: {}", e),
             }
         }
 
@@ -464,7 +465,7 @@ impl App {
                     }
                 }
                 Err(e) => {
-                    eprintln!("[pertmux] worktrunk error ({}): {}", proj.config.name, e);
+                    warn!("worktrunk error ({}): {}", proj.config.name, e);
                     proj.cached_worktrees = vec![];
                 }
             }

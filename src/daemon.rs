@@ -5,23 +5,71 @@ use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION}
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::{error, info, warn};
 
 pub fn socket_path() -> PathBuf {
     let name = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     PathBuf::from(format!("/tmp/pertmux-{}.sock", name))
 }
 
+/// Returns a timestamped log path so each daemon startup gets its own log file.
+/// Format: /tmp/pertmux-daemon-YYYY-MM-DDTHH-MM-SS.log
 pub fn log_path() -> PathBuf {
-    PathBuf::from("/tmp/pertmux-daemon.log")
+    let ts = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H-%M-%S")
+        .to_string();
+    PathBuf::from(format!("/tmp/pertmux-daemon-{}.log", ts))
+}
+
+/// RAII guard that runs daemon cleanup when dropped.
+///
+/// Covers all exit paths — `Ok` return, `Err` return, and main-task panics
+/// (Drop runs during stack unwinding). The panic hook in `run` calls
+/// `DaemonShutdown::perform` directly for panics in spawned tasks, which tokio
+/// catches internally and which therefore never reach this stack frame.
+struct DaemonShutdown {
+    sock: PathBuf,
+}
+
+impl DaemonShutdown {
+    fn new(sock: PathBuf) -> Self {
+        Self { sock }
+    }
+
+    /// Execute all daemon shutdown work.
+    ///
+    /// Must be safe to call from a panic hook: uses only infallible operations
+    /// and never touches tracing (which may hold internal locks during a panic).
+    fn perform(sock: &Path) {
+        let _ = std::fs::remove_file(sock);
+        // Expand here for future cleanup: flush metrics, notify clients, etc.
+    }
+}
+
+impl Drop for DaemonShutdown {
+    fn drop(&mut self) {
+        Self::perform(&self.sock);
+    }
 }
 
 pub async fn run(config: Config) -> Result<()> {
+    // Initialize structured logging to stderr (redirected to the log file in daemon mode).
+    // RUST_LOG overrides the default info level, e.g. RUST_LOG=debug pertmux serve --foreground
+    let _ = tracing_subscriber::fmt()
+        .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
+        .with_target(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
     let sock = socket_path();
 
     if sock.exists() {
@@ -39,7 +87,23 @@ pub async fn run(config: Config) -> Result<()> {
     }
 
     let listener = UnixListener::bind(&sock)?;
-    eprintln!("[pertmux-daemon] listening on {}", sock.display());
+
+    // Bind the shutdown guard now that we own the socket.
+    // Its Drop runs on every exit path: Ok, Err, and main-task panic (via unwinding).
+    let _guard = DaemonShutdown::new(sock.clone());
+
+    // Panic hook: handles panics in spawned tasks, which tokio catches at the task
+    // boundary so they never unwind through this frame and would otherwise bypass _guard.
+    let sock_for_panic = sock.clone();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // eprintln! only — tracing internals may hold locks during a panic.
+        eprintln!("[pertmux-daemon] PANIC: {info}");
+        DaemonShutdown::perform(&sock_for_panic);
+        prev_hook(info);
+    }));
+
+    info!("listening on {}", sock.display());
 
     config.validate()?;
 
@@ -94,7 +158,7 @@ pub async fn run(config: Config) -> Result<()> {
             Some(cmd) = cmd_rx.recv() => {
                 match cmd {
                     ClientMsg::Stop => {
-                        eprintln!("[pertmux-daemon] received stop command");
+                        info!("received stop command");
                         shutdown = true;
                     }
                     ClientMsg::Refresh => {
@@ -165,14 +229,16 @@ pub async fn run(config: Config) -> Result<()> {
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = tokio::signal::ctrl_c() => {
-                eprintln!("[pertmux-daemon] shutting down");
+                info!("shutting down");
                 shutdown = true;
             }
         }
     }
 
-    let _ = std::fs::remove_file(&sock);
-    eprintln!("[pertmux-daemon] stopped");
+    // Explicitly drop the guard before logging so the socket is gone by the time
+    // we declare "stopped".
+    drop(_guard);
+    info!("stopped");
     Ok(())
 }
 
@@ -205,14 +271,14 @@ async fn accept_loop(
                     {
                         let msg = e.to_string();
                         if !msg.contains("Broken pipe") && !msg.contains("Connection reset") {
-                            eprintln!("[pertmux-daemon] client error: {}", e);
+                            warn!("client error: {}", e);
                         }
                     }
                     client_count.fetch_sub(1, Ordering::SeqCst);
                 });
             }
             Err(e) => {
-                eprintln!("[pertmux-daemon] accept error: {}", e);
+                error!("accept error: {}", e);
             }
         }
     }
