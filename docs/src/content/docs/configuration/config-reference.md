@@ -66,6 +66,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
 | `mr_overview` | string | `"m"` | Open MR Overview popup (all your open MRs across all forges) |
 | `agent_actions` | string | `"a"` | Open agent actions panel |
+| `activity_feed` | string | `"A"` | Open Activity Feed popup — navigate recent events and jump to the relevant pane or MR |
 
 ## `[[agent_action]]`
 
