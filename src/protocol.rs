@@ -42,6 +42,65 @@ pub struct ActivityEntry {
     pub received_at_secs: u64,
 }
 
+impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
+    fn from(change: &crate::agent_changes::AgentChange) -> Self {
+        use crate::agent_changes::AgentChangeType;
+        let label = change
+            .pane_path
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&change.pane_path)
+            .to_string();
+        let (message, kind) = match change.change_type {
+            AgentChangeType::Busy => ("working".to_string(), ActivityKind::AgentBusy),
+            AgentChangeType::Idle => ("finished".to_string(), ActivityKind::AgentIdle),
+            AgentChangeType::Retry => ("retrying".to_string(), ActivityKind::AgentRetry),
+        };
+        ActivityEntry {
+            label,
+            message,
+            kind,
+            received_at_secs: jiff::Timestamp::now().as_second() as u64,
+        }
+    }
+}
+
+impl From<&crate::mr_changes::MrChange> for ActivityEntry {
+    fn from(change: &crate::mr_changes::MrChange) -> Self {
+        use crate::mr_changes::MrChangeType;
+        let (message, kind) = match &change.change_type {
+            MrChangeType::PipelineFailed => (
+                format!("!{} pipeline failed", change.mr_iid),
+                ActivityKind::MrPipelineFailed,
+            ),
+            MrChangeType::PipelineSucceeded => (
+                format!("!{} pipeline ok", change.mr_iid),
+                ActivityKind::MrPipelineSucceeded,
+            ),
+            MrChangeType::NewDiscussions(n) => (
+                format!(
+                    "!{} {} new comment{}",
+                    change.mr_iid,
+                    n,
+                    if *n == 1 { "" } else { "s" }
+                ),
+                ActivityKind::MrNewDiscussions,
+            ),
+            MrChangeType::Approved => (
+                format!("!{} approved", change.mr_iid),
+                ActivityKind::MrApproved,
+            ),
+        };
+        ActivityEntry {
+            label: change.project_name.clone(),
+            message,
+            kind,
+            received_at_secs: jiff::Timestamp::now().as_second() as u64,
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub const PROTOCOL_VERSION: u32 = 2;
 
