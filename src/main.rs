@@ -1,5 +1,6 @@
 mod agent_changes;
 mod app;
+mod banner;
 mod client;
 mod coding_agent;
 mod config;
@@ -116,14 +117,13 @@ fn daemonize(config_path: Option<&str>) -> anyhow::Result<()> {
     let child = cmd.spawn()?;
 
     let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let b = "\x1b[1m"; // bold
     let d = "\x1b[2m"; // dim
     let g = "\x1b[90m"; // dark gray
     let w = "\x1b[97m"; // bright white
     let r = "\x1b[0m"; // reset
 
-    eprintln!();
-    eprintln!("  {o}{b}pertmux{r}  {g}·{r}  daemon started");
+    banner::eprint();
+    eprintln!("  {g}daemon started{r}");
     eprintln!();
     eprintln!("  {g}pid   {r}  {w}{}{r}", child.id());
     eprintln!("  {g}socket{r}  {}", sock.display());
