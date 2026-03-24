@@ -31,5 +31,5 @@ bytes = "1"
 nucleo-matcher = "0.3"
 async-trait = "0.1"
 jiff = { version = "0.2", features = ["serde"] }
-tracing = "0.1"
+tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
