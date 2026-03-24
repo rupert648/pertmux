@@ -188,6 +188,7 @@ impl Config {
             (kb.delete_worktree, "delete_worktree"),
             (kb.merge_worktree, "merge_worktree"),
             (kb.agent_actions, "agent_actions"),
+            (kb.mr_overview, "mr_overview"),
         ];
         for (ch, name) in &bindings {
             if let Some(existing) = key_map.get(ch) {
@@ -584,7 +585,8 @@ local_path = "/tmp/bad"
         assert_eq!(kb.filter_projects, 'f');
         assert_eq!(kb.create_worktree, 'c');
         assert_eq!(kb.delete_worktree, 'd');
-        assert_eq!(kb.merge_worktree, 'm');
+        assert_eq!(kb.merge_worktree, 'M');
+        assert_eq!(kb.mr_overview, 'm');
     }
 
     #[test]
@@ -599,6 +601,7 @@ filter_projects = "p"
 create_worktree = "n"
 delete_worktree = "x"
 merge_worktree = "g"
+mr_overview = "v"
 "#,
         );
         let kb = &cfg.keybindings;
@@ -609,6 +612,7 @@ merge_worktree = "g"
         assert_eq!(kb.create_worktree, 'n');
         assert_eq!(kb.delete_worktree, 'x');
         assert_eq!(kb.merge_worktree, 'g');
+        assert_eq!(kb.mr_overview, 'v');
     }
 
     #[test]
@@ -622,6 +626,12 @@ refresh = "R"
         assert_eq!(cfg.keybindings.refresh, 'R');
         assert_eq!(cfg.keybindings.open_browser, 'o');
         assert_eq!(cfg.keybindings.copy_branch, 'b');
+    }
+
+    #[test]
+    fn test_keybindings_mr_overview_default() {
+        let cfg = load_from_str("");
+        assert_eq!(cfg.keybindings.mr_overview, 'm');
     }
 
     #[test]

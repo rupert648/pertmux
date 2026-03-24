@@ -33,6 +33,17 @@ pub struct MergeRequestSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMrSummary {
+    pub iid: u64,
+    pub title: String,
+    pub web_url: String,
+    pub project_path: String,
+    pub author: ForgeUser,
+    pub draft: bool,
+    pub updated_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestDetail {
     pub iid: u64,
     pub title: String,
@@ -151,6 +162,16 @@ mod tests {
         }
     ]"#;
 
+    const USER_MR_SUMMARY_JSON: &str = r#"{
+        "iid": 314,
+        "title": "feat: global MR overview",
+        "web_url": "https://github.com/team/pertmux/pull/314",
+        "project_path": "team/pertmux",
+        "author": {"id": 7, "username": "rupert", "name": "Rupert Carr"},
+        "draft": false,
+        "updated_at": "2026-03-23T10:11:12.000Z"
+    }"#;
+
     #[test]
     fn test_mr_list_deserializes() {
         let mrs: Vec<MergeRequestSummary> = serde_json::from_str(MR_LIST_JSON).unwrap();
@@ -229,6 +250,23 @@ mod tests {
     fn test_mr_notes_empty_list() {
         let notes: Vec<MergeRequestNote> = serde_json::from_str("[]").unwrap();
         assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_user_mr_summary_deserializes() {
+        let mr: UserMrSummary = serde_json::from_str(USER_MR_SUMMARY_JSON).unwrap();
+        assert_eq!(mr.iid, 314);
+        assert_eq!(mr.title, "feat: global MR overview");
+        assert_eq!(mr.web_url, "https://github.com/team/pertmux/pull/314");
+        assert_eq!(mr.project_path, "team/pertmux");
+        assert_eq!(mr.author.id, 7);
+        assert_eq!(mr.author.username, "rupert");
+        assert_eq!(mr.author.name, "Rupert Carr");
+        assert!(!mr.draft);
+        assert_eq!(
+            mr.updated_at,
+            "2026-03-23T10:11:12.000Z".parse::<Timestamp>().unwrap()
+        );
     }
 
     const PIPELINE_JOBS_JSON: &str = r#"[

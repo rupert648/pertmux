@@ -74,6 +74,15 @@ fn load_last_project() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+fn open_url_in_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
 pub struct ClientState {
     pub snapshot: DashboardSnapshot,
     pub active_project: usize,
@@ -332,14 +341,16 @@ impl ClientState {
                 .linked_mrs
                 .get(*self.mr_selected.get(self.active_project).unwrap_or(&0))
         {
-            let url = &linked.mr.web_url;
-            #[cfg(target_os = "macos")]
-            let _ = std::process::Command::new("open").arg(url).spawn();
-            #[cfg(target_os = "linux")]
-            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            let _ = std::process::Command::new("open").arg(url).spawn();
+            open_url_in_browser(&linked.mr.web_url);
         }
+    }
+
+    fn open_mr_overview(&mut self) {
+        if self.snapshot.global_mrs.is_empty() {
+            self.notify("No open MRs found");
+            return;
+        }
+        self.popup = PopupState::MrOverview { selected: 0 };
     }
 
     fn copy_selected_branch(&mut self) {
@@ -893,6 +904,74 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::MrOverview { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PopupState::MrOverview { selected } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PopupState::MrOverview { selected } = &mut state.popup
+                    && *selected + 1 < state.snapshot.global_mrs.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let PopupState::MrOverview { selected } =
+                    std::mem::replace(&mut state.popup, PopupState::None)
+                    && let Some(entry) = state.snapshot.global_mrs.get(selected)
+                {
+                    if let Some(ref proj_name) = entry.configured_project {
+                        // Navigate to the configured project
+                        if let Some(idx) = state
+                            .snapshot
+                            .projects
+                            .iter()
+                            .position(|p| &p.name == proj_name)
+                        {
+                            state.active_project = idx;
+                            save_last_project(proj_name);
+                            // Select MR section
+                            if let Some(section) = state.selection_section.get_mut(idx) {
+                                *section = SelectionSection::MergeRequests;
+                            }
+                            // Try to find the MR in linked_mrs and select it
+                            let iid = entry.mr.iid;
+                            if let Some(proj) = state.snapshot.projects.get(idx)
+                                && let Some(mr_idx) = proj
+                                    .dashboard
+                                    .linked_mrs
+                                    .iter()
+                                    .position(|l| l.mr.iid == iid)
+                            {
+                                state.mr_selected[idx] = mr_idx;
+                                send_msg(
+                                    framed,
+                                    ClientMsg::SelectMr {
+                                        project_idx: idx,
+                                        mr_iid: iid,
+                                    },
+                                )
+                                .await?;
+                            }
+                        }
+                    } else {
+                        // Not a configured project — open in browser
+                        open_url_in_browser(&entry.mr.web_url);
+                        state.notify("Opened in browser (project not configured)");
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if matches!(state.popup, PopupState::AgentActions { .. }) {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -995,6 +1074,8 @@ async fn handle_key(
                 state.open_merge_popup();
             } else if ch == kb.agent_actions {
                 state.open_agent_actions();
+            } else if ch == kb.mr_overview {
+                state.open_mr_overview();
             }
         }
         _ => {}
@@ -1027,6 +1108,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         PopupState::ProjectFilter { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
+        | PopupState::MrOverview { .. }
         | PopupState::None => None,
     }
 }
