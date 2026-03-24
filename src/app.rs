@@ -341,57 +341,50 @@ impl App {
     pub async fn refresh_global_mrs(&mut self) {
         let mut all_entries: Vec<GlobalMrEntry> = Vec::new();
 
-        let has_gitlab = self
-            .projects
-            .iter()
-            .any(|p| matches!(p.config.source, ProjectForge::Gitlab));
-        let has_github = self
-            .projects
-            .iter()
-            .any(|p| matches!(p.config.source, ProjectForge::Github));
-
-        if has_gitlab {
-            let idx = self
-                .projects
-                .iter()
-                .position(|p| matches!(p.config.source, ProjectForge::Gitlab))
-                .unwrap();
-            match self.projects[idx].client.fetch_user_mrs().await {
+        // GitLab: aggregate per-project rather than using the global
+        // `scope=created_by_me` endpoint.  Project bot tokens (a common setup)
+        // only have project-scoped API access, so the global endpoint returns
+        // an empty list or only the bot's own MRs.  fetch_mrs() already uses
+        // `author_username` and works correctly regardless of token type.
+        for proj in &self.projects {
+            if !matches!(proj.config.source, ProjectForge::Gitlab) {
+                continue;
+            }
+            match proj.client.fetch_mrs().await {
                 Ok(mrs) => {
                     all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
                         forge: ProjectForge::Gitlab,
-                        configured_project: None,
-                        mr,
+                        configured_project: Some(proj.config.name.clone()),
+                        mr: crate::forge_clients::types::UserMrSummary {
+                            iid: mr.iid,
+                            title: mr.title,
+                            web_url: mr.web_url.clone(),
+                            project_path: proj.config.project.clone(),
+                            author: mr.author,
+                            draft: mr.draft,
+                            updated_at: mr.updated_at,
+                        },
                     }));
                 }
-                Err(e) => error!("global GitLab MR fetch error: {}", e),
+                Err(e) => error!("global GitLab MR fetch error ({}): {}", proj.config.name, e),
             }
         }
 
-        if has_github {
-            let idx = self
-                .projects
-                .iter()
-                .position(|p| matches!(p.config.source, ProjectForge::Github))
-                .unwrap();
-            match self.projects[idx].client.fetch_user_mrs().await {
+        // GitHub: fetch_user_mrs() uses a user-scoped endpoint that works fine
+        // with personal access tokens, so keep the existing approach.
+        for proj in &self.projects {
+            if !matches!(proj.config.source, ProjectForge::Github) {
+                continue;
+            }
+            match proj.client.fetch_user_mrs().await {
                 Ok(mrs) => {
                     all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
                         forge: ProjectForge::Github,
-                        configured_project: None,
+                        configured_project: Some(proj.config.name.clone()),
                         mr,
                     }));
                 }
-                Err(e) => error!("global GitHub MR fetch error: {}", e),
-            }
-        }
-
-        for entry in &mut all_entries {
-            for proj in &self.projects {
-                if proj.config.project.to_lowercase() == entry.mr.project_path.to_lowercase() {
-                    entry.configured_project = Some(proj.config.name.clone());
-                    break;
-                }
+                Err(e) => error!("global GitHub MR fetch error ({}): {}", proj.config.name, e),
             }
         }
 
