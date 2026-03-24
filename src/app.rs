@@ -391,7 +391,11 @@ impl App {
             }
         }
 
-        all_entries.sort_by(|a, b| b.mr.updated_at.cmp(&a.mr.updated_at));
+        all_entries.sort_by(|a, b| {
+            a.mr.project_path
+                .cmp(&b.mr.project_path)
+                .then_with(|| b.mr.updated_at.cmp(&a.mr.updated_at))
+        });
 
         self.global_mrs = all_entries;
     }
