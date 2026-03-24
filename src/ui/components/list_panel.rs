@@ -34,95 +34,31 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
         )
     };
 
-    let in_worktrees = state
-        .snapshot
-        .projects
-        .get(state.active_project)
-        .is_some_and(|_| {
-            matches!(
-                state.selection_section.get(state.active_project),
-                Some(SelectionSection::Worktrees)
-            )
-        });
-
     let kb = &state.snapshot.keybindings;
 
     let hint_bottom = if !state.snapshot.projects.is_empty() {
-        let mut hints = vec![
+        Line::from(vec![
             Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" nav  ", Style::default().fg(Color::DarkGray)),
             Span::styled("Tab", Style::default().fg(ACCENT)),
-            Span::styled(" switch  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
-            Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(kb.refresh.to_string(), Style::default().fg(ACCENT)),
-            Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
-        ];
-        if in_worktrees {
-            hints.push(Span::styled(
-                kb.create_worktree.to_string(),
-                Style::default().fg(ACCENT),
-            ));
-            hints.push(Span::styled(
-                " create  ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            hints.push(Span::styled(
-                kb.delete_worktree.to_string(),
-                Style::default().fg(ACCENT),
-            ));
-            hints.push(Span::styled(" del  ", Style::default().fg(Color::DarkGray)));
-            hints.push(Span::styled(
-                kb.merge_worktree.to_string(),
-                Style::default().fg(ACCENT),
-            ));
-            hints.push(Span::styled(
-                " merge  ",
-                Style::default().fg(Color::DarkGray),
-            ));
-        } else {
-            hints.push(Span::styled(
-                kb.open_browser.to_string(),
-                Style::default().fg(ACCENT),
-            ));
-            hints.push(Span::styled(
-                " open  ",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-        hints.push(Span::styled(
-            kb.copy_branch.to_string(),
-            Style::default().fg(ACCENT),
-        ));
-        hints.push(Span::styled(
-            " branch  ",
-            Style::default().fg(Color::DarkGray),
-        ));
-        if state.snapshot.projects.len() > 1 {
-            hints.push(Span::styled(
-                kb.filter_projects.to_string(),
-                Style::default().fg(ACCENT),
-            ));
-            hints.push(Span::styled(
-                " filter  ",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-        hints.push(Span::styled("q", Style::default().fg(ACCENT)));
-        hints.push(Span::styled(" quit ", Style::default().fg(Color::DarkGray)));
-        Line::from(hints)
+            Span::styled(" section  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(kb.filter_projects.to_string(), Style::default().fg(ACCENT)),
+            Span::styled(" projects  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("K", Style::default().fg(ACCENT)),
+            Span::styled(" keys  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("q", Style::default().fg(ACCENT)),
+            Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
+        ])
     } else {
         Line::from(vec![
             Span::styled(" \u{2191}\u{2193}", Style::default().fg(ACCENT)),
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" navigate  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("\u{23ce}", Style::default().fg(ACCENT)),
-            Span::styled(" focus  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(kb.refresh.to_string(), Style::default().fg(ACCENT)),
-            Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("K", Style::default().fg(ACCENT)),
+            Span::styled(" keys  ", Style::default().fg(Color::DarkGray)),
             Span::styled("q", Style::default().fg(ACCENT)),
             Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
         ])
