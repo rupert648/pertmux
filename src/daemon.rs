@@ -11,18 +11,50 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::{error, info, warn};
 
 pub fn socket_path() -> PathBuf {
     let name = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     PathBuf::from(format!("/tmp/pertmux-{}.sock", name))
 }
 
+/// Returns a timestamped log path so each daemon startup gets its own log file.
+/// Format: /tmp/pertmux-daemon-YYYY-MM-DDTHH-MM-SS.log
 pub fn log_path() -> PathBuf {
-    PathBuf::from("/tmp/pertmux-daemon.log")
+    // jiff::Timestamp::now() Display gives e.g. "2024-01-15T10:30:00.123456789Z"
+    let ts = jiff::Timestamp::now().to_string();
+    let ts: String = ts
+        .chars()
+        .take(19) // "2024-01-15T10:30:00"
+        .map(|c| if c == ':' { '-' } else { c }) // "2024-01-15T10-30-00"
+        .collect();
+    PathBuf::from(format!("/tmp/pertmux-daemon-{}.log", ts))
 }
 
 pub async fn run(config: Config) -> Result<()> {
+    // Initialize structured logging to stderr (redirected to the log file in daemon mode).
+    // RUST_LOG overrides the default info level, e.g. RUST_LOG=debug pertmux serve --foreground
+    let _ = tracing_subscriber::fmt()
+        .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
+        .with_target(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
     let sock = socket_path();
+
+    // Install a panic hook that removes the socket file before the process dies.
+    // Without this, a crash leaves the socket behind and clients hang trying to connect.
+    let sock_for_panic = sock.clone();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Use eprintln! here — tracing internals may hold locks during a panic.
+        eprintln!("[pertmux-daemon] PANIC: {info}");
+        let _ = std::fs::remove_file(&sock_for_panic);
+        prev_hook(info);
+    }));
 
     if sock.exists() {
         match UnixStream::connect(&sock).await {
@@ -39,7 +71,7 @@ pub async fn run(config: Config) -> Result<()> {
     }
 
     let listener = UnixListener::bind(&sock)?;
-    eprintln!("[pertmux-daemon] listening on {}", sock.display());
+    info!("listening on {}", sock.display());
 
     config.validate()?;
 
@@ -94,7 +126,7 @@ pub async fn run(config: Config) -> Result<()> {
             Some(cmd) = cmd_rx.recv() => {
                 match cmd {
                     ClientMsg::Stop => {
-                        eprintln!("[pertmux-daemon] received stop command");
+                        info!("received stop command");
                         shutdown = true;
                     }
                     ClientMsg::Refresh => {
@@ -165,14 +197,14 @@ pub async fn run(config: Config) -> Result<()> {
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = tokio::signal::ctrl_c() => {
-                eprintln!("[pertmux-daemon] shutting down");
+                info!("shutting down");
                 shutdown = true;
             }
         }
     }
 
     let _ = std::fs::remove_file(&sock);
-    eprintln!("[pertmux-daemon] stopped");
+    info!("stopped");
     Ok(())
 }
 
@@ -205,14 +237,14 @@ async fn accept_loop(
                     {
                         let msg = e.to_string();
                         if !msg.contains("Broken pipe") && !msg.contains("Connection reset") {
-                            eprintln!("[pertmux-daemon] client error: {}", e);
+                            warn!("client error: {}", e);
                         }
                     }
                     client_count.fetch_sub(1, Ordering::SeqCst);
                 });
             }
             Err(e) => {
-                eprintln!("[pertmux-daemon] accept error: {}", e);
+                error!("accept error: {}", e);
             }
         }
     }
