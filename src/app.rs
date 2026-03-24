@@ -65,6 +65,7 @@ pub enum PopupState {
     ActivityFeed {
         selected: usize,
     },
+    KeybindingsHelp,
 }
 
 pub struct ProjectState {
