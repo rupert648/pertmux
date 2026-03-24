@@ -107,6 +107,23 @@ pub(crate) fn render_worktree_card(
 ) {
     let border_color = if is_selected {
         ACCENT
+    } else if let Some(pane) = pane
+        && let Some(changed_at) = pane.status_changed_at
+    {
+        // Glow orange for up to 30s after a status change
+        let now = jiff::Timestamp::now();
+        let elapsed_secs = (now.as_second() - changed_at.as_second()).max(0) as f32;
+        let recency = (1.0 - elapsed_secs / 30.0).clamp(0.0, 1.0_f32);
+        if recency > 0.0 {
+            // Lerp from ACCENT (255,140,0) toward dark gray (56,56,56) based on age
+            let t = 1.0 - recency; // t=0 means brand new (full ACCENT), t=1 means old (dark)
+            let r = (255.0 * (1.0 - t) + 56.0 * t) as u8;
+            let g = (140.0 * (1.0 - t) + 56.0 * t) as u8;
+            let b = (0.0_f32 * (1.0 - t) + 56.0 * t) as u8;
+            Color::Rgb(r, g, b)
+        } else {
+            Color::Indexed(238)
+        }
     } else {
         Color::Indexed(238)
     };

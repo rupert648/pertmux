@@ -86,6 +86,7 @@ fn make_agent_pane(fields: &[&str]) -> AgentPane {
         agent: None,
         model: None,
         last_activity: None,
+        status_changed_at: None,
         db_session_id: None,
         last_response: None,
     }

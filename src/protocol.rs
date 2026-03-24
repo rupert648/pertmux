@@ -1,3 +1,4 @@
+use crate::agent_changes::AgentChange;
 use crate::config::{AgentActionConfig, KeybindingsConfig, ProjectForge};
 use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
@@ -43,6 +44,8 @@ pub struct DashboardSnapshot {
     pub pending_changes: Vec<MrChange>,
     #[serde(default)]
     pub agent_actions: Vec<AgentActionConfig>,
+    #[serde(default)]
+    pub pending_agent_changes: Vec<AgentChange>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -152,6 +155,7 @@ mod tests {
             agent: Some("opencode".to_string()),
             model: Some("gpt-5".to_string()),
             last_activity: Some(Timestamp::from_millisecond(1_762_000_000_000).unwrap()),
+            status_changed_at: None,
             db_session_id: Some("sess-1".to_string()),
             last_response: Some("done".to_string()),
         };
@@ -199,6 +203,7 @@ mod tests {
             keybindings: KeybindingsConfig::default(),
             pending_changes: vec![],
             agent_actions: vec![],
+            pending_agent_changes: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
