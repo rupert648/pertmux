@@ -10,13 +10,13 @@ use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
-use crate::protocol::{DashboardSnapshot, GlobalMrEntry, ProjectSnapshot};
+use crate::protocol::{ActivityEntry, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
 use jiff::Timestamp as JiffTimestamp;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use tracing::{error, warn};
 
@@ -102,6 +102,9 @@ pub struct App {
     previous_pane_statuses: HashMap<String, PaneStatus>,
     pub agent_actions: Vec<AgentActionConfig>,
     pub global_mrs: Vec<GlobalMrEntry>,
+    /// Full activity feed history, accumulated by the daemon and included in
+    /// every snapshot so clients see history even after reconnecting.
+    pub activity_feed: VecDeque<ActivityEntry>,
 }
 
 impl App {
@@ -188,6 +191,7 @@ impl App {
             previous_pane_statuses: HashMap::new(),
             agent_actions: config.agent_action,
             global_mrs: Vec::new(),
+            activity_feed: VecDeque::new(),
         }
     }
 
@@ -234,12 +238,16 @@ impl App {
                 Some(prev) => {
                     pane.status_changed_at = Some(JiffTimestamp::now());
                     if let Some(change_type) = agent_change_type(prev, &pane.status) {
-                        self.pending_agent_changes.push(AgentChange {
+                        let agent_change = AgentChange {
                             pane_id: pane.pane_id.clone(),
                             pane_path: pane.pane_path.clone(),
                             session_name: pane.session_name.clone(),
                             change_type,
-                        });
+                        };
+                        self.activity_feed
+                            .push_front(ActivityEntry::from(&agent_change));
+                        self.pending_agent_changes.push(agent_change);
+                        self.activity_feed.truncate(50);
                     }
                 }
             }
@@ -309,11 +317,13 @@ impl App {
             match proj.client.fetch_mrs().await {
                 Ok(mrs) => {
                     if !proj.cached_mrs.is_empty() {
-                        self.pending_changes.extend(detect_mr_list_changes(
-                            &proj.config.name,
-                            &proj.cached_mrs,
-                            &mrs,
-                        ));
+                        let changes =
+                            detect_mr_list_changes(&proj.config.name, &proj.cached_mrs, &mrs);
+                        for c in &changes {
+                            self.activity_feed.push_front(ActivityEntry::from(c));
+                        }
+                        self.activity_feed.truncate(50);
+                        self.pending_changes.extend(changes);
                     }
                     proj.cached_mrs = mrs;
                 }
@@ -405,11 +415,12 @@ impl App {
         match proj.client.fetch_mr_detail(iid).await {
             Ok(detail) => {
                 if let Some(ref old_detail) = proj.cached_mr_detail {
-                    self.pending_changes.extend(detect_mr_detail_changes(
-                        &project_name,
-                        old_detail,
-                        &detail,
-                    ));
+                    let changes = detect_mr_detail_changes(&project_name, old_detail, &detail);
+                    for c in &changes {
+                        self.activity_feed.push_front(ActivityEntry::from(c));
+                    }
+                    self.activity_feed.truncate(50);
+                    self.pending_changes.extend(changes);
                 }
                 proj.cached_mr_detail = Some(detail);
                 proj.last_detail_refresh = Instant::now();
@@ -505,6 +516,7 @@ impl App {
             agent_actions: self.agent_actions.clone(),
             pending_agent_changes: Vec::new(),
             global_mrs: self.global_mrs.clone(),
+            activity_feed: self.activity_feed.iter().cloned().collect(),
         }
     }
 

@@ -1,4 +1,5 @@
-use crate::client::{ActivityEntry, ActivityKind, ClientState};
+use crate::client::ClientState;
+use crate::protocol::{ActivityEntry, ActivityKind};
 use crate::ui::ACCENT;
 use ratatui::{
     Frame,
@@ -22,7 +23,7 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if state.activity_feed.is_empty() {
+    if state.snapshot.activity_feed.is_empty() {
         let placeholder = ListItem::new(Line::from(Span::styled(
             "no activity yet",
             Style::default().fg(Color::Indexed(237)),
@@ -35,6 +36,7 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
     let visible = inner.height as usize;
 
     let items: Vec<ListItem> = state
+        .snapshot
         .activity_feed
         .iter()
         .take(visible)
@@ -64,7 +66,11 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
 /// Returns 0.0 (old) to 1.0 (brand new), fading over GLOW_SECS.
 fn recency(entry: &ActivityEntry) -> f32 {
     const GLOW_SECS: f32 = 30.0;
-    let elapsed = entry.received_at.elapsed().as_secs_f32();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let elapsed = now.saturating_sub(entry.received_at_secs) as f32;
     (1.0 - elapsed / GLOW_SECS).clamp(0.0, 1.0)
 }
 
@@ -122,9 +128,13 @@ fn text_styles_for_recency(r: f32, base: Color) -> (Style, Style, Style) {
     }
 }
 
-/// Format elapsed time since an activity entry was received.
+/// Format elapsed time since an activity entry was recorded by the daemon.
 fn feed_time_ago(entry: &ActivityEntry) -> String {
-    let secs = entry.received_at.elapsed().as_secs();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let secs = now.saturating_sub(entry.received_at_secs);
     if secs < 60 {
         format!("{}s", secs)
     } else if secs < 3600 {

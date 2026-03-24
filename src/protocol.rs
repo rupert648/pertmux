@@ -9,6 +9,98 @@ use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
 use serde::{Deserialize, Serialize};
 
+/// The kind of activity, used to assign display color in the feed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ActivityKind {
+    /// Agent started working (Busy)
+    AgentBusy,
+    /// Agent finished / became idle
+    AgentIdle,
+    /// Agent entered retry state
+    AgentRetry,
+    /// MR pipeline failed
+    MrPipelineFailed,
+    /// MR pipeline succeeded
+    MrPipelineSucceeded,
+    /// New MR discussions
+    MrNewDiscussions,
+    /// MR approved
+    MrApproved,
+}
+
+/// A single entry in the activity feed, persisted in the daemon.
+/// Uses Unix seconds (`received_at_secs`) so it can be serialized
+/// across the IPC boundary and survive client reconnects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityEntry {
+    /// Short display label (last path component of pane_path, or project name)
+    pub label: String,
+    /// Human-readable description of what changed
+    pub message: String,
+    pub kind: ActivityKind,
+    /// Unix timestamp (seconds since UNIX epoch) when the daemon recorded this event
+    pub received_at_secs: u64,
+}
+
+impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
+    fn from(change: &crate::agent_changes::AgentChange) -> Self {
+        use crate::agent_changes::AgentChangeType;
+        let label = change
+            .pane_path
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&change.pane_path)
+            .to_string();
+        let (message, kind) = match change.change_type {
+            AgentChangeType::Busy => ("working".to_string(), ActivityKind::AgentBusy),
+            AgentChangeType::Idle => ("finished".to_string(), ActivityKind::AgentIdle),
+            AgentChangeType::Retry => ("retrying".to_string(), ActivityKind::AgentRetry),
+        };
+        ActivityEntry {
+            label,
+            message,
+            kind,
+            received_at_secs: jiff::Timestamp::now().as_second() as u64,
+        }
+    }
+}
+
+impl From<&crate::mr_changes::MrChange> for ActivityEntry {
+    fn from(change: &crate::mr_changes::MrChange) -> Self {
+        use crate::mr_changes::MrChangeType;
+        let (message, kind) = match &change.change_type {
+            MrChangeType::PipelineFailed => (
+                format!("!{} pipeline failed", change.mr_iid),
+                ActivityKind::MrPipelineFailed,
+            ),
+            MrChangeType::PipelineSucceeded => (
+                format!("!{} pipeline ok", change.mr_iid),
+                ActivityKind::MrPipelineSucceeded,
+            ),
+            MrChangeType::NewDiscussions(n) => (
+                format!(
+                    "!{} {} new comment{}",
+                    change.mr_iid,
+                    n,
+                    if *n == 1 { "" } else { "s" }
+                ),
+                ActivityKind::MrNewDiscussions,
+            ),
+            MrChangeType::Approved => (
+                format!("!{} approved", change.mr_iid),
+                ActivityKind::MrApproved,
+            ),
+        };
+        ActivityEntry {
+            label: change.project_name.clone(),
+            message,
+            kind,
+            received_at_secs: jiff::Timestamp::now().as_second() as u64,
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub const PROTOCOL_VERSION: u32 = 2;
 
@@ -58,6 +150,11 @@ pub struct DashboardSnapshot {
     pub pending_agent_changes: Vec<AgentChange>,
     #[serde(default)]
     pub global_mrs: Vec<GlobalMrEntry>,
+    /// Full activity feed history, managed entirely by the daemon.
+    /// Persists between client connects — a fresh `pertmux connect` will
+    /// see all events that happened since the daemon started.
+    #[serde(default)]
+    pub activity_feed: Vec<ActivityEntry>,
 }
 
 impl PartialEq for DashboardSnapshot {
@@ -217,6 +314,7 @@ mod tests {
             agent_actions: vec![],
             pending_agent_changes: vec![],
             global_mrs: vec![],
+            activity_feed: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
