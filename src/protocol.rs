@@ -9,6 +9,16 @@ use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
 use serde::{Deserialize, Serialize};
 
+/// Navigation target carried by an activity entry.
+/// Used by the activity feed popup to jump to the relevant tmux pane or MR.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ActivityTarget {
+    /// Switch to a specific tmux pane (agent activities).
+    Pane { pane_id: String, pane_path: String },
+    /// Navigate to an MR in a configured project (forge activities).
+    MergeRequest { project_name: String, iid: u64 },
+}
+
 /// The kind of activity, used to assign display color in the feed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActivityKind {
@@ -40,6 +50,9 @@ pub struct ActivityEntry {
     pub kind: ActivityKind,
     /// Unix timestamp (seconds since UNIX epoch) when the daemon recorded this event
     pub received_at_secs: u64,
+    /// Navigation target — used by the activity feed popup to jump to the relevant item.
+    #[serde(default)]
+    pub target: Option<ActivityTarget>,
 }
 
 impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
@@ -62,6 +75,10 @@ impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
             message,
             kind,
             received_at_secs: jiff::Timestamp::now().as_second() as u64,
+            target: Some(ActivityTarget::Pane {
+                pane_id: change.pane_id.clone(),
+                pane_path: change.pane_path.clone(),
+            }),
         }
     }
 }
@@ -97,6 +114,10 @@ impl From<&crate::mr_changes::MrChange> for ActivityEntry {
             message,
             kind,
             received_at_secs: jiff::Timestamp::now().as_second() as u64,
+            target: Some(ActivityTarget::MergeRequest {
+                project_name: change.project_name.clone(),
+                iid: change.mr_iid,
+            }),
         }
     }
 }

@@ -1,6 +1,7 @@
 use crate::app::PopupState;
 use crate::client::ClientState;
 use crate::config::{AgentActionConfig, ProjectForge};
+use crate::protocol::ActivityKind;
 use crate::ui::ACCENT;
 use ratatui::{
     Frame,
@@ -36,12 +37,18 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
         return;
     }
 
+    if let PopupState::ActivityFeed { selected } = &state.popup {
+        draw_activity_feed_popup(frame, state, *selected, area);
+        return;
+    }
+
     let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None
         | PopupState::ProjectFilter { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
-        | PopupState::MrOverview { .. } => {
+        | PopupState::MrOverview { .. }
+        | PopupState::ActivityFeed { .. } => {
             return;
         }
         PopupState::CreateWorktree { input } => {
@@ -405,6 +412,140 @@ pub(crate) fn draw_mr_overview_popup(
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(help), chunks[2]);
+}
+
+fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: usize, area: Rect) {
+    let entries = &state.snapshot.activity_feed;
+    if entries.is_empty() {
+        return;
+    }
+
+    let max_visible = 15usize;
+    let visible_count = entries.len().min(max_visible);
+    let popup_w = (area.width * 3 / 4)
+        .max(60)
+        .min(area.width.saturating_sub(4));
+    let popup_h = (visible_count as u16 + 4).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Activity Feed ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let scroll_offset = if selected >= visible_count {
+        selected - visible_count + 1
+    } else {
+        0
+    };
+
+    let available_width = inner.width as usize;
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut item_lines: Vec<Line> = Vec::new();
+
+    for (i, entry) in entries
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_count)
+    {
+        let is_selected = i == selected;
+        let prefix = if is_selected { " \u{25b8} " } else { "   " };
+
+        let base_color = activity_kind_color(&entry.kind);
+
+        let (name_style, msg_style, time_style) = if is_selected {
+            (
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(base_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (
+                Style::default().fg(Color::White),
+                Style::default().fg(base_color),
+                Style::default().fg(Color::DarkGray),
+            )
+        };
+
+        let elapsed = now_secs.saturating_sub(entry.received_at_secs);
+        let time = if elapsed < 60 {
+            format!("{}s", elapsed)
+        } else if elapsed < 3600 {
+            format!("{}m", elapsed / 60)
+        } else {
+            format!("{}h", elapsed / 3600)
+        };
+
+        // Reserve: 3 (prefix) + 21 (message 20+space) + time.len() + 1 (space) = ~30 chars min.
+        let fixed = 3 + 21 + time.len() + 1;
+        let label_max = available_width.saturating_sub(fixed).max(8);
+        let label = crate::ui::helpers::truncate(&entry.label, label_max);
+
+        item_lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(ACCENT)),
+            Span::styled(format!("{:<width$} ", label, width = label_max), name_style),
+            Span::styled(format!("{:<20} ", entry.message), msg_style),
+            Span::styled(time, time_style),
+        ]));
+    }
+
+    if item_lines.is_empty() {
+        item_lines.push(Line::from(Span::styled(
+            "   no activity yet",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(item_lines), chunks[0]);
+
+    let divider = Line::from(Span::styled(
+        "\u{2500}".repeat(inner.width as usize),
+        Style::default().fg(Color::Indexed(236)),
+    ));
+    frame.render_widget(Paragraph::new(divider), chunks[1]);
+
+    let help = Line::from(Span::styled(
+        "j/k navigate \u{00b7} Enter go to \u{00b7} Esc close",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Paragraph::new(help), chunks[2]);
+}
+
+/// Base color for each activity kind (used in the popup).
+fn activity_kind_color(kind: &ActivityKind) -> Color {
+    match kind {
+        ActivityKind::AgentBusy => ACCENT,
+        ActivityKind::AgentIdle => Color::Rgb(100, 220, 100),
+        ActivityKind::AgentRetry => Color::Rgb(220, 200, 60),
+        ActivityKind::MrPipelineFailed => Color::Rgb(220, 80, 80),
+        ActivityKind::MrPipelineSucceeded => Color::Rgb(100, 220, 100),
+        ActivityKind::MrNewDiscussions => Color::Rgb(80, 200, 220),
+        ActivityKind::MrApproved => Color::Rgb(100, 220, 100),
+    }
 }
 
 fn format_entry_age(ts: &jiff::Timestamp) -> String {

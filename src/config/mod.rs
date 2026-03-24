@@ -189,6 +189,7 @@ impl Config {
             (kb.merge_worktree, "merge_worktree"),
             (kb.agent_actions, "agent_actions"),
             (kb.mr_overview, "mr_overview"),
+            (kb.activity_feed, "activity_feed"),
         ];
         for (ch, name) in &bindings {
             if let Some(existing) = key_map.get(ch) {
@@ -587,6 +588,7 @@ local_path = "/tmp/bad"
         assert_eq!(kb.delete_worktree, 'd');
         assert_eq!(kb.merge_worktree, 'M');
         assert_eq!(kb.mr_overview, 'm');
+        assert_eq!(kb.activity_feed, 'A');
     }
 
     #[test]
@@ -602,6 +604,7 @@ create_worktree = "n"
 delete_worktree = "x"
 merge_worktree = "g"
 mr_overview = "v"
+activity_feed = "G"
 "#,
         );
         let kb = &cfg.keybindings;
@@ -613,6 +616,7 @@ mr_overview = "v"
         assert_eq!(kb.delete_worktree, 'x');
         assert_eq!(kb.merge_worktree, 'g');
         assert_eq!(kb.mr_overview, 'v');
+        assert_eq!(kb.activity_feed, 'G');
     }
 
     #[test]
