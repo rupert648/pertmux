@@ -42,10 +42,10 @@ The project uses a **daemon/client architecture** with Unix socket IPC. A backgr
 - **linking.rs**: Defines `DashboardState`, `LinkedMergeRequest`. Implements `link_all()` which connects MRs ↔ branches ↔ worktrees ↔ tmux panes ↔ Claude.
 - **forge_clients/mod.rs**: Re-exports `GitLabClient` and `GitHubClient`. Sub-modules: `traits`, `types`, `gitlab`, `github`.
 - **forge_clients/traits.rs**: Defines the `ForgeClient` trait with `#[async_trait(?Send)]`. Methods: `fetch_mrs()`, `fetch_mr_detail()`, `fetch_ci_jobs()`, `fetch_notes()`, `fetch_discussions()`, `fetch_user_mrs()`. All forge clients implement this trait.
-- **forge_clients/types.rs**: Shared types used across all forges: `ForgeUser`, `MergeRequestSummary`, `MergeRequestDetail`, `MergeRequestNote`, `PipelineJob`, `PipelineInfo`.
+- **forge_clients/types.rs**: Shared types used across all forges: `ForgeUser`, `MergeRequestSummary`, `MergeRequestDetail`, `MergeRequestNote`, `PipelineJob`, `PipelineInfo`, `UserMrSummary` (cross-project MR for global user feed).
 - **forge_clients/gitlab/client.rs**: GitLab implementation of `ForgeClient`. Uses `PRIVATE-TOKEN` header auth, fetches from `/api/v4` endpoints. `fetch_ci_jobs` extracts pipeline ID from `head_pipeline`.
 - **forge_clients/github/client.rs**: GitHub implementation of `ForgeClient`. Uses `Bearer` token auth with `User-Agent` header. Converts GitHub PR/check-run responses to shared types. `fetch_ci_jobs` uses `head_sha` to fetch check runs. Supports GitHub Enterprise via custom host.
-- **forge_clients/github/types.rs**: Raw GitHub API response types (internal): `GhPullRequest`, `GhUser`, `GhPrRef`, `GhCheckRunsResponse`, `GhCheckRun`, `GhIssueComment`.
+- **forge_clients/github/types.rs**: Raw GitHub API response types (internal): `GhPullRequest`, `GhUser`, `GhPrRef`, `GhCheckRunsResponse`, `GhCheckRun`, `GhIssueComment`, `GhIssueItem`, `GhPullRequestStub`, `GhRepository`.
 - **git.rs**: Git worktree discovery. `discover_worktrees(path)` runs `git worktree list --porcelain` and returns `Vec<WorktreeInfo>`.
 - **read_state.rs**: Local SQLite DB for per-comment read/unread tracking. `ReadStateDb` tracks seen notes and MR view timestamps.
 

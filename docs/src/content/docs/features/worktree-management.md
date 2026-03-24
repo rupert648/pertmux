@@ -31,7 +31,7 @@ Each worktree card shows:
 | `Tab` | Switch between worktree panel and MR list |
 | `c` | Create a new worktree |
 | `d` | Delete selected worktree |
-| `m` | Merge selected worktree into the default branch |
+| `M` | Merge selected worktree into the default branch |
 | `Enter` | Jump to the worktree's tmux pane |
 
 ## Create workflow
@@ -45,7 +45,7 @@ When you press `c`, pertmux opens a popup dialog where you enter the branch name
 
 ## Merge workflow
 
-Press `m` on a worktree to merge it into the default branch. pertmux runs `wt merge` which:
+Press `M` on a worktree to merge it into the default branch. pertmux runs `wt merge` which:
 
 1. Show an in-progress toast ("Merging worktree...")
 2. Merges the branch into the default branch

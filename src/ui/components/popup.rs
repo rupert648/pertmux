@@ -3,11 +3,11 @@ use crate::client::ClientState;
 use crate::config::{AgentActionConfig, ProjectForge};
 use crate::ui::ACCENT;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
-    Frame,
 };
 
 pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Rect) {

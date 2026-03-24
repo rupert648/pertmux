@@ -54,10 +54,26 @@ pertmux provides real-time feedback on MR status changes:
 - **Change summary modal**: If changes occur while the client is disconnected, a summary modal appears upon reconnection. It lists all accumulated changes across your projects.
 - **Quick navigation**: Press **`Enter`** on any item in the change summary modal to jump directly to that MR.
 
+## MR Overview
+
+Press **`m`** to open the MR Overview popup — a cross-project view of all your open MRs and PRs across every configured forge.
+
+Each row shows:
+- A forge badge (`[GL]` / `[GH]`)
+- Project path and MR/PR number
+- Truncated title
+- A `[linked]` badge if the project is configured in pertmux
+- Relative time since last update
+
+Press **`Enter`** on a linked MR to jump directly to that project and select it in the main view. For MRs from unconfigured projects, `Enter` opens the URL in your browser.
+
+> **Scope note**: Global MR fetch requires at least one `[[project]]` per forge type. A forge source with no configured projects won't produce results in the overview.
+
 ## Actions
 
 | Key | Action |
 |-----|--------|
+| `m` | Open MR Overview popup (all your open MRs across all forges) |
 | `Enter` | Jump to the linked tmux pane |
 | `o` | Open MR in your browser |
 | `b` | Copy branch name to clipboard |

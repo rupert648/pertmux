@@ -42,8 +42,17 @@ pub trait ForgeClient {
     async fn fetch_mr_detail(&self, iid: u64) -> anyhow::Result<MergeRequestDetail>;
     async fn fetch_ci_jobs(&self, mr: &MergeRequestDetail) -> anyhow::Result<Vec<PipelineJob>>;
     async fn fetch_notes(&self, iid: u64) -> anyhow::Result<Vec<MergeRequestNote>>;
+    async fn fetch_discussions(&self, iid: u64) -> anyhow::Result<Vec<MergeRequestNote>>;
+    async fn fetch_user_mrs(&self) -> anyhow::Result<Vec<UserMrSummary>>;
 }
 ```
+
+- **`fetch_mrs()`**: Fetch open MRs/PRs for the configured project.
+- **`fetch_mr_detail()`**: Fetch full detail for a single MR (branch info, merge status, etc.).
+- **`fetch_ci_jobs()`**: Fetch CI/pipeline jobs for a given MR.
+- **`fetch_notes()`**: Fetch inline notes/comments for a MR.
+- **`fetch_discussions()`**: Fetch threaded discussions for a MR.
+- **`fetch_user_mrs()`**: Fetch all open MRs/PRs authored by the authenticated user across the entire forge (not scoped to a project). Used to power the MR Overview popup.
 
 Each forge handles its own:
 - API authentication
