@@ -12,44 +12,9 @@ use crossterm::{
 };
 use futures::{SinkExt, StreamExt};
 use ratatui::prelude::*;
-use std::collections::VecDeque;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
-
-/// The kind of activity, used to assign display color in the feed.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum ActivityKind {
-    /// Agent started working (Busy)
-    AgentBusy,
-    /// Agent finished / became idle
-    AgentIdle,
-    /// Agent entered retry state
-    AgentRetry,
-    /// MR pipeline failed
-    MrPipelineFailed,
-    /// MR pipeline succeeded
-    MrPipelineSucceeded,
-    /// New MR discussions
-    MrNewDiscussions,
-    /// MR approved
-    MrApproved,
-}
-
-/// A single entry in the activity feed.
-/// Uses `std::time::Instant` (client-side only, NOT serialized).
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ActivityEntry {
-    /// Short display label (last path component of pane_path, or MR title)
-    pub label: String,
-    /// Human-readable description of what changed
-    pub message: String,
-    pub kind: ActivityKind,
-    /// When the client received this event (used for recency glow)
-    pub received_at: std::time::Instant,
-}
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -92,7 +57,6 @@ pub struct ClientState {
     pub selected: usize,
     pub popup: PopupState,
     pub notification: Option<(String, Instant)>,
-    pub activity_feed: VecDeque<ActivityEntry>,
     pub running: bool,
 }
 
@@ -120,82 +84,16 @@ impl ClientState {
             selected: 0,
             popup,
             notification: None,
-            activity_feed: VecDeque::new(),
             running: true,
         }
     }
 
     fn update_snapshot(&mut self, mut snapshot: DashboardSnapshot) {
-        // Process incoming agent status changes → activity feed
-        if !snapshot.pending_agent_changes.is_empty() {
-            let agent_changes = std::mem::take(&mut snapshot.pending_agent_changes);
-            for change in agent_changes {
-                let label = change
-                    .pane_path
-                    .trim_end_matches('/')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&change.pane_path)
-                    .to_string();
-                let (message, kind) = match change.change_type {
-                    crate::agent_changes::AgentChangeType::Busy => {
-                        ("working".to_string(), ActivityKind::AgentBusy)
-                    }
-                    crate::agent_changes::AgentChangeType::Idle => {
-                        ("finished".to_string(), ActivityKind::AgentIdle)
-                    }
-                    crate::agent_changes::AgentChangeType::Retry => {
-                        ("retrying".to_string(), ActivityKind::AgentRetry)
-                    }
-                };
-                self.activity_feed.push_front(ActivityEntry {
-                    label,
-                    message,
-                    kind,
-                    received_at: std::time::Instant::now(),
-                });
-            }
-            self.activity_feed.truncate(50);
-        }
-
+        // Show a toast notification for any MR changes that arrived while connected.
+        // (The activity feed itself is managed entirely by the daemon and arrives
+        // pre-populated in snapshot.activity_feed — no client-side conversion needed.)
         if !snapshot.pending_changes.is_empty() {
             let changes = std::mem::take(&mut snapshot.pending_changes);
-            for change in &changes {
-                let (label, message, kind) = match &change.change_type {
-                    crate::mr_changes::MrChangeType::PipelineFailed => (
-                        change.project_name.clone(),
-                        format!("!{} pipeline failed", change.mr_iid),
-                        ActivityKind::MrPipelineFailed,
-                    ),
-                    crate::mr_changes::MrChangeType::PipelineSucceeded => (
-                        change.project_name.clone(),
-                        format!("!{} pipeline ok", change.mr_iid),
-                        ActivityKind::MrPipelineSucceeded,
-                    ),
-                    crate::mr_changes::MrChangeType::NewDiscussions(n) => (
-                        change.project_name.clone(),
-                        format!(
-                            "!{} {} new comment{}",
-                            change.mr_iid,
-                            n,
-                            if *n == 1 { "" } else { "s" }
-                        ),
-                        ActivityKind::MrNewDiscussions,
-                    ),
-                    crate::mr_changes::MrChangeType::Approved => (
-                        change.project_name.clone(),
-                        format!("!{} approved", change.mr_iid),
-                        ActivityKind::MrApproved,
-                    ),
-                };
-                self.activity_feed.push_front(ActivityEntry {
-                    label,
-                    message,
-                    kind,
-                    received_at: std::time::Instant::now(),
-                });
-            }
-            self.activity_feed.truncate(50);
             let summary: String = changes
                 .iter()
                 .map(|c| c.to_string())
