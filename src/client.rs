@@ -1,4 +1,5 @@
 use crate::app::{PopupState, SelectionSection};
+use crate::banner::{DIM, GRAY, GREEN, ORANGE, RESET, WHITE};
 use crate::daemon;
 use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION};
 use crate::tmux;
@@ -563,11 +564,8 @@ pub async fn stop() -> Result<()> {
     let msg = ClientMsg::Stop;
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
 
-    let g = "\x1b[90m"; // dark gray
-    let r = "\x1b[0m"; // reset
-
     crate::banner::print();
-    println!("  {g}daemon stopped{r}");
+    println!("  {GRAY}daemon stopped{RESET}");
     println!();
     Ok(())
 }
@@ -589,13 +587,6 @@ fn latest_log_path() -> Option<std::path::PathBuf> {
 }
 
 pub fn status() {
-    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let d = "\x1b[2m"; // dim
-    let g = "\x1b[90m"; // dark gray
-    let w = "\x1b[97m"; // bright white
-    let gn = "\x1b[32m"; // green
-    let r = "\x1b[0m"; // reset
-
     let sock_path = daemon::socket_path();
     let log = latest_log_path()
         .map(|p| p.to_string_lossy().into_owned())
@@ -604,35 +595,32 @@ pub fn status() {
     crate::banner::print();
 
     if !sock_path.exists() {
-        println!("  {g}daemon{r}  {g}○{r}  not running  {d}(no socket){r}");
-        println!("  {g}socket{r}  {d}{}{r}", sock_path.display());
-        println!("  {g}log   {r}  {d}{}{r}", log);
+        println!("  {GRAY}daemon{RESET}  {GRAY}○{RESET}  not running  {DIM}(no socket){RESET}");
+        println!("  {GRAY}socket{RESET}  {DIM}{}{RESET}", sock_path.display());
+        println!("  {GRAY}log   {RESET}  {DIM}{}{RESET}", log);
         println!();
-        println!("  {d}start with{r}  {o}pertmux serve{r}");
+        println!("  {DIM}start with{RESET}  {ORANGE}pertmux serve{RESET}");
     } else {
         let probe = std::os::unix::net::UnixStream::connect(&sock_path);
         match probe {
             Ok(_) => {
-                println!("  {g}daemon{r}  {gn}●{r}  {w}running{r}");
+                println!("  {GRAY}daemon{RESET}  {GREEN}●{RESET}  {WHITE}running{RESET}");
             }
             Err(_) => {
-                println!("  {g}daemon{r}  {g}◐{r}  stale socket  {d}(not responding){r}");
+                println!(
+                    "  {GRAY}daemon{RESET}  {GRAY}◐{RESET}  stale socket  {DIM}(not responding){RESET}"
+                );
                 println!();
-                println!("  {d}clean up with{r}  {o}pertmux cleanup{r}");
+                println!("  {DIM}clean up with{RESET}  {ORANGE}pertmux cleanup{RESET}");
             }
         }
-        println!("  {g}socket{r}  {}", sock_path.display());
-        println!("  {g}log   {r}  {d}{}{r}", log);
+        println!("  {GRAY}socket{RESET}  {}", sock_path.display());
+        println!("  {GRAY}log   {RESET}  {DIM}{}{RESET}", log);
     }
     println!();
 }
 
 pub fn cleanup() -> anyhow::Result<()> {
-    let d = "\x1b[2m"; // dim
-    let g = "\x1b[90m"; // dark gray
-    let gn = "\x1b[32m"; // green
-    let r = "\x1b[0m"; // reset
-
     crate::banner::print();
 
     let sock_path = daemon::socket_path();
@@ -641,14 +629,14 @@ pub fn cleanup() -> anyhow::Result<()> {
         if is_stale {
             std::fs::remove_file(&sock_path)?;
             println!(
-                "  {gn}✓{r}  stale socket removed  {d}{}{r}",
+                "  {GREEN}✓{RESET}  stale socket removed  {DIM}{}{RESET}",
                 sock_path.display()
             );
         } else {
-            println!("  {g}─{r}  socket is live (daemon running), skipping");
+            println!("  {GRAY}─{RESET}  socket is live (daemon running), skipping");
         }
     } else {
-        println!("  {g}─{r}  no socket found");
+        println!("  {GRAY}─{RESET}  no socket found");
     }
 
     if let Some(data_dir) = dirs::data_dir() {
@@ -658,7 +646,7 @@ pub fn cleanup() -> anyhow::Result<()> {
         if read_state_path.exists() {
             std::fs::remove_file(&read_state_path)?;
             println!(
-                "  {gn}✓{r}  read state removed    {d}{}{r}",
+                "  {GREEN}✓{RESET}  read state removed    {DIM}{}{RESET}",
                 read_state_path.display()
             );
         }
@@ -667,14 +655,14 @@ pub fn cleanup() -> anyhow::Result<()> {
         if last_project_path.exists() {
             std::fs::remove_file(&last_project_path)?;
             println!(
-                "  {gn}✓{r}  last project removed  {d}{}{r}",
+                "  {GREEN}✓{RESET}  last project removed  {DIM}{}{RESET}",
                 last_project_path.display()
             );
         }
     }
 
     println!();
-    println!("  {g}done{r}");
+    println!("  {GRAY}done{RESET}");
     println!();
     Ok(())
 }

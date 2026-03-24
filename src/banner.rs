@@ -7,13 +7,17 @@ const ART: &str = "\
 ██║     ███████╗██║  ██║   ██║   ██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗
 ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝";
 
-const O: &str = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-const R: &str = "\x1b[0m"; // reset
+pub(crate) const ORANGE: &str = "\x1b[38;2;255;140;0m"; // #FF8C00
+pub(crate) const DIM: &str = "\x1b[2m";
+pub(crate) const GRAY: &str = "\x1b[90m";
+pub(crate) const WHITE: &str = "\x1b[97m";
+pub(crate) const GREEN: &str = "\x1b[32m";
+pub(crate) const RESET: &str = "\x1b[0m";
 
 fn write_banner(w: &mut dyn std::io::Write) {
     let _ = writeln!(w);
     for line in ART.lines() {
-        let _ = writeln!(w, "  {O}{line}{R}");
+        let _ = writeln!(w, "  {ORANGE}{line}{RESET}");
     }
     let _ = writeln!(w);
 }

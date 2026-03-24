@@ -116,20 +116,15 @@ fn daemonize(config_path: Option<&str>) -> anyhow::Result<()> {
 
     let child = cmd.spawn()?;
 
-    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let d = "\x1b[2m"; // dim
-    let g = "\x1b[90m"; // dark gray
-    let w = "\x1b[97m"; // bright white
-    let r = "\x1b[0m"; // reset
-
+    use banner::{DIM, GRAY, ORANGE, RESET, WHITE};
     banner::eprint();
-    eprintln!("  {g}daemon started{r}");
+    eprintln!("  {GRAY}daemon started{RESET}");
     eprintln!();
-    eprintln!("  {g}pid   {r}  {w}{}{r}", child.id());
-    eprintln!("  {g}socket{r}  {}", sock.display());
-    eprintln!("  {g}log   {r}  {d}{}{r}", log_path.display());
+    eprintln!("  {GRAY}pid   {RESET}  {WHITE}{}{RESET}", child.id());
+    eprintln!("  {GRAY}socket{RESET}  {}", sock.display());
+    eprintln!("  {GRAY}log   {RESET}  {DIM}{}{RESET}", log_path.display());
     eprintln!();
-    eprintln!("  {d}connect with{r}  {o}pertmux connect{r}");
+    eprintln!("  {DIM}connect with{RESET}  {ORANGE}pertmux connect{RESET}");
     eprintln!();
 
     Ok(())
