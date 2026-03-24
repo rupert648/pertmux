@@ -12,6 +12,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
 - **Coding agent monitoring** — track Claude/opencode instances across tmux panes
 - **MR Overview** — press `m` to see all your open MRs across all configured forges, with quick navigation to configured projects or browser-open for unconfigured ones
+- **Activity feed** — live log of agent state changes and MR events; press `A` to open the feed popup, navigate with `j`/`k`, and press `Enter` to jump directly to the relevant tmux pane or MR
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
 ## Architecture
@@ -229,6 +230,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 |-----|------|---------|-------------|
 | `refresh` | string | `"r"` | Refresh all data |
 | `mr_overview` | string | `"m"` | Open MR Overview popup showing all open MRs across forges |
+| `activity_feed` | string | `"A"` | Open Activity Feed popup — navigate and jump to recent events |
 | `open_browser` | string | `"o"` | Open selected MR in browser |
 | `copy_branch` | string | `"b"` | Copy selected branch name to clipboard |
 | `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
@@ -254,6 +256,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 |-----|---------|--------|
 | `r` | Global | Refresh all data |
 | `m` | Global | Open MR Overview — all your open MRs across forges |
+| `A` | Global | Open Activity Feed popup — navigate recent events and jump to the relevant pane or MR |
 | `o` | MR selected | Open MR in browser |
 | `b` | Any | Copy selected branch name |
 | `f` | Global | Fuzzy filter to switch project |
