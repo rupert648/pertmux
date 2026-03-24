@@ -562,42 +562,102 @@ pub async fn stop() -> Result<()> {
 
     let msg = ClientMsg::Stop;
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
-    println!("daemon stopped");
+
+    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
+    let b = "\x1b[1m"; // bold
+    let g = "\x1b[90m"; // dark gray
+    let r = "\x1b[0m"; // reset
+
+    println!();
+    println!("  {o}{b}pertmux{r}  {g}·{r}  daemon stopped");
+    println!();
     Ok(())
 }
 
+/// Returns the path to the most recent pertmux daemon log file, if any.
+fn latest_log_path() -> Option<std::path::PathBuf> {
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir("/tmp")
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.starts_with("pertmux-daemon-") && s.ends_with(".log")
+        })
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+    entries.pop()
+}
+
 pub fn status() {
+    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
+    let b = "\x1b[1m"; // bold
+    let d = "\x1b[2m"; // dim
+    let g = "\x1b[90m"; // dark gray
+    let w = "\x1b[97m"; // bright white
+    let gn = "\x1b[32m"; // green
+    let r = "\x1b[0m"; // reset
+
     let sock_path = daemon::socket_path();
-    println!("socket: {}", sock_path.display());
-    println!("log:    /tmp/pertmux-daemon.log");
+    let log = latest_log_path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/tmp/pertmux-daemon-*.log".to_string());
+
+    println!();
+    println!("  {o}{b}pertmux{r}  {g}·{r}  status");
+    println!();
 
     if !sock_path.exists() {
-        println!("daemon: not running (no socket)");
-        return;
+        println!("  {g}daemon{r}  {g}○{r}  not running  {d}(no socket){r}");
+        println!("  {g}socket{r}  {d}{}{r}", sock_path.display());
+        println!("  {g}log   {r}  {d}{}{r}", log);
+        println!();
+        println!("  {d}start with{r}  {o}pertmux serve{r}");
+    } else {
+        let probe = std::os::unix::net::UnixStream::connect(&sock_path);
+        match probe {
+            Ok(_) => {
+                println!("  {g}daemon{r}  {gn}●{r}  {w}running{r}");
+            }
+            Err(_) => {
+                println!("  {g}daemon{r}  {g}◐{r}  stale socket  {d}(not responding){r}");
+                println!();
+                println!("  {d}clean up with{r}  {o}pertmux cleanup{r}");
+            }
+        }
+        println!("  {g}socket{r}  {}", sock_path.display());
+        println!("  {g}log   {r}  {d}{}{r}", log);
     }
-
-    let probe = std::os::unix::net::UnixStream::connect(&sock_path);
-    match probe {
-        Ok(_) => println!("daemon: running"),
-        Err(_) => println!("daemon: stale socket (not responding)"),
-    }
+    println!();
 }
 
 pub fn cleanup() -> anyhow::Result<()> {
+    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
+    let b = "\x1b[1m"; // bold
+    let d = "\x1b[2m"; // dim
+    let g = "\x1b[90m"; // dark gray
+    let gn = "\x1b[32m"; // green
+    let r = "\x1b[0m"; // reset
+
+    println!();
+    println!("  {o}{b}pertmux{r}  {g}·{r}  cleanup");
+    println!();
+
     let sock_path = daemon::socket_path();
     if sock_path.exists() {
         let is_stale = std::os::unix::net::UnixStream::connect(&sock_path).is_err();
         if is_stale {
             std::fs::remove_file(&sock_path)?;
-            println!("removed stale socket: {}", sock_path.display());
-        } else {
             println!(
-                "socket is live (daemon running), skipping: {}",
+                "  {gn}✓{r}  stale socket removed  {d}{}{r}",
                 sock_path.display()
             );
+        } else {
+            println!("  {g}─{r}  socket is live (daemon running), skipping");
         }
     } else {
-        println!("no socket found");
+        println!("  {g}─{r}  no socket found");
     }
 
     if let Some(data_dir) = dirs::data_dir() {
@@ -606,17 +666,25 @@ pub fn cleanup() -> anyhow::Result<()> {
         let read_state_path = pertmux_dir.join("read_state.db");
         if read_state_path.exists() {
             std::fs::remove_file(&read_state_path)?;
-            println!("removed: {}", read_state_path.display());
+            println!(
+                "  {gn}✓{r}  read state removed    {d}{}{r}",
+                read_state_path.display()
+            );
         }
 
         let last_project_path = pertmux_dir.join("last_project");
         if last_project_path.exists() {
             std::fs::remove_file(&last_project_path)?;
-            println!("removed: {}", last_project_path.display());
+            println!(
+                "  {gn}✓{r}  last project removed  {d}{}{r}",
+                last_project_path.display()
+            );
         }
     }
 
-    println!("cleanup complete");
+    println!();
+    println!("  {g}done{r}");
+    println!();
     Ok(())
 }
 
