@@ -563,13 +563,11 @@ pub async fn stop() -> Result<()> {
     let msg = ClientMsg::Stop;
     framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
 
-    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let b = "\x1b[1m"; // bold
     let g = "\x1b[90m"; // dark gray
     let r = "\x1b[0m"; // reset
 
-    println!();
-    println!("  {o}{b}pertmux{r}  {g}·{r}  daemon stopped");
+    crate::banner::print();
+    println!("  {g}daemon stopped{r}");
     println!();
     Ok(())
 }
@@ -592,7 +590,6 @@ fn latest_log_path() -> Option<std::path::PathBuf> {
 
 pub fn status() {
     let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let b = "\x1b[1m"; // bold
     let d = "\x1b[2m"; // dim
     let g = "\x1b[90m"; // dark gray
     let w = "\x1b[97m"; // bright white
@@ -604,9 +601,7 @@ pub fn status() {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/tmp/pertmux-daemon-*.log".to_string());
 
-    println!();
-    println!("  {o}{b}pertmux{r}  {g}·{r}  status");
-    println!();
+    crate::banner::print();
 
     if !sock_path.exists() {
         println!("  {g}daemon{r}  {g}○{r}  not running  {d}(no socket){r}");
@@ -633,16 +628,12 @@ pub fn status() {
 }
 
 pub fn cleanup() -> anyhow::Result<()> {
-    let o = "\x1b[38;2;255;140;0m"; // orange #FF8C00
-    let b = "\x1b[1m"; // bold
     let d = "\x1b[2m"; // dim
     let g = "\x1b[90m"; // dark gray
     let gn = "\x1b[32m"; // green
     let r = "\x1b[0m"; // reset
 
-    println!();
-    println!("  {o}{b}pertmux{r}  {g}·{r}  cleanup");
-    println!();
+    crate::banner::print();
 
     let sock_path = daemon::socket_path();
     if sock_path.exists() {
