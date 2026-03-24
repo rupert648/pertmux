@@ -24,6 +24,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `b` | Copy selected branch name to clipboard | `copy_branch` |
 | `f` | Fuzzy filter to switch project | `filter_projects` |
 | `c` | Create new worktree | `create_worktree` |
+| `w` | Create worktree and inject a prompt (requires `default_worktree_with_prompt`) | `open_worktree_with_prompt` |
 | `d` | Delete selected worktree | `delete_worktree` |
 | `m` | Open MR Overview popup (all your open MRs across all forges) | `mr_overview` |
 | `M` | Merge selected worktree into default branch | `merge_worktree` |
@@ -48,6 +49,7 @@ open_browser = "O"
 copy_branch = "y"
 filter_projects = "p"
 create_worktree = "n"
+open_worktree_with_prompt = "W"
 delete_worktree = "x"
 merge_worktree = "G"
 mr_overview = "v"

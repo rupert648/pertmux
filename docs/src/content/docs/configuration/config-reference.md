@@ -18,6 +18,7 @@ pertmux -c ./path/to/config.toml serve
 | `worktree_interval` | integer | `30` | How often (in seconds) to refresh worktree list |
 | `mr_list_interval` | integer | `300` | How often (in seconds) to refresh the MR/PR list from the forge |
 | `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
+| `default_worktree_with_prompt` | string | — | Command template for creating a worktree with an injected prompt. Use `{{msg}}` as the placeholder (e.g. `"opencode run {{msg}}"`). Enables the `w` keybinding — see [Worktree with Prompt](/features/worktree-management/#create-with-prompt). |
 
 ## `[gitlab]`
 
@@ -62,6 +63,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | `copy_branch` | string | `"b"` | Copy selected branch name to clipboard |
 | `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
 | `create_worktree` | string | `"c"` | Create new worktree |
+| `open_worktree_with_prompt` | string | `"w"` | Create worktree and inject a prompt into the agent (requires `default_worktree_with_prompt`) |
 | `delete_worktree` | string | `"d"` | Delete selected worktree |
 | `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
 | `mr_overview` | string | `"m"` | Open MR Overview popup (all your open MRs across all forges) |

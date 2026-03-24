@@ -30,6 +30,7 @@ Each worktree card shows:
 |-----|--------|
 | `Tab` | Switch between worktree panel and MR list |
 | `c` | Create a new worktree |
+| `w` | Create a new worktree and inject a prompt into the agent |
 | `d` | Delete selected worktree |
 | `M` | Merge selected worktree into the default branch |
 | `Enter` | Jump to the worktree's tmux pane |
@@ -42,6 +43,41 @@ When you press `c`, pertmux opens a popup dialog where you enter the branch name
 2. Create a new worktree directory
 3. Create and checkout the branch
 4. Automatically refresh the dashboard (MR linking updates immediately)
+
+## Create with prompt {#create-with-prompt}
+
+When `default_worktree_with_prompt` is set in your config, pressing **`w`** opens a two-field dialog:
+
+1. **Branch name** — the git branch to create
+2. **Message** — the prompt to inject into the agent command
+
+pertmux substitutes your message into the `{{msg}}` placeholder of the template, then:
+
+1. Creates the worktree (same as `c`)
+2. Opens a split tmux pane running the filled command (e.g. `opencode run implement the feature`)
+
+### Configuration
+
+```toml
+# pertmux.toml
+default_worktree_with_prompt = "opencode run {{msg}}"
+```
+
+The `{{msg}}` placeholder is replaced with the message you type in the dialog. The resulting command is run in the left pane of a horizontal tmux split; the right pane opens an empty terminal in the worktree directory.
+
+### Example
+
+With `default_worktree_with_prompt = "opencode run {{msg}}"`:
+
+- Press `w` in the worktrees panel
+- Enter branch name: `feat/login-page`
+- Enter message: `implement the user login page with email and password fields`
+- Press Enter
+
+pertmux creates the `feat/login-page` worktree and opens a tmux pane running:
+```
+opencode run implement the user login page with email and password fields
+```
 
 ## Merge workflow
 

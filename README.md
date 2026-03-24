@@ -171,6 +171,7 @@ refresh_interval = 2
 |-----|------|---------|-------------|
 | `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes |
 | `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
+| `default_worktree_with_prompt` | string | — | Command template for creating a worktree with an injected prompt. Use `{{msg}}` as the placeholder (e.g. `"opencode run {{msg}}"`). Enables the `w` keybinding. |
 
 #### `[gitlab]`
 
@@ -237,6 +238,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | `create_worktree` | string | `"c"` | Create new worktree |
 | `delete_worktree` | string | `"d"` | Delete selected worktree |
 | `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
+| `open_worktree_with_prompt` | string | `"w"` | Create worktree and inject a prompt into the agent (requires `default_worktree_with_prompt`) |
 
 ## Keybindings
 
@@ -261,6 +263,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `b` | Any | Copy selected branch name |
 | `f` | Global | Fuzzy filter to switch project |
 | `c` | Worktree panel | Create new worktree |
+| `w` | Worktree panel | Create worktree and inject a prompt (requires `default_worktree_with_prompt` config) |
 | `d` | Worktree panel | Delete selected worktree |
 | `M` | Worktree panel | Merge selected worktree into default branch |
 | `q`/`Esc` | Global | Quit client (daemon keeps running) |
