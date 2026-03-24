@@ -11,6 +11,9 @@ struct GitLabUserMr {
     iid: u64,
     title: String,
     web_url: String,
+    // `draft` was added in GitLab 13.2; older instances return `work_in_progress` instead.
+    // Accept either name and default to false if neither is present.
+    #[serde(default, alias = "work_in_progress")]
     draft: bool,
     updated_at: jiff::Timestamp,
     author: crate::forge_clients::types::ForgeUser,
@@ -184,24 +187,46 @@ impl ForgeClient for GitLabClient {
     }
 
     async fn fetch_user_mrs(&self) -> Result<Vec<UserMrSummary>> {
-        let url = format!(
-            "{}/merge_requests?scope=created_by_me&state=opened&per_page=100",
-            self.base_url
-        );
-        let mrs: Vec<GitLabUserMr> = self
-            .client
-            .get(&url)
-            .header("PRIVATE-TOKEN", &self.token)
-            .send()
-            .await
-            .context(format!("Failed to fetch user MR list from {}", url))?
-            .error_for_status()
-            .context("GitLab API returned error status for user MR list")?
-            .json()
-            .await
-            .context("Failed to parse user MR list response")?;
+        let mut all_mrs: Vec<GitLabUserMr> = Vec::new();
+        let mut page = 1u32;
 
-        let user_mrs = mrs
+        loop {
+            let url = format!(
+                "{}/merge_requests?scope=created_by_me&state=opened&per_page=100&page={}",
+                self.base_url, page
+            );
+            let response = self
+                .client
+                .get(&url)
+                .header("PRIVATE-TOKEN", &self.token)
+                .send()
+                .await
+                .context(format!("Failed to fetch user MR list from {}", url))?
+                .error_for_status()
+                .context("GitLab API returned error status for user MR list")?;
+
+            // GitLab sets x-next-page to the next page number, or empty string on the last page.
+            let has_next_page = response
+                .headers()
+                .get("x-next-page")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|s| !s.is_empty());
+
+            let mrs: Vec<GitLabUserMr> = response
+                .json()
+                .await
+                .context("Failed to parse user MR list response")?;
+
+            let fetched = mrs.len();
+            all_mrs.extend(mrs);
+
+            if !has_next_page || fetched == 0 {
+                break;
+            }
+            page += 1;
+        }
+
+        let user_mrs = all_mrs
             .into_iter()
             .filter_map(|mr| {
                 let project_path = extract_gitlab_project_path(&mr.web_url)?;
@@ -218,5 +243,132 @@ impl ForgeClient for GitLabClient {
             .collect();
 
         Ok(user_mrs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- extract_gitlab_project_path ---
+
+    #[test]
+    fn test_extract_path_simple_group() {
+        let url = "https://gitlab.example.com/group/project/-/merge_requests/42";
+        assert_eq!(
+            extract_gitlab_project_path(url),
+            Some("group/project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_nested_groups() {
+        let url = "https://gitlab.example.com/org/team/sub/project/-/merge_requests/1";
+        assert_eq!(
+            extract_gitlab_project_path(url),
+            Some("org/team/sub/project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_no_group() {
+        let url = "https://gitlab.example.com/project/-/merge_requests/7";
+        assert_eq!(
+            extract_gitlab_project_path(url),
+            Some("project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_no_separator_returns_none() {
+        // Old-style GitLab URLs without /-/ are not matched
+        let url = "https://gitlab.example.com/group/project/merge_requests/42";
+        assert_eq!(extract_gitlab_project_path(url), None);
+    }
+
+    // --- GitLabUserMr draft field deserialization ---
+
+    fn make_mr_json(draft_field: &str) -> String {
+        format!(
+            r#"{{
+                "iid": 10,
+                "title": "My MR",
+                "web_url": "https://gitlab.example.com/org/repo/-/merge_requests/10",
+                "author": {{"id": 1, "username": "dev", "name": "Developer"}},
+                "updated_at": "2026-01-01T00:00:00.000Z"
+                {draft_field}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn test_deserialize_with_draft_true() {
+        // Modern GitLab (13.2+): returns "draft" field
+        let json = make_mr_json(r#", "draft": true"#);
+        let mr: GitLabUserMr = serde_json::from_str(&json).unwrap();
+        assert!(mr.draft);
+    }
+
+    #[test]
+    fn test_deserialize_with_draft_false() {
+        let json = make_mr_json(r#", "draft": false"#);
+        let mr: GitLabUserMr = serde_json::from_str(&json).unwrap();
+        assert!(!mr.draft);
+    }
+
+    #[test]
+    fn test_deserialize_with_work_in_progress_true() {
+        // Old GitLab (< 13.2): only "work_in_progress" field
+        let json = make_mr_json(r#", "work_in_progress": true"#);
+        let mr: GitLabUserMr = serde_json::from_str(&json).unwrap();
+        assert!(mr.draft);
+    }
+
+    #[test]
+    fn test_deserialize_with_work_in_progress_false() {
+        let json = make_mr_json(r#", "work_in_progress": false"#);
+        let mr: GitLabUserMr = serde_json::from_str(&json).unwrap();
+        assert!(!mr.draft);
+    }
+
+    #[test]
+    fn test_deserialize_without_draft_field_defaults_to_false() {
+        // Neither field present: should default to false, not fail
+        let json = make_mr_json("");
+        let mr: GitLabUserMr = serde_json::from_str(&json).unwrap();
+        assert!(!mr.draft);
+    }
+
+    #[test]
+    fn test_deserialize_array_with_mixed_formats() {
+        // The critical regression test: a Vec containing MRs with and without
+        // the draft field must not fail even if some elements omit it.
+        let json = r#"[
+            {
+                "iid": 1, "title": "Old MR",
+                "web_url": "https://gitlab.example.com/a/b/-/merge_requests/1",
+                "author": {"id": 1, "username": "dev", "name": "Dev"},
+                "updated_at": "2026-01-01T00:00:00Z",
+                "work_in_progress": false
+            },
+            {
+                "iid": 2, "title": "New MR",
+                "web_url": "https://gitlab.example.com/a/b/-/merge_requests/2",
+                "author": {"id": 1, "username": "dev", "name": "Dev"},
+                "updated_at": "2026-01-02T00:00:00Z",
+                "draft": true
+            },
+            {
+                "iid": 3, "title": "Bare MR",
+                "web_url": "https://gitlab.example.com/a/b/-/merge_requests/3",
+                "author": {"id": 1, "username": "dev", "name": "Dev"},
+                "updated_at": "2026-01-03T00:00:00Z"
+            }
+        ]"#;
+        let mrs: Vec<GitLabUserMr> = serde_json::from_str(json).unwrap();
+        assert_eq!(mrs.len(), 3);
+        assert!(!mrs[0].draft);
+        assert!(mrs[1].draft);
+        assert!(!mrs[2].draft);
     }
 }
