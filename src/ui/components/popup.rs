@@ -42,13 +42,19 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
         return;
     }
 
+    if matches!(state.popup, PopupState::KeybindingsHelp) {
+        draw_keybindings_popup(frame, state, area);
+        return;
+    }
+
     let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None
         | PopupState::ProjectFilter { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
-        | PopupState::ActivityFeed { .. } => {
+        | PopupState::ActivityFeed { .. }
+        | PopupState::KeybindingsHelp => {
             return;
         }
         PopupState::ConfirmKillTmuxWindow { branch, .. } => {
@@ -593,4 +599,113 @@ fn format_entry_age(ts: &jiff::Timestamp) -> String {
     }
     let months = days / 30;
     format!("{}mo ago", months)
+}
+
+fn draw_keybindings_popup(frame: &mut Frame, state: &ClientState, area: Rect) {
+    // Static navigation entries (not configurable).
+    let nav_entries: &[(&str, &str)] = &[
+        ("\u{2191}\u{2193} / jk", "Navigate"),
+        ("Tab", "Switch section (MRs / Worktrees)"),
+        ("\u{23ce}", "Focus pane in tmux"),
+        ("q / Esc", "Quit"),
+    ];
+
+    // Configurable entries sourced from KeybindingsConfig::entries().
+    // Adding a new field to KeybindingsConfig and its entry there automatically
+    // surfaces it here — no changes to this function required.
+    let kb = &state.snapshot.keybindings;
+    let config_entries = kb.entries();
+
+    // Extra hardcoded action entries that are not in KeybindingsConfig.
+    let extra_entries: &[(char, &str)] = &[('K', "Keybindings (this modal)")];
+
+    // Total rows: header + nav + blank + header + config + extra + blank + help.
+    let content_rows = 1 + nav_entries.len() + 1 + 1 + config_entries.len() + extra_entries.len();
+    let popup_h = (content_rows as u16 + 4).min(area.height.saturating_sub(4));
+    let popup_w = 52u16.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Keybindings ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let key_col = 14usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Navigation section.
+    lines.push(Line::from(Span::styled(
+        "Navigation",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (key, desc) in nav_entries {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<width$}", key, width = key_col),
+                Style::default().fg(ACCENT),
+            ),
+            Span::styled(*desc, Style::default().fg(Color::White)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    // Actions section (configurable + fixed extras).
+    lines.push(Line::from(Span::styled(
+        "Actions",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (key, desc) in &config_entries {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<width$}", key, width = key_col),
+                Style::default().fg(ACCENT),
+            ),
+            Span::styled(*desc, Style::default().fg(Color::White)),
+        ]));
+    }
+    for (key, desc) in extra_entries {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<width$}", key, width = key_col),
+                Style::default().fg(ACCENT),
+            ),
+            Span::styled(*desc, Style::default().fg(Color::White)),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), chunks[0]);
+
+    let divider = Line::from(Span::styled(
+        "\u{2500}".repeat(inner.width as usize),
+        Style::default().fg(Color::Indexed(236)),
+    ));
+    frame.render_widget(Paragraph::new(divider), chunks[1]);
+
+    let help = Line::from(Span::styled(
+        "Esc close",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Paragraph::new(help), chunks[2]);
 }

@@ -31,3 +31,23 @@ impl Default for KeybindingsConfig {
         }
     }
 }
+
+impl KeybindingsConfig {
+    /// Returns all configurable keybindings as (key, description) pairs in
+    /// display order. The keybindings help modal iterates this list, so adding
+    /// a new entry here automatically surfaces it in the modal.
+    pub fn entries(&self) -> Vec<(char, &'static str)> {
+        vec![
+            (self.refresh, "Refresh data"),
+            (self.open_browser, "Open MR in browser"),
+            (self.copy_branch, "Copy branch name"),
+            (self.filter_projects, "Switch project"),
+            (self.mr_overview, "My open MRs"),
+            (self.activity_feed, "Activity feed"),
+            (self.agent_actions, "Agent actions"),
+            (self.create_worktree, "Create worktree"),
+            (self.delete_worktree, "Delete worktree"),
+            (self.merge_worktree, "Merge worktree"),
+        ]
+    }
+}
