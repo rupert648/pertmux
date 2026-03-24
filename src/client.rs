@@ -251,6 +251,14 @@ impl ClientState {
         self.popup = PopupState::MrOverview { selected: 0 };
     }
 
+    fn open_activity_feed(&mut self) {
+        if self.snapshot.activity_feed.is_empty() {
+            self.notify("No activity yet");
+            return;
+        }
+        self.popup = PopupState::ActivityFeed { selected: 0 };
+    }
+
     fn copy_selected_branch(&mut self) {
         let branch = if let Some(proj) = self.snapshot.projects.get(self.active_project) {
             match self
@@ -870,6 +878,36 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::ActivityFeed { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PopupState::ActivityFeed { selected } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PopupState::ActivityFeed { selected } = &mut state.popup
+                    && *selected + 1 < state.snapshot.activity_feed.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let PopupState::ActivityFeed { selected } =
+                    std::mem::replace(&mut state.popup, PopupState::None)
+                    && let Some(entry) = state.snapshot.activity_feed.get(selected).cloned()
+                {
+                    navigate_to_activity(state, framed, &entry).await?;
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if matches!(state.popup, PopupState::AgentActions { .. }) {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -974,6 +1012,8 @@ async fn handle_key(
                 state.open_agent_actions();
             } else if ch == kb.mr_overview {
                 state.open_mr_overview();
+            } else if ch == kb.activity_feed {
+                state.open_activity_feed();
             }
         }
         _ => {}
@@ -1007,6 +1047,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
+        | PopupState::ActivityFeed { .. }
         | PopupState::None => None,
     }
 }
@@ -1126,6 +1167,63 @@ fn focus_selected(state: &ClientState) -> Result<()> {
         }
     } else if let Some(pane) = state.snapshot.panes.get(state.selected) {
         tmux::switch_to_pane(&pane.pane_id)?;
+    }
+    Ok(())
+}
+
+/// Navigate pertmux to the item referenced by an activity entry.
+///
+/// Agent activities switch the tmux client to the recorded pane.
+/// MR activities select the matching project + MR in the main view.
+async fn navigate_to_activity(
+    state: &mut ClientState,
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    entry: &crate::protocol::ActivityEntry,
+) -> Result<()> {
+    use crate::protocol::ActivityTarget;
+    match &entry.target {
+        Some(ActivityTarget::Pane { pane_id, .. }) => {
+            if let Err(e) = tmux::switch_to_pane(pane_id) {
+                state.notify(format!("Pane no longer active: {}", e));
+            }
+        }
+        Some(ActivityTarget::MergeRequest { project_name, iid }) => {
+            if let Some(idx) = state
+                .snapshot
+                .projects
+                .iter()
+                .position(|p| &p.name == project_name)
+            {
+                state.active_project = idx;
+                save_last_project(project_name);
+                if let Some(section) = state.selection_section.get_mut(idx) {
+                    *section = SelectionSection::MergeRequests;
+                }
+                let iid = *iid;
+                if let Some(proj) = state.snapshot.projects.get(idx)
+                    && let Some(mr_idx) = proj
+                        .dashboard
+                        .linked_mrs
+                        .iter()
+                        .position(|l| l.mr.iid == iid)
+                {
+                    state.mr_selected[idx] = mr_idx;
+                    send_msg(
+                        framed,
+                        ClientMsg::SelectMr {
+                            project_idx: idx,
+                            mr_iid: iid,
+                        },
+                    )
+                    .await?;
+                }
+            } else {
+                state.notify(format!("Project '{}' not in config", project_name));
+            }
+        }
+        None => {
+            state.notify("No navigation target for this activity");
+        }
     }
     Ok(())
 }

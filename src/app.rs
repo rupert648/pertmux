@@ -55,6 +55,9 @@ pub enum PopupState {
     MrOverview {
         selected: usize,
     },
+    ActivityFeed {
+        selected: usize,
+    },
 }
 
 pub struct ProjectState {

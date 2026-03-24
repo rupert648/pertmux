@@ -28,6 +28,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `m` | Open MR Overview popup (all your open MRs across all forges) | `mr_overview` |
 | `M` | Merge selected worktree into default branch | `merge_worktree` |
 | `a` | Open agent actions panel | `agent_actions` |
+| `A` | Open Activity Feed popup — navigate recent events and jump to the relevant tmux pane or MR | `activity_feed` |
 
 ## Global
 
@@ -50,7 +51,8 @@ create_worktree = "n"
 delete_worktree = "x"
 merge_worktree = "G"
 mr_overview = "v"
-agent_actions = "A"
+agent_actions = "P"
+activity_feed = "F"
 ```
 
 Missing keys use their defaults. Each action must have a unique key — duplicates are rejected at startup with a clear error message.
