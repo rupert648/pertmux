@@ -27,6 +27,8 @@ pub struct AgentPane {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub last_activity: Option<Timestamp>,
+    #[serde(default)]
+    pub status_changed_at: Option<Timestamp>,
     pub db_session_id: Option<String>,
     pub last_response: Option<String>,
 }

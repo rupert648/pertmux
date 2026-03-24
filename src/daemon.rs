@@ -101,28 +101,28 @@ pub async fn run(config: Config) -> Result<()> {
                         app.refresh_mrs().await;
                         app.refresh_worktrees().await;
                         drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
                     ClientMsg::CreateWorktree { project_idx, branch } => {
                         let result = handle_create_worktree(&app, project_idx, &branch).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
                         app.refresh().await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
                     ClientMsg::RemoveWorktree { project_idx, branch } => {
                         let result = handle_remove_worktree(&app, project_idx, &branch).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
                         app.refresh().await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
                     ClientMsg::MergeWorktree { project_idx, worktree_path } => {
                         let result = handle_merge_worktree(&app, project_idx, &worktree_path).await;
                         send_action_result(&broadcast_tx, result);
                         app.refresh_worktrees().await;
                         app.refresh().await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
                     ClientMsg::AgentAction { pane_pid, session_id, prompt } => {
                         let result = app.send_agent_prompt(pane_pid, &session_id, &prompt);
@@ -137,7 +137,7 @@ pub async fn run(config: Config) -> Result<()> {
                         }
                         app.refresh_mr_detail().await;
                         drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                     }
                     ClientMsg::Handshake { .. } => {}
                 }
@@ -145,21 +145,21 @@ pub async fn run(config: Config) -> Result<()> {
             _ = refresh_interval.tick() => {
                 app.refresh().await;
                 drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = detail_interval.tick() => {
                 app.refresh_mr_detail().await;
                 drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = worktree_interval.tick() => {
                 app.refresh_worktrees().await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = mr_list_interval.tick() => {
                 app.refresh_mrs().await;
                 drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, app.snapshot()).await;
+                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("[pertmux-daemon] shutting down");
@@ -356,11 +356,19 @@ fn send_action_result(broadcast_tx: &broadcast::Sender<DaemonMsg>, result: Resul
 async fn broadcast_snapshot(
     broadcast_tx: &broadcast::Sender<DaemonMsg>,
     latest_snapshot: &Arc<Mutex<DashboardSnapshot>>,
-    snapshot: DashboardSnapshot,
+    app: &mut App,
 ) {
+    let snapshot = app.snapshot();
     {
         let mut guard = latest_snapshot.lock().await;
         *guard = snapshot.clone();
     }
-    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(snapshot)));
+
+    let agent_changes = app.take_pending_agent_changes();
+    let mut broadcast_snap = snapshot;
+    if !agent_changes.is_empty() {
+        broadcast_snap.pending_agent_changes = agent_changes;
+    }
+
+    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(broadcast_snap)));
 }

@@ -4,8 +4,8 @@ use crate::client::ClientState;
 use crate::protocol::ProjectSnapshot;
 use crate::types::SessionDetail;
 use crate::ui::helpers::{
-    compact_status_badge, format_date, format_elapsed, format_timestamp, format_tokens,
-    session_duration, shorten_path, truncate,
+    compact_status_badge, format_date, format_timestamp, format_tokens, session_duration,
+    shorten_path, truncate,
 };
 use crate::ui::{ACCENT, ProjectRenderData};
 use ratatui::{
@@ -292,118 +292,50 @@ fn draw_mr_detail_panel_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, 
         ),
     ]));
 
-    if proj.cached_threads_iid != Some(mr.iid) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Discussions",
-            Style::default()
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD | Modifier::DIM),
-        )));
-        lines.push(Line::from(Span::styled(
-            "  \u{25cc} loading\u{2026}",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else if !proj.cached_threads.is_empty() {
-        lines.push(Line::from(""));
-
-        let total = proj.cached_threads.len();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Discussions",
+        Style::default()
+            .fg(ACCENT)
+            .add_modifier(Modifier::BOLD | Modifier::DIM),
+    )));
+    if proj.cached_threads.is_empty() {
+        if proj.cached_threads_iid != Some(mr.iid) {
+            lines.push(Line::from(vec![
+                Span::styled("  threads    ", Style::default().fg(Color::DarkGray)),
+                Span::styled("loading\u{2026}", Style::default().fg(Color::DarkGray)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("  threads    ", Style::default().fg(Color::DarkGray)),
+                Span::styled("none", Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    } else {
         let resolvable_count = proj.cached_threads.iter().filter(|t| t.resolvable).count();
         let resolved_count = proj
             .cached_threads
             .iter()
             .filter(|t| t.resolvable && t.resolved)
             .count();
-
-        let header_text = if resolvable_count > 0 {
-            format!("  Discussions ({}/{})", resolved_count, resolvable_count)
+        let unresolved = resolvable_count.saturating_sub(resolved_count);
+        let (summary, color) = if unresolved > 0 {
+            (
+                format!("{}  ({} unresolved)", proj.cached_threads.len(), unresolved),
+                Color::Yellow,
+            )
+        } else if resolvable_count > 0 {
+            (
+                format!("{}  (all resolved)", proj.cached_threads.len()),
+                Color::Green,
+            )
         } else {
-            format!("  Discussions ({})", total)
+            (proj.cached_threads.len().to_string(), Color::White)
         };
-        lines.push(Line::from(Span::styled(
-            header_text,
-            Style::default()
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD | Modifier::DIM),
-        )));
-
-        let max_body_len = area.width.saturating_sub(8) as usize;
-
-        for thread in proj.cached_threads {
-            let first = match thread.notes.first() {
-                Some(n) => n,
-                None => continue,
-            };
-
-            let indicator = if !thread.resolvable {
-                Span::styled("  \u{00b7} ", Style::default().fg(Color::DarkGray))
-            } else if thread.resolved {
-                Span::styled("  \u{2713} ", Style::default().fg(Color::Green))
-            } else {
-                Span::styled("  \u{2717} ", Style::default().fg(Color::Red))
-            };
-
-            let mut header_spans = vec![
-                indicator,
-                Span::styled(
-                    format!("@{}", first.author.username),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!(" \u{00b7} {}", format_elapsed(first.created_at)),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ];
-
-            if let Some(ref path) = thread.file_path {
-                let file_display = if let Some(name) = path.rsplit('/').next() {
-                    match thread.line {
-                        Some(ln) => format!("{name}:{ln}"),
-                        None => name.to_string(),
-                    }
-                } else {
-                    path.clone()
-                };
-                header_spans.push(Span::styled(
-                    format!(" \u{00b7} {file_display}"),
-                    Style::default().fg(Color::Indexed(245)),
-                ));
-            }
-
-            lines.push(Line::from(header_spans));
-
-            let body_preview = first.body.lines().next().unwrap_or("");
-            if !body_preview.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    format!("    {}", truncate(body_preview, max_body_len)),
-                    Style::default().fg(Color::Indexed(245)),
-                )));
-            }
-
-            for reply in thread.notes.iter().skip(1) {
-                if reply.system {
-                    continue;
-                }
-                lines.push(Line::from(vec![
-                    Span::styled("    \u{2514} ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!("@{}", reply.author.username),
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::styled(
-                        format!(" \u{00b7} {}", format_elapsed(reply.created_at)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-                let reply_preview = reply.body.lines().next().unwrap_or("");
-                if !reply_preview.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        format!("      {}", truncate(reply_preview, max_body_len)),
-                        Style::default().fg(Color::Indexed(245)),
-                    )));
-                }
-            }
-        }
+        lines.push(Line::from(vec![
+            Span::styled("  threads    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(summary, Style::default().fg(color)),
+        ]));
     }
 
     let paragraph = Paragraph::new(lines);

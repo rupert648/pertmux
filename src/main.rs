@@ -1,3 +1,4 @@
+mod agent_changes;
 mod app;
 mod client;
 mod coding_agent;

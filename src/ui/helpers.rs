@@ -77,26 +77,6 @@ pub(crate) fn leak_status(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-pub(crate) fn format_elapsed(ts: Timestamp) -> String {
-    let now = Timestamp::now();
-    if now.since(ts).is_err() {
-        return "just now".to_string();
-    }
-    let delta = (now.as_second() - ts.as_second()).max(0) as u64;
-
-    if delta < 60 {
-        "just now".to_string()
-    } else if delta < 3600 {
-        format!("{}m ago", delta / 60)
-    } else if delta < 86400 {
-        format!("{}h ago", delta / 3600)
-    } else if delta < 604800 {
-        format!("{}d ago", delta / 86400)
-    } else {
-        format!("{}w ago", delta / 604800)
-    }
-}
-
 // ─── Merge status ────────────────────────────────────────────────────────────
 
 pub(crate) fn merge_status_display(
