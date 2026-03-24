@@ -21,13 +21,9 @@ pub fn socket_path() -> PathBuf {
 /// Returns a timestamped log path so each daemon startup gets its own log file.
 /// Format: /tmp/pertmux-daemon-YYYY-MM-DDTHH-MM-SS.log
 pub fn log_path() -> PathBuf {
-    // jiff::Timestamp::now() Display gives e.g. "2024-01-15T10:30:00.123456789Z"
-    let ts = jiff::Timestamp::now().to_string();
-    let ts: String = ts
-        .chars()
-        .take(19) // "2024-01-15T10:30:00"
-        .map(|c| if c == ':' { '-' } else { c }) // "2024-01-15T10-30-00"
-        .collect();
+    let ts = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H-%M-%S")
+        .to_string();
     PathBuf::from(format!("/tmp/pertmux-daemon-{}.log", ts))
 }
 
