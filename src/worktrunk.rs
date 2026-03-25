@@ -114,7 +114,11 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
             return Ok(vec![]);
         }
         Err(e) => {
-            warn!("fetch_worktrees: command error after {:.2?}: {}", t.elapsed(), e);
+            warn!(
+                "fetch_worktrees: command error after {:.2?}: {}",
+                t.elapsed(),
+                e
+            );
             return Err(e.into());
         }
     };

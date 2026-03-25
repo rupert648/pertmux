@@ -2,11 +2,11 @@ use crate::client::ClientState;
 use crate::ui::helpers::truncate;
 use crate::ui::{ACCENT, NOTIFICATION_DURATION};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
-    Frame,
 };
 
 /// Render the notification overlay.

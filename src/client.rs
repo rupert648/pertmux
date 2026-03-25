@@ -1,7 +1,7 @@
 use crate::app::{PopupState, SelectionSection};
 use crate::banner::{DIM, GRAY, GREEN, ORANGE, RESET, WHITE};
 use crate::daemon;
-use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, RefreshStep, PROTOCOL_VERSION};
+use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
 use crate::tmux;
 use crate::ui;
 use anyhow::Result;

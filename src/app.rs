@@ -10,15 +10,17 @@ use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
-use crate::protocol::{ActivityEntry, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot, RefreshStep};
+use crate::protocol::{
+    ActivityEntry, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot, RefreshStep,
+};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use crate::worktrunk::{self, WtWorktree};
+use futures::StreamExt as _;
 use jiff::Timestamp as JiffTimestamp;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use futures::StreamExt as _;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
@@ -241,7 +243,11 @@ impl App {
                 return;
             }
         };
-        info!("app::refresh: tmux listed {} panes in {:.2?}", panes.len(), t.elapsed());
+        info!(
+            "app::refresh: tmux listed {} panes in {:.2?}",
+            panes.len(),
+            t.elapsed()
+        );
 
         for pane in &mut panes {
             if let Some(agent) = self.find_agent(&pane.pane_command) {
@@ -370,8 +376,9 @@ impl App {
         }
 
         let mut done = 0;
-        let mut indexed: Vec<Option<anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>>> =
-            (0..total).map(|_| None).collect();
+        let mut indexed: Vec<
+            Option<anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>>,
+        > = (0..total).map(|_| None).collect();
 
         while let Some((i, result)) = stream.next().await {
             done += 1;
@@ -392,7 +399,11 @@ impl App {
         for (proj, result) in self.projects.iter_mut().zip(indexed) {
             match result.unwrap_or_else(|| Err(anyhow::anyhow!("missing"))) {
                 Ok(mrs) => {
-                    info!("app::refresh_mrs: got {} MRs for {}", mrs.len(), proj.config.name);
+                    info!(
+                        "app::refresh_mrs: got {} MRs for {}",
+                        mrs.len(),
+                        proj.config.name
+                    );
                     if !proj.cached_mrs.is_empty() {
                         let changes =
                             detect_mr_list_changes(&proj.config.name, &proj.cached_mrs, &mrs);
@@ -449,7 +460,11 @@ impl App {
             gl_stream.push(async move { (name, project_path, fut.await) });
         }
 
-        let mut gl_results: Vec<(String, String, anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>)> = Vec::new();
+        let mut gl_results: Vec<(
+            String,
+            String,
+            anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>,
+        )> = Vec::new();
         while let Some(res) = gl_stream.next().await {
             done += 1;
             gl_results.push(res);
@@ -473,7 +488,10 @@ impl App {
             gh_stream.push(async move { (name, fut.await) });
         }
 
-        let mut gh_results: Vec<(String, anyhow::Result<Vec<crate::forge_clients::types::UserMrSummary>>)> = Vec::new();
+        let mut gh_results: Vec<(
+            String,
+            anyhow::Result<Vec<crate::forge_clients::types::UserMrSummary>>,
+        )> = Vec::new();
         while let Some(res) = gh_stream.next().await {
             done += 1;
             gh_results.push(res);
@@ -560,10 +578,7 @@ impl App {
         let st = std::time::Instant::now();
         match proj.client.fetch_mr_detail(iid).await {
             Ok(detail) => {
-                info!(
-                    "app::refresh_mr_detail: got detail in {:.2?}",
-                    st.elapsed()
-                );
+                info!("app::refresh_mr_detail: got detail in {:.2?}", st.elapsed());
                 if let Some(ref old_detail) = proj.cached_mr_detail {
                     let changes = detect_mr_detail_changes(&project_name, old_detail, &detail);
                     for c in &changes {
@@ -668,7 +683,10 @@ impl App {
             let name = name.clone();
             let path = path.clone();
             stream.push(async move {
-                info!("app::refresh_worktrees: fetching for {} (path={})", name, path);
+                info!(
+                    "app::refresh_worktrees: fetching for {} (path={})",
+                    name, path
+                );
                 let pt = std::time::Instant::now();
                 let result = worktrunk::fetch_worktrees(&path).await;
                 (i, name, pt.elapsed(), result)
@@ -676,8 +694,12 @@ impl App {
         }
 
         let mut done = 0;
-        let mut indexed: Vec<Option<(std::time::Duration, anyhow::Result<Vec<crate::worktrunk::WtWorktree>>)>> =
-            (0..total).map(|_| None).collect();
+        let mut indexed: Vec<
+            Option<(
+                std::time::Duration,
+                anyhow::Result<Vec<crate::worktrunk::WtWorktree>>,
+            )>,
+        > = (0..total).map(|_| None).collect();
 
         while let Some((i, _name, elapsed, result)) = stream.next().await {
             done += 1;
@@ -694,7 +716,8 @@ impl App {
         drop(stream);
 
         for (proj, entry) in self.projects.iter_mut().zip(indexed) {
-            let (elapsed, result) = entry.unwrap_or_else(|| (std::time::Duration::ZERO, Err(anyhow::anyhow!("missing"))));
+            let (elapsed, result) = entry
+                .unwrap_or_else(|| (std::time::Duration::ZERO, Err(anyhow::anyhow!("missing"))));
             match result {
                 Ok(wts) => {
                     info!(
