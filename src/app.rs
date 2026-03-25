@@ -10,7 +10,7 @@ use crate::forge_clients::{GitHubClient, GitLabClient};
 use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
-use crate::protocol::{ActivityEntry, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot};
+use crate::protocol::{ActivityEntry, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot, RefreshStep};
 use crate::read_state::ReadStateDb;
 use crate::tmux;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
@@ -18,6 +18,8 @@ use crate::worktrunk::{self, WtWorktree};
 use jiff::Timestamp as JiffTimestamp;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+use futures::StreamExt as _;
+use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 pub enum SelectionSection {
@@ -354,28 +356,43 @@ impl App {
         self.groups = map.into_iter().collect();
     }
 
-    pub async fn refresh_mrs(&mut self) {
-        info!(
-            "app::refresh_mrs: start ({} projects, parallel)",
-            self.projects.len()
-        );
+    pub async fn refresh_mrs(&mut self, progress_tx: Option<&broadcast::Sender<DaemonMsg>>) {
+        let total = self.projects.len();
+        info!("app::refresh_mrs: start ({} projects, parallel)", total);
         let t = std::time::Instant::now();
 
-        // Drive all per-project MR fetches concurrently.  The futures borrow
-        // each project's client immutably; after join_all returns the futures
-        // are consumed and the borrows released, so we can mutably iterate next.
-        let fetch_futures: Vec<_> = self.projects.iter().map(|p| p.client.fetch_mrs()).collect();
-        let all_results = futures::future::join_all(fetch_futures).await;
+        // FuturesUnordered lets us process each project's result as soon as it
+        // arrives and emit a progress broadcast, rather than waiting for all.
+        let mut stream = futures::stream::FuturesUnordered::new();
+        for (i, proj) in self.projects.iter().enumerate() {
+            let fut = proj.client.fetch_mrs();
+            stream.push(async move { (i, fut.await) });
+        }
+
+        let mut done = 0;
+        let mut indexed: Vec<Option<anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>>> =
+            (0..total).map(|_| None).collect();
+
+        while let Some((i, result)) = stream.next().await {
+            done += 1;
+            indexed[i] = Some(result);
+            if let Some(tx) = progress_tx {
+                let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                    label: "Updating MRs".into(),
+                    done,
+                    total,
+                }]));
+                // Yield so handle_client tasks can forward the broadcast to clients.
+                tokio::task::yield_now().await;
+            }
+        }
+        drop(stream); // release borrows on self.projects before mutable iteration
 
         let mut last_error: Option<String> = None;
-        for (proj, result) in self.projects.iter_mut().zip(all_results) {
-            match result {
+        for (proj, result) in self.projects.iter_mut().zip(indexed) {
+            match result.unwrap_or_else(|| Err(anyhow::anyhow!("missing"))) {
                 Ok(mrs) => {
-                    info!(
-                        "app::refresh_mrs: got {} MRs for {}",
-                        mrs.len(),
-                        proj.config.name
-                    );
+                    info!("app::refresh_mrs: got {} MRs for {}", mrs.len(), proj.config.name);
                     if !proj.cached_mrs.is_empty() {
                         let changes =
                             detect_mr_list_changes(&proj.config.name, &proj.cached_mrs, &mrs);
@@ -393,62 +410,118 @@ impl App {
                 }
             }
         }
-
         if let Some(e) = last_error {
             self.error = Some(e);
         }
         info!("app::refresh_mrs: done in {:.2?}", t.elapsed());
     }
 
-    pub async fn refresh_global_mrs(&mut self) {
+    pub async fn refresh_global_mrs(&mut self, progress_tx: Option<&broadcast::Sender<DaemonMsg>>) {
         info!("app::refresh_global_mrs: start");
         let t = std::time::Instant::now();
+
+        // Collect (index, forge) pairs so we can drive all fetches in parallel.
+        let gl_indices: Vec<usize> = self
+            .projects
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| matches!(p.config.source, ProjectForge::Gitlab))
+            .map(|(i, _)| i)
+            .collect();
+        let gh_indices: Vec<usize> = self
+            .projects
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| matches!(p.config.source, ProjectForge::Github))
+            .map(|(i, _)| i)
+            .collect();
+
+        let total = gl_indices.len() + gh_indices.len();
+        let mut done = 0;
+
+        // GitLab — parallel fetch_mrs per project
+        let mut gl_stream = futures::stream::FuturesUnordered::new();
+        for &i in &gl_indices {
+            let proj = &self.projects[i];
+            let name = proj.config.name.clone();
+            let project_path = proj.config.project.clone();
+            let fut = proj.client.fetch_mrs();
+            gl_stream.push(async move { (name, project_path, fut.await) });
+        }
+
+        let mut gl_results: Vec<(String, String, anyhow::Result<Vec<crate::forge_clients::types::MergeRequestSummary>>)> = Vec::new();
+        while let Some(res) = gl_stream.next().await {
+            done += 1;
+            gl_results.push(res);
+            if let Some(tx) = progress_tx {
+                let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                    label: "Global feed".into(),
+                    done,
+                    total,
+                }]));
+                tokio::task::yield_now().await;
+            }
+        }
+        drop(gl_stream);
+
+        // GitHub — parallel fetch_user_mrs per project
+        let mut gh_stream = futures::stream::FuturesUnordered::new();
+        for &i in &gh_indices {
+            let proj = &self.projects[i];
+            let name = proj.config.name.clone();
+            let fut = proj.client.fetch_user_mrs();
+            gh_stream.push(async move { (name, fut.await) });
+        }
+
+        let mut gh_results: Vec<(String, anyhow::Result<Vec<crate::forge_clients::types::UserMrSummary>>)> = Vec::new();
+        while let Some(res) = gh_stream.next().await {
+            done += 1;
+            gh_results.push(res);
+            if let Some(tx) = progress_tx {
+                let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                    label: "Global feed".into(),
+                    done,
+                    total,
+                }]));
+                tokio::task::yield_now().await;
+            }
+        }
+        drop(gh_stream);
+
+        // Assemble entries from all results
         let mut all_entries: Vec<GlobalMrEntry> = Vec::new();
 
-        // GitLab: aggregate per-project rather than using the global
-        // `scope=created_by_me` endpoint.  Project bot tokens (a common setup)
-        // only have project-scoped API access, so the global endpoint returns
-        // an empty list or only the bot's own MRs.  fetch_mrs() already uses
-        // `author_username` and works correctly regardless of token type.
-        for proj in &self.projects {
-            if !matches!(proj.config.source, ProjectForge::Gitlab) {
-                continue;
-            }
-            match proj.client.fetch_mrs().await {
+        for (name, project_path, result) in gl_results {
+            match result {
                 Ok(mrs) => {
                     all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
                         forge: ProjectForge::Gitlab,
-                        configured_project: Some(proj.config.name.clone()),
+                        configured_project: Some(name.clone()),
                         mr: crate::forge_clients::types::UserMrSummary {
                             iid: mr.iid,
                             title: mr.title,
                             web_url: mr.web_url.clone(),
-                            project_path: proj.config.project.clone(),
+                            project_path: project_path.clone(),
                             author: mr.author,
                             draft: mr.draft,
                             updated_at: mr.updated_at,
                         },
                     }));
                 }
-                Err(e) => error!("global GitLab MR fetch error ({}): {}", proj.config.name, e),
+                Err(e) => error!("global GitLab MR fetch error ({}): {}", name, e),
             }
         }
 
-        // GitHub: fetch_user_mrs() uses a user-scoped endpoint that works fine
-        // with personal access tokens, so keep the existing approach.
-        for proj in &self.projects {
-            if !matches!(proj.config.source, ProjectForge::Github) {
-                continue;
-            }
-            match proj.client.fetch_user_mrs().await {
+        for (name, result) in gh_results {
+            match result {
                 Ok(mrs) => {
                     all_entries.extend(mrs.into_iter().map(|mr| GlobalMrEntry {
                         forge: ProjectForge::Github,
-                        configured_project: Some(proj.config.name.clone()),
+                        configured_project: Some(name.clone()),
                         mr,
                     }));
                 }
-                Err(e) => error!("global GitHub MR fetch error ({}): {}", proj.config.name, e),
+                Err(e) => error!("global GitHub MR fetch error ({}): {}", name, e),
             }
         }
 
@@ -572,37 +645,56 @@ impl App {
     }
 
     /// Refresh worktrees for all projects in parallel.
-    pub async fn refresh_worktrees(&mut self) {
+    pub async fn refresh_worktrees(&mut self, progress_tx: Option<&broadcast::Sender<DaemonMsg>>) {
         info!(
             "app::refresh_worktrees: start ({} projects, parallel)",
             self.projects.len()
         );
         let t = std::time::Instant::now();
 
-        // Collect (name, path) pairs so we can run all wt calls concurrently
-        // without holding borrows into self.projects across await points.
-        let entries: Vec<(String, String)> = self
+        // Collect (index, name, path) so all wt calls run concurrently with no
+        // borrows on self.projects across await points.
+        let entries: Vec<(usize, String, String)> = self
             .projects
             .iter()
-            .map(|p| (p.config.name.clone(), p.config.local_path.clone()))
+            .enumerate()
+            .map(|(i, p)| (i, p.config.name.clone(), p.config.local_path.clone()))
             .collect();
+        let total = entries.len();
 
-        let results = futures::future::join_all(entries.iter().map(|(name, path)| {
+        let mut stream = futures::stream::FuturesUnordered::new();
+        for (i, name, path) in &entries {
+            let i = *i;
             let name = name.clone();
             let path = path.clone();
-            async move {
+            stream.push(async move {
+                info!("app::refresh_worktrees: fetching for {} (path={})", name, path);
                 let pt = std::time::Instant::now();
-                info!(
-                    "app::refresh_worktrees: fetching for {} (path={})",
-                    name, path
-                );
                 let result = worktrunk::fetch_worktrees(&path).await;
-                (name, pt.elapsed(), result)
-            }
-        }))
-        .await;
+                (i, name, pt.elapsed(), result)
+            });
+        }
 
-        for (proj, (_name, elapsed, result)) in self.projects.iter_mut().zip(results) {
+        let mut done = 0;
+        let mut indexed: Vec<Option<(std::time::Duration, anyhow::Result<Vec<crate::worktrunk::WtWorktree>>)>> =
+            (0..total).map(|_| None).collect();
+
+        while let Some((i, _name, elapsed, result)) = stream.next().await {
+            done += 1;
+            indexed[i] = Some((elapsed, result));
+            if let Some(tx) = progress_tx {
+                let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                    label: "Worktrees".into(),
+                    done,
+                    total,
+                }]));
+                tokio::task::yield_now().await;
+            }
+        }
+        drop(stream);
+
+        for (proj, entry) in self.projects.iter_mut().zip(indexed) {
+            let (elapsed, result) = entry.unwrap_or_else(|| (std::time::Duration::ZERO, Err(anyhow::anyhow!("missing"))));
             match result {
                 Ok(wts) => {
                     info!(
@@ -632,7 +724,11 @@ impl App {
 
     /// Refresh worktrees for a single project only. Used after worktree
     /// create/remove/merge commands so we don't pay the cost of refreshing all projects.
-    pub async fn refresh_worktrees_for_project(&mut self, project_idx: usize) {
+    pub async fn refresh_worktrees_for_project(
+        &mut self,
+        project_idx: usize,
+        progress_tx: Option<&broadcast::Sender<DaemonMsg>>,
+    ) {
         let Some(proj) = self.projects.get_mut(project_idx) else {
             warn!(
                 "app::refresh_worktrees_for_project: invalid project_idx={}",
@@ -645,6 +741,13 @@ impl App {
             proj.config.name, proj.config.local_path
         );
         let t = std::time::Instant::now();
+        if let Some(tx) = progress_tx {
+            let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                label: "Worktrees".into(),
+                done: 0,
+                total: 1,
+            }]));
+        }
         match worktrunk::fetch_worktrees(&proj.config.local_path).await {
             Ok(wts) => {
                 info!(
@@ -653,6 +756,14 @@ impl App {
                     proj.config.name,
                     t.elapsed()
                 );
+                if let Some(tx) = progress_tx {
+                    let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
+                        label: "Worktrees".into(),
+                        done: 1,
+                        total: 1,
+                    }]));
+                    tokio::task::yield_now().await;
+                }
                 proj.cached_worktrees = wts;
                 if proj.worktree_selected >= proj.cached_worktrees.len()
                     && !proj.cached_worktrees.is_empty()

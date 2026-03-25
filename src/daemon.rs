@@ -112,11 +112,11 @@ pub async fn run(config: Config) -> Result<()> {
 
     let mut app = App::new(config);
     if app.has_projects() {
-        app.refresh_mrs().await;
-        app.refresh_global_mrs().await;
+        app.refresh_mrs(None).await;
+        app.refresh_global_mrs(None).await;
     }
     app.refresh().await;
-    app.refresh_worktrees().await;
+    app.refresh_worktrees(None).await;
     app.pending_changes.clear();
 
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
@@ -165,9 +165,10 @@ pub async fn run(config: Config) -> Result<()> {
                         info!("cmd: Refresh — starting full refresh");
                         let t = std::time::Instant::now();
                         app.refresh().await;
-                        app.refresh_mrs().await;
-                        app.refresh_global_mrs().await;
-                        app.refresh_worktrees().await;
+                        app.refresh_mrs(Some(&broadcast_tx)).await;
+                        app.refresh_global_mrs(Some(&broadcast_tx)).await;
+                        app.refresh_worktrees(Some(&broadcast_tx)).await;
+                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                         drain_changes(&mut app, &client_count, &pending_for_offline).await;
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                         info!("cmd: Refresh done in {:.2?}", t.elapsed());
@@ -183,9 +184,10 @@ pub async fn run(config: Config) -> Result<()> {
                         );
                         send_action_result(&broadcast_tx, result);
                         info!("cmd: CreateWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx).await;
+                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
                         info!("cmd: CreateWorktree refreshing panes…");
                         app.refresh().await;
+                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                         info!("cmd: CreateWorktree fully complete in {:.2?}", t.elapsed());
                     }
@@ -207,9 +209,10 @@ pub async fn run(config: Config) -> Result<()> {
                         );
                         send_action_result(&broadcast_tx, result);
                         info!("cmd: CreateWorktreeWithPrompt refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx).await;
+                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
                         info!("cmd: CreateWorktreeWithPrompt refreshing panes…");
                         app.refresh().await;
+                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                         info!("cmd: CreateWorktreeWithPrompt fully complete in {:.2?}", t.elapsed());
                     }
@@ -224,9 +227,10 @@ pub async fn run(config: Config) -> Result<()> {
                         );
                         send_action_result(&broadcast_tx, result);
                         info!("cmd: RemoveWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx).await;
+                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
                         info!("cmd: RemoveWorktree refreshing panes…");
                         app.refresh().await;
+                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                         info!("cmd: RemoveWorktree fully complete in {:.2?}", t.elapsed());
                     }
@@ -244,9 +248,10 @@ pub async fn run(config: Config) -> Result<()> {
                         );
                         send_action_result(&broadcast_tx, result);
                         info!("cmd: MergeWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx).await;
+                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
                         info!("cmd: MergeWorktree refreshing panes…");
                         app.refresh().await;
+                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                         broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                         info!("cmd: MergeWorktree fully complete in {:.2?}", t.elapsed());
                     }
@@ -292,15 +297,17 @@ pub async fn run(config: Config) -> Result<()> {
             _ = worktree_interval.tick() => {
                 info!("tick: worktrees start");
                 let t = std::time::Instant::now();
-                app.refresh_worktrees().await;
+                app.refresh_worktrees(Some(&broadcast_tx)).await;
+                let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                 info!("tick: worktrees done in {:.2?}", t.elapsed());
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
             }
             _ = mr_list_interval.tick() => {
                 info!("tick: mr_list start");
                 let t = std::time::Instant::now();
-                app.refresh_mrs().await;
-                app.refresh_global_mrs().await;
+                app.refresh_mrs(Some(&broadcast_tx)).await;
+                app.refresh_global_mrs(Some(&broadcast_tx)).await;
+                let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
                 info!("tick: mr_list done in {:.2?}", t.elapsed());
                 drain_changes(&mut app, &client_count, &pending_for_offline).await;
                 broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;

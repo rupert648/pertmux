@@ -1,7 +1,7 @@
 use crate::app::{PopupState, SelectionSection};
 use crate::banner::{DIM, GRAY, GREEN, ORANGE, RESET, WHITE};
 use crate::daemon;
-use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION};
+use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, RefreshStep, PROTOCOL_VERSION};
 use crate::tmux;
 use crate::ui;
 use anyhow::Result;
@@ -69,6 +69,9 @@ pub struct ClientState {
     pub selected: usize,
     pub popup: PopupState,
     pub notification: Option<(String, Instant)>,
+    /// Live progress steps sent by the daemon while a refresh is in flight.
+    /// Cleared when the daemon sends `Progress(vec![])`.
+    pub refresh_steps: Vec<RefreshStep>,
     pub running: bool,
     /// Set when `CreateWorktreeWithPrompt` is submitted, cleared on ActionResult.
     pending_create_with_prompt: Option<WorktreeOpenRequest>,
@@ -102,6 +105,7 @@ impl ClientState {
             popup,
             notification: None,
             running: true,
+            refresh_steps: vec![],
             pending_create_with_prompt: None,
             pending_open_worktree: None,
         }
@@ -810,6 +814,7 @@ async fn wait_for_initial_snapshot(
         match msg {
             DaemonMsg::Snapshot(snap) => return Ok(*snap),
             DaemonMsg::HandshakeAck { .. } => {}
+            DaemonMsg::Progress(_) => {} // ignore progress during initial connect
             DaemonMsg::ActionResult { ok, message } => {
                 if !ok {
                     anyhow::bail!(message);
@@ -848,6 +853,9 @@ async fn run_client_loop(
                         match daemon_msg {
                             DaemonMsg::Snapshot(snap) => {
                                 state.update_snapshot(*snap);
+                            }
+                            DaemonMsg::Progress(steps) => {
+                                state.refresh_steps = steps;
                             }
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notify(message);

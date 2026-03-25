@@ -230,12 +230,29 @@ pub enum ClientMsg {
     Stop,
 }
 
+/// A single labelled progress step, broadcast while an operation is in flight.
+/// `done` and `total` are both 0 when the step hasn't started yet.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct RefreshStep {
+    pub label: String,
+    pub done: usize,
+    pub total: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DaemonMsg {
-    HandshakeAck { version: u32 },
+    HandshakeAck {
+        version: u32,
+    },
     Snapshot(Box<DashboardSnapshot>),
-    ActionResult { ok: bool, message: String },
+    ActionResult {
+        ok: bool,
+        message: String,
+    },
+    /// Live progress updates emitted while a refresh operation is running.
+    /// An empty vec means "all done, clear the indicator".
+    Progress(Vec<RefreshStep>),
 }
 
 #[cfg(test)]
