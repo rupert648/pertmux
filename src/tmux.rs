@@ -69,13 +69,18 @@ pub fn list_agent_panes(process_names: &[&str], sys: &System) -> anyhow::Result<
 }
 
 fn make_agent_pane(fields: &[&str]) -> AgentPane {
+    let pane_path = fields[5].to_string();
+    let canonical_path = std::fs::canonicalize(&pane_path)
+        .ok()
+        .and_then(|p| p.to_str().map(String::from));
     AgentPane {
         pane_id: fields[0].to_string(),
         session_name: fields[1].to_string(),
         window_index: fields[2].parse().unwrap_or(0),
         pane_index: fields[3].parse().unwrap_or(0),
         pane_title: fields[4].to_string(),
-        pane_path: fields[5].to_string(),
+        pane_path,
+        canonical_path,
         pane_pid: fields[6].parse().unwrap_or(0),
         pane_command: fields[7].to_string(),
         status: PaneStatus::Unknown,

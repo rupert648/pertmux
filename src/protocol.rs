@@ -307,6 +307,7 @@ mod tests {
             pane_index: 0,
             pane_title: "OC | protocol".to_string(),
             pane_path: "/tmp/pertmux-worktree".to_string(),
+            canonical_path: None,
             pane_pid: 1234,
             pane_command: "opencode".to_string(),
             status: PaneStatus::Idle,
