@@ -1,23 +1,19 @@
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{Pid, System};
 
 /// Discover the HTTP port for an opencode instance given the pane's PID.
 ///
 /// Walks the process tree from the shell PID to find the opencode process,
 /// then checks it and its children for a TCP listener.
-pub fn discover_port(pane_pid: u32) -> Option<u16> {
-    let mut sys = System::new();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-    );
-
-    let opencode_pid = find_opencode_pid(&sys, pane_pid)?;
+///
+/// Accepts a pre-refreshed `&System` to avoid redundant `/proc` scans — the
+/// caller is expected to refresh the process table once per tick.
+pub fn discover_port(sys: &System, pane_pid: u32) -> Option<u16> {
+    let opencode_pid = find_opencode_pid(sys, pane_pid)?;
 
     // Collect opencode PID + all its children (the HTTP server may run in a child worker).
     let mut candidate_pids = vec![opencode_pid];
-    candidate_pids.extend(find_child_pids(&sys, opencode_pid));
+    candidate_pids.extend(find_child_pids(sys, opencode_pid));
 
     find_listening_port(&candidate_pids)
 }

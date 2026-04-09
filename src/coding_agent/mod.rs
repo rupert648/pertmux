@@ -2,6 +2,7 @@ pub mod claude_code;
 pub mod opencode;
 
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
+use sysinfo::System;
 
 /// Trait for coding agent integrations.
 ///
@@ -20,7 +21,10 @@ pub trait CodingAgent {
 
     /// Query the live status of a coding session.
     ///
-    fn query_status(&self, pane: &AgentPane) -> PaneStatus;
+    /// Accepts a pre-refreshed `&System` for agents that need process-tree
+    /// inspection (e.g. opencode port discovery). Agents that don't need it
+    /// can ignore the parameter.
+    fn query_status(&self, pane: &AgentPane, sys: &System) -> PaneStatus;
 
     /// Send a prompt to the coding agent.
     ///

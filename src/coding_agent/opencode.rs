@@ -4,6 +4,7 @@ use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub struct OpenCode {
     db_path: Option<String>,
@@ -41,8 +42,8 @@ impl CodingAgent for OpenCode {
         "opencode"
     }
 
-    fn query_status(&self, pane: &AgentPane) -> PaneStatus {
-        let Some(port) = discovery::discover_port(pane.pane_pid) else {
+    fn query_status(&self, pane: &AgentPane, sys: &System) -> PaneStatus {
+        let Some(port) = discovery::discover_port(sys, pane.pane_pid) else {
             return PaneStatus::Unknown;
         };
 
@@ -54,7 +55,14 @@ impl CodingAgent for OpenCode {
     }
 
     fn send_prompt(&self, pane_pid: u32, session_id: &str, prompt: &str) -> anyhow::Result<String> {
-        let port = discovery::discover_port(pane_pid)
+        // send_prompt is a rare user action, so a fresh System scan is acceptable.
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+        let port = discovery::discover_port(&sys, pane_pid)
             .ok_or_else(|| anyhow::anyhow!("Could not discover opencode port"))?;
 
         let url = format!("http://127.0.0.1:{}/session/{}/message", port, session_id);

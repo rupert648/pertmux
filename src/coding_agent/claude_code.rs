@@ -67,7 +67,7 @@ impl CodingAgent for ClaudeCode {
         }
     }
 
-    fn query_status(&self, pane: &AgentPane) -> PaneStatus {
+    fn query_status(&self, pane: &AgentPane, _sys: &sysinfo::System) -> PaneStatus {
         let Some(path) = find_latest_transcript_for_path(&pane.pane_path) else {
             return PaneStatus::Unknown;
         };
