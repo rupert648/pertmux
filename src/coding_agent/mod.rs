@@ -1,7 +1,9 @@
 pub mod claude_code;
 pub mod opencode;
 
+use crate::discovery::ListenerMap;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
+use sysinfo::System;
 
 /// Trait for coding agent integrations.
 ///
@@ -20,7 +22,10 @@ pub trait CodingAgent {
 
     /// Query the live status of a coding session.
     ///
-    fn query_status(&self, pane: &AgentPane) -> PaneStatus;
+    /// Accepts a pre-refreshed `&System` and `&ListenerMap` for agents that
+    /// need process-tree inspection or port discovery (e.g. opencode). Agents
+    /// that don't need them can ignore the parameters.
+    fn query_status(&self, pane: &AgentPane, sys: &System, listeners: &ListenerMap) -> PaneStatus;
 
     /// Send a prompt to the coding agent.
     ///
@@ -29,6 +34,15 @@ pub trait CodingAgent {
     /// the delivery mechanism (e.g. HTTP API, tmux send-keys, socket).
     fn send_prompt(&self, pane_pid: u32, session_id: &str, prompt: &str) -> anyhow::Result<String>;
 
+    /// Enrich the pane with agent-specific metadata (session title, model,
+    /// last activity, etc.).
+    ///
+    /// Implementations may also set `pane.status` here if determining status
+    /// shares the same data source as enrichment (e.g. reading a transcript
+    /// file once for both). In that case, `query_status` should return
+    /// `PaneStatus::Unknown` and document that status is set by `enrich_pane`.
+    ///
+    /// The caller always invokes `enrich_pane` immediately after `query_status`.
     fn enrich_pane(&self, _pane: &mut AgentPane) {}
 
     fn fetch_session_detail(&self, _session_id: &str) -> Option<SessionDetail> {

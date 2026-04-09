@@ -21,6 +21,7 @@ use futures::StreamExt as _;
 use jiff::Timestamp as JiffTimestamp;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
@@ -90,6 +91,10 @@ pub struct ProjectState {
     pub cached_threads: Vec<MergeRequestThread>,
     pub cached_threads_iid: Option<u64>,
     pub cached_worktrees: Vec<WtWorktree>,
+    /// Git worktree info (branch + path) from `git worktree list --porcelain`.
+    /// Populated by `refresh_worktrees` (30s timer) and used by the fast
+    /// refresh path to feed `link_all` without re-running the git command.
+    pub cached_git_worktrees: Vec<crate::git::WorktreeInfo>,
     pub dashboard: DashboardState,
     pub mr_selected: usize,
     pub worktree_selected: usize,
@@ -181,6 +186,7 @@ impl App {
                     cached_threads: vec![],
                     cached_threads_iid: None,
                     cached_worktrees: vec![],
+                    cached_git_worktrees: vec![],
                     dashboard: DashboardState { linked_mrs: vec![] },
                     mr_selected: 0,
                     worktree_selected: 0,
@@ -233,9 +239,42 @@ impl App {
         self.last_refresh = Instant::now();
         self.error = None;
 
-        let process_names: Vec<&str> = self.agents.iter().map(|a| a.process_name()).collect();
+        let process_names: Vec<String> = self
+            .agents
+            .iter()
+            .map(|a| a.process_name().to_string())
+            .collect();
 
-        let mut panes = match tmux::list_agent_panes(&process_names) {
+        // Run the expensive system-level I/O (sysinfo /proc scan, netstat
+        // socket table, tmux subprocess) on the blocking threadpool so the
+        // tokio main task stays responsive for client IPC.
+        let scan_result = {
+            let names = process_names.clone();
+            tokio::task::spawn_blocking(move || {
+                let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                let mut sys = System::new();
+                sys.refresh_processes_specifics(
+                    ProcessesToUpdate::All,
+                    true,
+                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+                );
+                let listeners = crate::discovery::build_listener_map();
+                let panes = tmux::list_agent_panes(&name_refs, &sys);
+                (sys, listeners, panes)
+            })
+            .await
+        };
+
+        let (sys, listeners, panes_result) = match scan_result {
+            Ok(tuple) => tuple,
+            Err(e) => {
+                warn!("app::refresh: spawn_blocking panicked: {}", e);
+                self.error = Some(format!("internal error: {}", e));
+                return;
+            }
+        };
+
+        let mut panes = match panes_result {
             Ok(p) => p,
             Err(e) => {
                 warn!("app::refresh: tmux error after {:.2?}: {}", t.elapsed(), e);
@@ -251,7 +290,7 @@ impl App {
 
         for pane in &mut panes {
             if let Some(agent) = self.find_agent(&pane.pane_command) {
-                pane.status = agent.query_status(pane);
+                pane.status = agent.query_status(pane, &sys, &listeners);
                 agent.enrich_pane(pane);
             }
         }
@@ -301,48 +340,28 @@ impl App {
 
         self.update_detail();
 
+        // Use cached git worktrees (populated by the 30s worktree timer) for
+        // linking instead of re-running `git worktree list` on every 2s tick.
         let mut link_error: Option<String> = None;
         if let Some(ref read_state) = self.read_state {
             for proj in &mut self.projects {
-                info!(
-                    "app::refresh: discover_worktrees for {} (path={})",
-                    proj.config.name, proj.config.local_path
-                );
-                let dt = std::time::Instant::now();
-                match discover_worktrees(&proj.config.local_path).await {
-                    Ok(worktrees) => {
-                        info!(
-                            "app::refresh: discovered {} worktrees in {:.2?}",
-                            worktrees.len(),
-                            dt.elapsed()
-                        );
-                        match link_all(
-                            &proj.cached_mrs,
-                            &worktrees,
-                            &self.panes,
-                            read_state,
-                            &proj.config.project,
-                        ) {
-                            Ok(dashboard) => {
-                                proj.dashboard = dashboard;
-                                if proj.mr_selected >= proj.dashboard.linked_mrs.len()
-                                    && !proj.dashboard.linked_mrs.is_empty()
-                                {
-                                    proj.mr_selected = proj.dashboard.linked_mrs.len() - 1;
-                                }
-                            }
-                            Err(e) => {
-                                link_error = Some(format!("Linking error: {}", e));
-                            }
+                match link_all(
+                    &proj.cached_mrs,
+                    &proj.cached_git_worktrees,
+                    &self.panes,
+                    read_state,
+                    &proj.config.project,
+                ) {
+                    Ok(dashboard) => {
+                        proj.dashboard = dashboard;
+                        if proj.mr_selected >= proj.dashboard.linked_mrs.len()
+                            && !proj.dashboard.linked_mrs.is_empty()
+                        {
+                            proj.mr_selected = proj.dashboard.linked_mrs.len() - 1;
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            "app::refresh: discover_worktrees failed after {:.2?}: {}",
-                            dt.elapsed(),
-                            e
-                        );
-                        link_error = Some(format!("Worktree discovery error: {}", e));
+                        link_error = Some(format!("Linking error: {}", e));
                     }
                 }
             }
@@ -677,6 +696,7 @@ impl App {
             .collect();
         let total = entries.len();
 
+        // Run worktrunk fetch AND git worktree discovery in parallel per project.
         let mut stream = futures::stream::FuturesUnordered::new();
         for (i, name, path) in &entries {
             let i = *i;
@@ -688,22 +708,25 @@ impl App {
                     name, path
                 );
                 let pt = std::time::Instant::now();
-                let result = worktrunk::fetch_worktrees(&path).await;
-                (i, name, pt.elapsed(), result)
+                let (wt_result, git_result) = tokio::join!(
+                    worktrunk::fetch_worktrees(&path),
+                    discover_worktrees(&path),
+                );
+                (i, name, pt.elapsed(), wt_result, git_result)
             });
         }
 
         let mut done = 0;
-        let mut indexed: Vec<
-            Option<(
-                std::time::Duration,
-                anyhow::Result<Vec<crate::worktrunk::WtWorktree>>,
-            )>,
-        > = (0..total).map(|_| None).collect();
+        type WtResult = (
+            std::time::Duration,
+            anyhow::Result<Vec<crate::worktrunk::WtWorktree>>,
+            anyhow::Result<Vec<crate::git::WorktreeInfo>>,
+        );
+        let mut indexed: Vec<Option<WtResult>> = (0..total).map(|_| None).collect();
 
-        while let Some((i, _name, elapsed, result)) = stream.next().await {
+        while let Some((i, _name, elapsed, wt_result, git_result)) = stream.next().await {
             done += 1;
-            indexed[i] = Some((elapsed, result));
+            indexed[i] = Some((elapsed, wt_result, git_result));
             if let Some(tx) = progress_tx {
                 let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
                     label: "Worktrees".into(),
@@ -716,9 +739,14 @@ impl App {
         drop(stream);
 
         for (proj, entry) in self.projects.iter_mut().zip(indexed) {
-            let (elapsed, result) = entry
-                .unwrap_or_else(|| (std::time::Duration::ZERO, Err(anyhow::anyhow!("missing"))));
-            match result {
+            let (elapsed, wt_result, git_result) = entry.unwrap_or_else(|| {
+                (
+                    std::time::Duration::ZERO,
+                    Err(anyhow::anyhow!("missing")),
+                    Err(anyhow::anyhow!("missing")),
+                )
+            });
+            match wt_result {
                 Ok(wts) => {
                     info!(
                         "app::refresh_worktrees: got {} worktrees for {} in {:.2?}",
@@ -739,6 +767,18 @@ impl App {
                         proj.config.name, elapsed, e
                     );
                     proj.cached_worktrees = vec![];
+                }
+            }
+            match git_result {
+                Ok(git_wts) => {
+                    proj.cached_git_worktrees = git_wts;
+                }
+                Err(e) => {
+                    warn!(
+                        "app::refresh_worktrees: git worktree error for {}: {}",
+                        proj.config.name, e
+                    );
+                    // Keep stale cached_git_worktrees rather than clearing
                 }
             }
         }
@@ -771,7 +811,12 @@ impl App {
                 total: 1,
             }]));
         }
-        match worktrunk::fetch_worktrees(&proj.config.local_path).await {
+        let local_path = proj.config.local_path.clone();
+        let (wt_result, git_result) = tokio::join!(
+            worktrunk::fetch_worktrees(&local_path),
+            discover_worktrees(&local_path),
+        );
+        match wt_result {
             Ok(wts) => {
                 info!(
                     "app::refresh_worktrees_for_project: got {} worktrees for {} in {:.2?}",
@@ -802,6 +847,17 @@ impl App {
                     e
                 );
                 proj.cached_worktrees = vec![];
+            }
+        }
+        match git_result {
+            Ok(git_wts) => {
+                proj.cached_git_worktrees = git_wts;
+            }
+            Err(e) => {
+                warn!(
+                    "app::refresh_worktrees_for_project: git worktree error for {}: {}",
+                    proj.config.name, e
+                );
             }
         }
     }

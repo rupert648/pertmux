@@ -18,6 +18,11 @@ pub struct AgentPane {
     pub pane_index: u32,
     pub pane_title: String,
     pub pane_path: String,
+    /// Pre-resolved canonical path (symlinks resolved). Computed once when the
+    /// pane is discovered and reused by linking to avoid repeated `fs::canonicalize`
+    /// syscalls on every tick.
+    #[serde(default)]
+    pub canonical_path: Option<String>,
     pub pane_pid: u32,
     pub pane_command: String,
 

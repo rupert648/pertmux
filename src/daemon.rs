@@ -511,17 +511,18 @@ async fn broadcast_snapshot(
     latest_snapshot: &Arc<Mutex<DashboardSnapshot>>,
     app: &mut App,
 ) {
-    let snapshot = app.snapshot();
+    let mut snapshot = app.snapshot();
+
+    let agent_changes = app.take_pending_agent_changes();
+    if !agent_changes.is_empty() {
+        snapshot.pending_agent_changes = agent_changes;
+    }
+
+    // Store a copy for new-client catch-up, then broadcast the original.
     {
         let mut guard = latest_snapshot.lock().await;
         *guard = snapshot.clone();
     }
 
-    let agent_changes = app.take_pending_agent_changes();
-    let mut broadcast_snap = snapshot;
-    if !agent_changes.is_empty() {
-        broadcast_snap.pending_agent_changes = agent_changes;
-    }
-
-    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(broadcast_snap)));
+    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(snapshot)));
 }
