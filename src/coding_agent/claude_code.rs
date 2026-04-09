@@ -69,25 +69,19 @@ impl CodingAgent for ClaudeCode {
 
     fn query_status(
         &self,
-        pane: &AgentPane,
+        _pane: &AgentPane,
         _sys: &sysinfo::System,
         _listeners: &crate::discovery::ListenerMap,
     ) -> PaneStatus {
-        let Some(path) = find_latest_transcript_for_path(&pane.pane_path) else {
-            return PaneStatus::Unknown;
-        };
-
-        let Some(entry) = read_last_entry(&path) else {
-            return PaneStatus::Unknown;
-        };
-
-        match entry.entry_type.as_str() {
-            "user" | "tool_use" => PaneStatus::Busy,
-            "assistant" | "tool_result" => PaneStatus::Idle,
-            _ => PaneStatus::Unknown,
-        }
+        // Status is determined in enrich_pane() to avoid a double file read.
+        // The caller always calls enrich_pane() after query_status(), which
+        // sets pane.status from the same transcript read used for enrichment.
+        PaneStatus::Unknown
     }
 
+    /// Enrich the pane with session details AND set pane.status from a single
+    /// transcript read, avoiding the duplicate file I/O that separate
+    /// query_status() + enrich_pane() calls would incur.
     fn enrich_pane(&self, pane: &mut AgentPane) {
         pane.agent = Some(self.name().to_string());
 
@@ -98,6 +92,15 @@ impl CodingAgent for ClaudeCode {
         let entries = read_entries(&path);
         if entries.is_empty() {
             return;
+        }
+
+        // Determine status from the last entry (previously done in query_status).
+        if let Some(last) = entries.last() {
+            pane.status = match last.entry_type.as_str() {
+                "user" | "tool_use" => PaneStatus::Busy,
+                "assistant" | "tool_result" => PaneStatus::Idle,
+                _ => PaneStatus::Unknown,
+            };
         }
 
         pane.db_session_id = entries.iter().rev().find_map(|e| e.session_id.clone());
@@ -295,21 +298,6 @@ fn is_jsonl(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-}
-
-fn read_last_entry(path: &Path) -> Option<TranscriptEntry> {
-    let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
-    let mut last_line: Option<String> = None;
-
-    for line in reader.lines().map_while(Result::ok) {
-        if !line.trim().is_empty() {
-            last_line = Some(line);
-        }
-    }
-
-    let line = last_line?;
-    serde_json::from_str(&line).ok()
 }
 
 fn read_entries(path: &Path) -> Vec<TranscriptEntry> {
