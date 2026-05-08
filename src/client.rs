@@ -13,6 +13,7 @@ use crossterm::{
 };
 use futures::{SinkExt, StreamExt};
 use ratatui::prelude::*;
+use std::cell::Cell;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -38,6 +39,109 @@ fn load_last_project() -> Option<String> {
     std::fs::read_to_string(&path)
         .ok()
         .map(|s| s.trim().to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectSort {
+    Mrs,
+    Oc,
+    Busy,
+    Idle,
+    Name,
+}
+
+impl ProjectSort {
+    fn as_str(self) -> &'static str {
+        match self {
+            ProjectSort::Mrs => "mrs",
+            ProjectSort::Oc => "oc",
+            ProjectSort::Busy => "busy",
+            ProjectSort::Idle => "idle",
+            ProjectSort::Name => "name",
+        }
+    }
+
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "mrs" => Some(ProjectSort::Mrs),
+            "oc" => Some(ProjectSort::Oc),
+            "busy" => Some(ProjectSort::Busy),
+            "idle" => Some(ProjectSort::Idle),
+            "name" => Some(ProjectSort::Name),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectSort::Mrs => "MRs",
+            ProjectSort::Oc => "OC",
+            ProjectSort::Busy => "Busy",
+            ProjectSort::Idle => "Idle",
+            ProjectSort::Name => "Name",
+        }
+    }
+
+    /// Default sort direction for this column: numeric columns descending, Name ascending.
+    pub fn default_desc(self) -> bool {
+        !matches!(self, ProjectSort::Name)
+    }
+
+    /// Cycle right through the column order used in the Projects table header.
+    pub fn next_col(self) -> Self {
+        match self {
+            ProjectSort::Name => ProjectSort::Mrs,
+            ProjectSort::Mrs => ProjectSort::Oc,
+            ProjectSort::Oc => ProjectSort::Busy,
+            ProjectSort::Busy => ProjectSort::Idle,
+            ProjectSort::Idle => ProjectSort::Name,
+        }
+    }
+
+    /// Cycle left through the column order used in the Projects table header.
+    pub fn prev_col(self) -> Self {
+        match self {
+            ProjectSort::Name => ProjectSort::Idle,
+            ProjectSort::Mrs => ProjectSort::Name,
+            ProjectSort::Oc => ProjectSort::Mrs,
+            ProjectSort::Busy => ProjectSort::Oc,
+            ProjectSort::Idle => ProjectSort::Busy,
+        }
+    }
+}
+
+fn last_sort_path() -> Option<PathBuf> {
+    let data_dir = dirs::data_dir()?;
+    Some(data_dir.join("pertmux").join("last_sort"))
+}
+
+fn save_last_sort(col: ProjectSort, desc: bool) {
+    if let Some(path) = last_sort_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let dir = if desc { "desc" } else { "asc" };
+        let _ = std::fs::write(&path, format!("{},{}", col.as_str(), dir));
+    }
+}
+
+fn load_last_sort() -> Option<(ProjectSort, bool)> {
+    let path = last_sort_path()?;
+    let s = std::fs::read_to_string(&path).ok()?;
+    let s = s.trim();
+    if let Some((col_str, dir_str)) = s.split_once(',') {
+        let col = ProjectSort::from_str(col_str.trim())?;
+        let desc = match dir_str.trim() {
+            "desc" => true,
+            "asc" => false,
+            _ => return None,
+        };
+        Some((col, desc))
+    } else {
+        // Legacy single-token form.
+        let col = ProjectSort::from_str(s)?;
+        Some((col, col.default_desc()))
+    }
 }
 
 fn open_url_in_browser(url: &str) {
@@ -73,6 +177,21 @@ pub struct ClientState {
     /// Cleared when the daemon sends `Progress(vec![])`.
     pub refresh_steps: Vec<RefreshStep>,
     pub running: bool,
+    /// Applied sort column (persisted).
+    pub project_sort_col: ProjectSort,
+    /// Applied sort direction (persisted). True = descending.
+    pub project_sort_desc: bool,
+    /// Whether the Projects pane is the focused section (Tab cycles into it).
+    pub project_focused: bool,
+    /// Cursor row within the sorted projects list (display index, not canonical).
+    pub project_cursor_row: usize,
+    /// Cursor column within the projects table while focused (ephemeral).
+    pub project_cursor_col: ProjectSort,
+    /// Scroll offset (top row) for the projects table.
+    pub project_scroll: usize,
+    /// Last rendered viewport row count (excluding chrome) — written by render,
+    /// read by key handler to clamp scrolling.
+    pub overview_height: Cell<u16>,
     /// Set when `CreateWorktreeWithPrompt` is submitted, cleared on ActionResult.
     pending_create_with_prompt: Option<WorktreeOpenRequest>,
     /// Set when ActionResult ok is received for a `CreateWorktreeWithPrompt`.
@@ -108,6 +227,8 @@ impl ClientState {
         } else {
             PopupState::None
         };
+        let (project_sort_col, project_sort_desc) =
+            load_last_sort().unwrap_or((ProjectSort::Mrs, true));
         Self {
             snapshot,
             active_project,
@@ -118,6 +239,13 @@ impl ClientState {
             popup,
             notification: None,
             running: true,
+            project_sort_col,
+            project_sort_desc,
+            project_focused: false,
+            project_cursor_row: 0,
+            project_cursor_col: project_sort_col,
+            project_scroll: 0,
+            overview_height: Cell::new(0),
             refresh_steps: vec![],
             pending_create_with_prompt: None,
             pending_open_worktree: None,
@@ -162,6 +290,20 @@ impl ClientState {
         }
         if self.selected >= snapshot.panes.len() && !snapshot.panes.is_empty() {
             self.selected = snapshot.panes.len() - 1;
+        }
+
+        // Clamp project cursor/scroll if project list shrunk or is empty.
+        if snapshot.projects.is_empty() {
+            self.project_focused = false;
+            self.project_cursor_row = 0;
+            self.project_scroll = 0;
+        } else {
+            if self.project_cursor_row >= snapshot.projects.len() {
+                self.project_cursor_row = snapshot.projects.len() - 1;
+            }
+            if self.project_scroll >= snapshot.projects.len() {
+                self.project_scroll = snapshot.projects.len().saturating_sub(1);
+            }
         }
 
         self.snapshot = snapshot;
@@ -270,16 +412,110 @@ impl ClientState {
         }
     }
 
+    /// Tab cycles MergeRequests → Worktrees → Projects(focused) → MergeRequests.
     fn toggle_section(&mut self) {
-        if self.snapshot.projects.get(self.active_project).is_some() {
-            let section = self
-                .selection_section
-                .get_mut(self.active_project)
-                .expect("selection section exists for project");
-            *section = match section {
-                SelectionSection::MergeRequests => SelectionSection::Worktrees,
-                SelectionSection::Worktrees => SelectionSection::MergeRequests,
+        if self.snapshot.projects.is_empty() {
+            return;
+        }
+        if self.project_focused {
+            // Exit focus, land on MergeRequests.
+            self.project_focused = false;
+            if let Some(section) = self.selection_section.get_mut(self.active_project) {
+                *section = SelectionSection::MergeRequests;
+            }
+            return;
+        }
+        let section = self
+            .selection_section
+            .get_mut(self.active_project)
+            .expect("selection section exists for project");
+        match section {
+            SelectionSection::MergeRequests => {
+                *section = SelectionSection::Worktrees;
+            }
+            SelectionSection::Worktrees => {
+                // Enter Projects focus mode.
+                self.project_focused = true;
+                let display_idx = self.active_project_display_index();
+                self.project_cursor_row = display_idx;
+                self.project_cursor_col = self.project_sort_col;
+                self.ensure_cursor_visible();
+            }
+        }
+    }
+
+    /// Build canonical→display order for the projects list under current sort.
+    pub fn sorted_project_canonical_indices(&self) -> Vec<usize> {
+        let mut entries: Vec<(usize, &str, usize, usize, usize)> = self
+            .snapshot
+            .projects
+            .iter()
+            .enumerate()
+            .map(|(i, proj)| {
+                let project_paths: Vec<&str> = std::iter::once(proj.local_path.as_str())
+                    .chain(
+                        proj.cached_worktrees
+                            .iter()
+                            .filter_map(|wt| wt.path.as_deref()),
+                    )
+                    .collect();
+                let pane_belongs = |pane: &crate::types::AgentPane| {
+                    let p = pane.pane_path.trim_end_matches('/');
+                    project_paths.iter().any(|pp| p == pp.trim_end_matches('/'))
+                };
+                let busy = self
+                    .snapshot
+                    .panes
+                    .iter()
+                    .filter(|p| matches!(p.status, crate::types::PaneStatus::Busy) && pane_belongs(p))
+                    .count();
+                let idle = self
+                    .snapshot
+                    .panes
+                    .iter()
+                    .filter(|p| matches!(p.status, crate::types::PaneStatus::Idle) && pane_belongs(p))
+                    .count();
+                (
+                    i,
+                    proj.name.as_str(),
+                    proj.dashboard.linked_mrs.len(),
+                    busy,
+                    idle,
+                )
+            })
+            .collect();
+        let col = self.project_sort_col;
+        let desc = self.project_sort_desc;
+        entries.sort_by(|a, b| {
+            let cmp = match col {
+                ProjectSort::Name => a.1.cmp(b.1),
+                ProjectSort::Mrs => a.2.cmp(&b.2),
+                ProjectSort::Busy => a.3.cmp(&b.3),
+                ProjectSort::Idle => a.4.cmp(&b.4),
+                ProjectSort::Oc => (a.3 + a.4).cmp(&(b.3 + b.4)),
             };
+            let cmp = if desc { cmp.reverse() } else { cmp };
+            cmp.then_with(|| a.1.cmp(b.1))
+        });
+        entries.into_iter().map(|e| e.0).collect()
+    }
+
+    fn active_project_display_index(&self) -> usize {
+        self.sorted_project_canonical_indices()
+            .iter()
+            .position(|&i| i == self.active_project)
+            .unwrap_or(0)
+    }
+
+    fn ensure_cursor_visible(&mut self) {
+        let h = self.overview_height.get() as usize;
+        if h == 0 {
+            return;
+        }
+        if self.project_cursor_row < self.project_scroll {
+            self.project_scroll = self.project_cursor_row;
+        } else if self.project_cursor_row >= self.project_scroll + h {
+            self.project_scroll = self.project_cursor_row + 1 - h;
         }
     }
 
@@ -1273,6 +1509,73 @@ async fn handle_key(
             _ => {}
         }
         return Ok(());
+    }
+
+    // Project focus mode: intercept j/k/h/l/Space/Enter before global handler.
+    // q/Esc/Tab and other chars (r/f/etc.) fall through.
+    if state.project_focused {
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = state.snapshot.projects.len();
+                if len > 0 && state.project_cursor_row + 1 < len {
+                    state.project_cursor_row += 1;
+                    state.ensure_cursor_visible();
+                }
+                return Ok(());
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if state.project_cursor_row > 0 {
+                    state.project_cursor_row -= 1;
+                    state.ensure_cursor_visible();
+                }
+                return Ok(());
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                state.project_cursor_col = state.project_cursor_col.next_col();
+                return Ok(());
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                state.project_cursor_col = state.project_cursor_col.prev_col();
+                return Ok(());
+            }
+            KeyCode::Char(' ') => {
+                if state.project_cursor_col == state.project_sort_col {
+                    state.project_sort_desc = !state.project_sort_desc;
+                } else {
+                    state.project_sort_col = state.project_cursor_col;
+                    state.project_sort_desc = state.project_cursor_col.default_desc();
+                }
+                save_last_sort(state.project_sort_col, state.project_sort_desc);
+                let arrow = if state.project_sort_desc { "↓" } else { "↑" };
+                state.notify(format!("Sort: {} {}", arrow, state.project_sort_col.label()));
+                return Ok(());
+            }
+            KeyCode::Enter => {
+                let order = state.sorted_project_canonical_indices();
+                if let Some(&canonical) = order.get(state.project_cursor_row) {
+                    state.active_project = canonical;
+                    if let Some(proj) = state.snapshot.projects.get(canonical) {
+                        save_last_project(&proj.name);
+                    }
+                    state.project_focused = false;
+                    if let Some(section) = state.selection_section.get_mut(canonical) {
+                        *section = SelectionSection::MergeRequests;
+                    }
+                    if let Some(mr_iid) = state.current_mr_iid() {
+                        send_msg(
+                            framed,
+                            ClientMsg::SelectMr {
+                                project_idx: canonical,
+                                mr_iid,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
     }
 
     match code {
