@@ -231,10 +231,6 @@ impl App {
         }
     }
 
-    pub fn has_projects(&self) -> bool {
-        !self.projects.is_empty()
-    }
-
     pub async fn refresh(&mut self) {
         info!("app::refresh: start");
         let t = std::time::Instant::now();
