@@ -684,13 +684,14 @@ impl ClientState {
         if self.snapshot.projects.len() < 2 {
             return;
         }
-        let all: Vec<(usize, String)> = self
+        let mut all: Vec<(usize, String)> = self
             .snapshot
             .projects
             .iter()
             .enumerate()
             .map(|(i, p)| (i, p.name.clone()))
             .collect();
+        all.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
         self.popup = PopupState::ProjectFilter {
             input: String::new(),
             filtered: all,
@@ -714,7 +715,10 @@ impl ClientState {
                 .collect();
 
             if input.is_empty() {
-                *filtered = projects.iter().map(|(i, n)| (*i, n.to_string())).collect();
+                let mut all: Vec<(usize, String)> =
+                    projects.iter().map(|(i, n)| (*i, n.to_string())).collect();
+                all.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+                *filtered = all;
             } else {
                 use nucleo_matcher::Matcher;
                 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
