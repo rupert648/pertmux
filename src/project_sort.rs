@@ -16,15 +16,17 @@ use std::str::FromStr;
 pub enum ProjectSort {
     Name,
     Mrs,
+    Wt,
     Oc,
     Busy,
     Idle,
 }
 
 /// Display order of columns in the Projects table header.
-pub const ORDER: [ProjectSort; 5] = [
+pub const ORDER: [ProjectSort; 6] = [
     ProjectSort::Name,
     ProjectSort::Mrs,
+    ProjectSort::Wt,
     ProjectSort::Oc,
     ProjectSort::Busy,
     ProjectSort::Idle,
@@ -35,6 +37,7 @@ impl ProjectSort {
     pub fn as_str(self) -> &'static str {
         match self {
             ProjectSort::Mrs => "mrs",
+            ProjectSort::Wt => "wt",
             ProjectSort::Oc => "oc",
             ProjectSort::Busy => "busy",
             ProjectSort::Idle => "idle",
@@ -46,6 +49,7 @@ impl ProjectSort {
     pub fn label(self) -> &'static str {
         match self {
             ProjectSort::Mrs => "MRs",
+            ProjectSort::Wt => "WT",
             ProjectSort::Oc => "OC",
             ProjectSort::Busy => "Busy",
             ProjectSort::Idle => "Idle",
@@ -83,6 +87,7 @@ impl FromStr for ProjectSort {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "mrs" => Ok(ProjectSort::Mrs),
+            "wt" => Ok(ProjectSort::Wt),
             "oc" => Ok(ProjectSort::Oc),
             "busy" => Ok(ProjectSort::Busy),
             "idle" => Ok(ProjectSort::Idle),
@@ -178,6 +183,7 @@ mod tests {
         assert!(!ProjectSort::Name.default_desc());
         for col in [
             ProjectSort::Mrs,
+            ProjectSort::Wt,
             ProjectSort::Oc,
             ProjectSort::Busy,
             ProjectSort::Idle,

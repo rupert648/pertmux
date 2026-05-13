@@ -73,6 +73,7 @@ pub(crate) fn draw_overview_panel(frame: &mut Frame, state: &ClientState, area: 
     let widths = [
         Constraint::Min(10),   // Name
         Constraint::Length(4), // MRs
+        Constraint::Length(3), // WT
         Constraint::Length(3), // OC
         Constraint::Length(4), // Busy
         Constraint::Length(4), // Idle
@@ -90,6 +91,7 @@ fn header_label(col: ProjectSort) -> &'static str {
     match col {
         ProjectSort::Name => "  Name",
         ProjectSort::Mrs => "MRs",
+        ProjectSort::Wt => "WT",
         ProjectSort::Oc => "OC",
         ProjectSort::Busy => "Busy",
         ProjectSort::Idle => "Idle",
@@ -136,6 +138,7 @@ fn data_row(s: &ProjectStats, is_active: bool, is_cursor_row: bool) -> Row<'stat
     let row = Row::new([
         Cell::from(Span::styled(format!("{}{}", marker, s.name), name_style)),
         Cell::from(Span::styled(s.mrs.to_string(), count_style(s.mrs, ACCENT))),
+        Cell::from(Span::styled(s.wt.to_string(), count_style(s.wt, ACCENT))),
         Cell::from(Span::styled(oc.to_string(), count_style(oc, ACCENT))),
         Cell::from(Span::styled(
             s.busy.to_string(),

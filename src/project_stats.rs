@@ -16,6 +16,7 @@ pub struct ProjectStats {
     pub canonical_idx: usize,
     pub name: String,
     pub mrs: usize,
+    pub wt: usize,
     pub busy: usize,
     pub idle: usize,
 }
@@ -31,6 +32,7 @@ impl ProjectStats {
         match col {
             ProjectSort::Name => SortKey::Str(&self.name),
             ProjectSort::Mrs => SortKey::Num(self.mrs),
+            ProjectSort::Wt => SortKey::Num(self.wt),
             ProjectSort::Oc => SortKey::Num(self.oc()),
             ProjectSort::Busy => SortKey::Num(self.busy),
             ProjectSort::Idle => SortKey::Num(self.idle),
@@ -81,6 +83,7 @@ pub fn build_project_stats(snapshot: &DashboardSnapshot) -> Vec<ProjectStats> {
                 canonical_idx: i,
                 name: proj.name.clone(),
                 mrs: proj.dashboard.linked_mrs.len(),
+                wt: proj.cached_worktrees.len().saturating_sub(1),
                 busy,
                 idle,
             }
@@ -144,6 +147,7 @@ mod tests {
             canonical_idx: idx,
             name: name.to_string(),
             mrs,
+            wt: 0,
             busy,
             idle,
         }
