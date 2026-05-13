@@ -32,6 +32,7 @@ pub(crate) struct ProjectRenderData<'a> {
     pub(crate) mr_selected: usize,
     pub(crate) worktree_selected: usize,
     pub(crate) mr_focused: bool,
+    pub(crate) list_focused: bool,
 }
 
 impl<'a> ProjectRenderData<'a> {
@@ -41,6 +42,7 @@ impl<'a> ProjectRenderData<'a> {
         mr_selected: usize,
         worktree_selected: usize,
         section: &'a SelectionSection,
+        list_focused: bool,
     ) -> Self {
         Self {
             dashboard: &proj.dashboard,
@@ -53,6 +55,7 @@ impl<'a> ProjectRenderData<'a> {
             mr_selected,
             worktree_selected,
             mr_focused: matches!(section, SelectionSection::MergeRequests),
+            list_focused,
         }
     }
 }

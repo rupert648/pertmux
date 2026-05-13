@@ -117,6 +117,7 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
                 .get(state.active_project)
                 .unwrap_or(&0),
             section,
+            !state.project_focused,
             inner,
         );
         return;

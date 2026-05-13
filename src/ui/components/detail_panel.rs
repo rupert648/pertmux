@@ -94,8 +94,14 @@ fn draw_mr_detail_panel_client(
     section: &SelectionSection,
     area: Rect,
 ) {
-    let render =
-        ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected, section);
+    let render = ProjectRenderData::from_snapshot(
+        proj,
+        panes,
+        mr_selected,
+        worktree_selected,
+        section,
+        false,
+    );
     draw_mr_detail_panel_render(frame, &render, area);
 }
 

@@ -23,10 +23,17 @@ pub(crate) fn draw_mr_sections_client(
     mr_selected: usize,
     worktree_selected: usize,
     section: &SelectionSection,
+    list_focused: bool,
     area: Rect,
 ) {
-    let render =
-        ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected, section);
+    let render = ProjectRenderData::from_snapshot(
+        proj,
+        panes,
+        mr_selected,
+        worktree_selected,
+        section,
+        list_focused,
+    );
     draw_mr_sections_render(frame, &render, area);
 }
 
@@ -42,8 +49,8 @@ fn draw_mr_sections_render(frame: &mut Frame, proj: &ProjectRenderData<'_>, area
         ])
         .split(area);
 
-    draw_worktree_block_render(frame, proj, chunks[0], !proj.mr_focused);
-    draw_mr_block_render(frame, proj, chunks[1], proj.mr_focused);
+    draw_worktree_block_render(frame, proj, chunks[0], proj.list_focused && !proj.mr_focused);
+    draw_mr_block_render(frame, proj, chunks[1], proj.list_focused && proj.mr_focused);
 }
 
 fn draw_mr_block_render(
