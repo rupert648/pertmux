@@ -265,8 +265,21 @@ fn draw_project_filter_popup(
     ));
     frame.render_widget(Paragraph::new(divider), chunks[1]);
 
+    let visible_rows = chunks[2].height as usize;
     let mut result_lines: Vec<Line> = Vec::new();
-    for (i, (_idx, name)) in filtered.iter().enumerate() {
+    let offset = if visible_rows == 0 || filtered.len() <= visible_rows {
+        0
+    } else if selected < visible_rows {
+        0
+    } else {
+        (selected + 1).saturating_sub(visible_rows)
+    };
+    for (i, (_idx, name)) in filtered
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(visible_rows.max(1))
+    {
         let style = if i == selected {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
