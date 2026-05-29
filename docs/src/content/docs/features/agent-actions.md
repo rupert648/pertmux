@@ -3,13 +3,13 @@ title: Agent Actions
 description: Send commands to your coding agents directly from the dashboard.
 ---
 
-pertmux can send prompts to running coding agent instances. For opencode, it uses the [opencode HTTP API](https://github.com/sst/opencode). For Claude Code, it types the prompt directly into the tmux pane via `send-keys`. This lets you trigger common workflows without switching to the agent's pane.
+pertmux can send prompts to running coding agent instances. For opencode, it uses the [opencode HTTP API](https://github.com/sst/opencode). For Claude Code and Codex CLI, it types the prompt directly into the tmux pane via `send-keys`. This lets you trigger common workflows without switching to the agent's pane.
 
 ## Prerequisites
 
 For agent actions to work, the selected worktree needs:
 
-1. A **coding agent instance** (opencode or Claude Code) running in a tmux pane whose working directory matches the worktree path
+1. A **coding agent instance** (opencode, Claude Code, or Codex CLI) running in a tmux pane whose working directory matches the worktree path
 2. An **active session** in that agent instance (pertmux reads the session ID from the agent's data source)
 
 If either is missing, pressing `a` shows an error toast explaining what's needed.
@@ -91,6 +91,7 @@ When you confirm an action:
 4. The agent implementation delivers the prompt via its own mechanism:
    - **opencode**: HTTP POST to `/session/{id}/message`
    - **Claude Code**: `tmux send-keys` into the agent's pane
+   - **Codex CLI**: `tmux send-keys` into the agent's pane
 5. The daemon returns a success/failure toast to the client
 
 Agent actions are **agent-agnostic** — the `CodingAgent` trait's `send_prompt()` method means each agent implementation controls how prompts are delivered. See [Extending pertmux](/reference/extending/) for how to add new agents with custom prompt delivery.

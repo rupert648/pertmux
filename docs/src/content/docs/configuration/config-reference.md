@@ -52,6 +52,18 @@ Including this section enables the opencode agent. Omit or comment it out to dis
 |-----|------|---------|-------------|
 | `db_path` | string | `~/.local/share/opencode/opencode.db` | Path to the opencode SQLite database |
 
+## `[agent.claude_code]`
+
+Including this section enables the Claude Code agent. No configuration options needed.
+
+## `[agent.codex]`
+
+Including this section enables the Codex CLI agent. Omit or comment it out to disable.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `codex_home` | string | `~/.codex` | Override the Codex home directory (contains `state_5.sqlite` and `logs_2.sqlite`) |
+
 ## `[keybindings]`
 
 Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable. Each action must have a unique key — duplicates are rejected at startup with a clear error message.
@@ -72,7 +84,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 
 ## `[[agent_action]]`
 
-Define custom agent actions that can be sent to opencode instances from the dashboard. When any `[[agent_action]]` entries are present, they replace the built-in defaults. Omit this section entirely to use the two default actions (rebase, pipeline fix).
+Define custom agent actions that can be sent to coding agent instances from the dashboard. When any `[[agent_action]]` entries are present, they replace the built-in defaults. Omit this section entirely to use the two default actions (rebase, pipeline fix).
 
 | Key | Type | Required | Default | Description |
 |-----|------|----------|---------|-------------|

@@ -20,14 +20,14 @@ pub trait CodingAgent {
 }
 ```
 
-- **`name()`**: Human-readable name for the agent (e.g. `"opencode"`, `"claude-code"`).
-- **`process_name()`**: The process name to detect in tmux panes (e.g. `"opencode"`, `"claude"`).
+- **`name()`**: Human-readable name for the agent (e.g. `"opencode"`, `"claude-code"`, `"codex"`).
+- **`process_name()`**: The process name to detect in tmux panes (e.g. `"opencode"`, `"claude"`, `"codex"`).
 - **`query_status()`**: Takes the pane info and returns a `PaneStatus` enum (Busy, Idle, Retry, Unknown).
-- **`send_prompt()`**: Delivers a prompt to the agent. The implementation determines the delivery mechanism — opencode uses its HTTP API, Claude Code uses tmux `send-keys`.
+- **`send_prompt()`**: Delivers a prompt to the agent. The implementation determines the delivery mechanism — opencode uses its HTTP API, Claude Code and Codex CLI use tmux `send-keys`.
 - **`enrich_pane()`**: Populates pane metadata (session title, model, tokens, etc.) from the agent's data source.
 - **`fetch_session_detail()`**: Returns detailed session info for the detail panel.
 
-Each agent is responsible for its own data source — opencode uses HTTP API + SQLite, Claude Code reads JSONL transcript files.
+Each agent is responsible for its own data source — opencode uses HTTP API + SQLite, Claude Code reads JSONL transcript files, Codex CLI reads SQLite databases.
 
 Register your agent in `agents_from_config()` in `src/coding_agent/mod.rs`.
 

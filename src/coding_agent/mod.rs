@@ -1,4 +1,5 @@
 pub mod claude_code;
+pub mod codex;
 pub mod opencode;
 
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
@@ -45,6 +46,11 @@ pub fn agents_from_config(config: &crate::config::AgentConfig) -> Vec<Box<dyn Co
     }
     if config.claude_code.is_some() {
         agents.push(Box::new(claude_code::ClaudeCode));
+    }
+    if config.codex.is_some() {
+        agents.push(Box::new(codex::Codex::new(
+            config.codex.as_ref().and_then(|c| c.codex_home.clone()),
+        )));
     }
     agents
 }

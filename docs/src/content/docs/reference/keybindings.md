@@ -40,7 +40,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 
 ## Configuring keybindings
 
-Add a `[keybindings]` section to your config file to remap action keys. Only single characters are supported — no modifier keys or multi-key sequences. The `agent_actions` popup only shows when a worktree has an active opencode session.
+Add a `[keybindings]` section to your config file to remap action keys. Only single characters are supported — no modifier keys or multi-key sequences. The `agent_actions` popup only shows when a worktree has an active coding agent session.
 
 ```toml
 [keybindings]

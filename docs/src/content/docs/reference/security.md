@@ -14,7 +14,7 @@ Personal access tokens (configured in `~/.config/pertmux.toml` or via environmen
 All data stays on your machine:
 
 - **MR/PR data** is fetched from your forge's API and held in memory by the daemon. Nothing is written to disk except the read-state database (`~/.local/share/pertmux/read_state.db`), which tracks which comments you've seen.
-- **Agent data** is read from the local opencode SQLite database and the agent's local HTTP server. No data is sent externally.
+- **Agent data** is read from local sources only — opencode's SQLite database and HTTP server, Claude Code's JSONL transcripts, and Codex CLI's SQLite databases. No data is sent externally.
 - **Worktree data** comes from local `git` and `wt` CLI commands.
 
 ## Network access
@@ -31,5 +31,5 @@ There is no telemetry, no analytics, no phoning home. pertmux makes zero network
 pertmux is fully open source. You can audit every network call in the codebase:
 
 - Forge API calls: `src/forge_clients/gitlab/client.rs` and `src/forge_clients/github/client.rs`
-- Agent API calls: `src/coding_agent/opencode.rs`
+- Agent API calls: `src/coding_agent/opencode.rs`, `src/coding_agent/claude_code.rs`, `src/coding_agent/codex.rs`
 - Port discovery: `src/discovery.rs` (local process inspection only)
