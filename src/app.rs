@@ -63,6 +63,13 @@ pub enum PopupState {
         filtered: Vec<(usize, String)>,
         selected: usize,
     },
+    /// Global fuzzy search over worktrees across all projects.
+    /// `filtered` holds (project_idx, worktree_idx) pairs into the snapshot.
+    WorktreeSearch {
+        input: String,
+        filtered: Vec<(usize, usize)>,
+        selected: usize,
+    },
     ChangeSummary {
         changes: Vec<MrChange>,
         selected: usize,

@@ -30,6 +30,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `M` | Merge selected worktree into default branch | `merge_worktree` |
 | `a` | Open agent actions panel | `agent_actions` |
 | `A` | Open Activity Feed popup — navigate recent events and jump to the relevant tmux pane or MR | `activity_feed` |
+| `W` | Global worktree search — fuzzy search worktrees across all projects | `worktree_search` |
 
 ## Global
 
@@ -49,12 +50,13 @@ open_browser = "O"
 copy_branch = "y"
 filter_projects = "p"
 create_worktree = "n"
-open_worktree_with_prompt = "W"
+open_worktree_with_prompt = "N"
 delete_worktree = "x"
 merge_worktree = "G"
 mr_overview = "v"
 agent_actions = "P"
 activity_feed = "F"
+worktree_search = "/"
 ```
 
 Missing keys use their defaults. Each action must have a unique key — duplicates are rejected at startup with a clear error message.

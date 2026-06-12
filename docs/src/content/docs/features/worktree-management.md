@@ -33,6 +33,7 @@ Each worktree card shows:
 | `w` | Create a new worktree and inject a prompt into the agent |
 | `d` | Delete selected worktree |
 | `M` | Merge selected worktree into the default branch |
+| `W` | Global worktree search across all projects |
 | `Enter` | Jump to the worktree's tmux pane |
 
 ## Create workflow
@@ -78,6 +79,12 @@ pertmux creates the `feat/login-page` worktree and opens a tmux pane running:
 ```
 opencode run implement the user login page with email and password fields
 ```
+
+## Global worktree search
+
+Press `W` anywhere in the dashboard to open a fuzzy search over worktrees from **all** configured projects. Each result shows the branch name, owning project, and commit age. Type to filter — queries match against `project/branch`, so `mainapi/fix` or just `fix` both work.
+
+Press `Enter` to jump: pertmux switches to the worktree's project, selects it in the worktree panel, and opens (or creates) its tmux pane — same behavior as `Enter` on a worktree card. The key is configurable via `worktree_search` in `[keybindings]`.
 
 ## Merge workflow
 

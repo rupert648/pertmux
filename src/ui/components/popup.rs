@@ -3,6 +3,7 @@ use crate::client::ClientState;
 use crate::config::{AgentActionConfig, ProjectForge};
 use crate::protocol::ActivityKind;
 use crate::ui::ACCENT;
+use crate::worktrunk;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -24,6 +25,16 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     } = &state.popup
     {
         draw_project_filter_popup(frame, input, filtered, *selected, area);
+        return;
+    }
+
+    if let PopupState::WorktreeSearch {
+        input,
+        filtered,
+        selected,
+    } = &state.popup
+    {
+        draw_worktree_search_popup(frame, state, input, filtered, *selected, area);
         return;
     }
 
@@ -67,6 +78,7 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None
         | PopupState::ProjectFilter { .. }
+        | PopupState::WorktreeSearch { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
@@ -264,6 +276,116 @@ fn draw_project_filter_popup(
         result_lines.push(Line::from(vec![
             Span::styled(prefix, Style::default().fg(ACCENT)),
             Span::styled(name.as_str(), style),
+        ]));
+    }
+
+    if result_lines.is_empty() {
+        result_lines.push(Line::from(Span::styled(
+            "   no matches",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(result_lines), chunks[2]);
+}
+
+fn draw_worktree_search_popup(
+    frame: &mut Frame,
+    state: &ClientState,
+    input: &str,
+    filtered: &[(usize, usize)],
+    selected: usize,
+    area: Rect,
+) {
+    let popup_w = 64u16.min(area.width.saturating_sub(4));
+    let list_h = filtered.len().clamp(1, 12) as u16;
+    let popup_h = (list_h + 4).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Find Worktree ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .split(inner);
+
+    let input_line = Line::from(vec![
+        Span::styled(
+            " > ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            input,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), chunks[0]);
+
+    let divider = Line::from(Span::styled(
+        "\u{2500}".repeat(inner.width as usize),
+        Style::default().fg(Color::Indexed(236)),
+    ));
+    frame.render_widget(Paragraph::new(divider), chunks[1]);
+
+    let visible = chunks[2].height as usize;
+    let start = if visible > 0 && selected >= visible {
+        selected + 1 - visible
+    } else {
+        0
+    };
+
+    let width = inner.width as usize;
+    let mut result_lines: Vec<Line> = Vec::new();
+    for (i, (pi, wi)) in filtered.iter().enumerate().skip(start).take(visible) {
+        let Some(proj) = state.snapshot.projects.get(*pi) else {
+            continue;
+        };
+        let Some(wt) = proj.cached_worktrees.get(*wi) else {
+            continue;
+        };
+        let branch = wt.branch.as_deref().unwrap_or("(detached)");
+        let age = worktrunk::format_age(wt.commit.timestamp);
+        let is_sel = i == selected;
+
+        let prefix = if is_sel { " \u{25b8} " } else { "   " };
+        let right = format!("{} {} ", proj.name, age);
+        let branch_max = width.saturating_sub(prefix.len() + right.len() + 1).max(8);
+        let branch_txt = crate::ui::helpers::truncate(branch, branch_max);
+        let pad = width
+            .saturating_sub(prefix.len() + branch_txt.chars().count() + right.len())
+            .max(1);
+
+        let branch_style = if is_sel {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        result_lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(ACCENT)),
+            Span::styled(branch_txt, branch_style),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(proj.name.clone(), Style::default().fg(Color::Indexed(245))),
+            Span::raw(" "),
+            Span::styled(age, Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
         ]));
     }
 

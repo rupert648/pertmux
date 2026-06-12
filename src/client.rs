@@ -204,6 +204,12 @@ impl ClientState {
 
         self.snapshot = snapshot;
 
+        // Worktree lists may have changed; refresh the global search results so
+        // (project_idx, worktree_idx) pairs never go stale.
+        if matches!(self.popup, PopupState::WorktreeSearch { .. }) {
+            self.recompute_worktree_search();
+        }
+
         // After updating the snapshot, try to fulfil a pending "open worktree pane"
         // request. The worktree path arrives in the snapshot broadcast that follows
         // the ActionResult ok message, so we check here rather than in ActionResult.
@@ -734,6 +740,80 @@ impl ClientState {
             }
         }
     }
+
+    /// Flatten all worktrees across all projects into
+    /// (project_idx, worktree_idx, "project/branch") entries.
+    fn worktree_search_entries(&self) -> Vec<(usize, usize, String)> {
+        self.snapshot
+            .projects
+            .iter()
+            .enumerate()
+            .flat_map(|(pi, proj)| {
+                proj.cached_worktrees
+                    .iter()
+                    .enumerate()
+                    .map(move |(wi, wt)| {
+                        let branch = wt.branch.as_deref().unwrap_or("(detached)");
+                        (pi, wi, format!("{}/{}", proj.name, branch))
+                    })
+            })
+            .collect()
+    }
+
+    fn open_worktree_search(&mut self) {
+        let entries = self.worktree_search_entries();
+        if entries.is_empty() {
+            self.notify("No worktrees found");
+            return;
+        }
+        self.popup = PopupState::WorktreeSearch {
+            input: String::new(),
+            filtered: entries.into_iter().map(|(pi, wi, _)| (pi, wi)).collect(),
+            selected: 0,
+        };
+    }
+
+    fn recompute_worktree_search(&mut self) {
+        let entries = self.worktree_search_entries();
+        if let PopupState::WorktreeSearch {
+            input,
+            filtered,
+            selected,
+        } = &mut self.popup
+        {
+            *filtered = filter_worktree_entries(&entries, input);
+            if *selected >= filtered.len() {
+                *selected = filtered.len().saturating_sub(1);
+            }
+        }
+    }
+}
+
+/// Fuzzy-filter flattened worktree entries by label, ranked by match score.
+/// An empty input returns all entries in original order.
+fn filter_worktree_entries(entries: &[(usize, usize, String)], input: &str) -> Vec<(usize, usize)> {
+    if input.is_empty() {
+        return entries.iter().map(|(pi, wi, _)| (*pi, *wi)).collect();
+    }
+
+    use nucleo_matcher::Matcher;
+    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+
+    let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+    let pattern = Pattern::parse(input, CaseMatching::Ignore, Normalization::Smart);
+
+    let mut buf = Vec::new();
+    let mut scored: Vec<((usize, usize), u32)> = entries
+        .iter()
+        .filter_map(|(pi, wi, label)| {
+            let haystack = nucleo_matcher::Utf32Str::new(label, &mut buf);
+            pattern
+                .score(haystack, &mut matcher)
+                .map(|score| ((*pi, *wi), score))
+        })
+        .collect();
+    scored.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
+    scored.into_iter().map(|(idx, _)| idx).collect()
 }
 
 pub async fn run() -> Result<()> {
@@ -1157,6 +1237,75 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::WorktreeSearch { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Enter => {
+                let target = if let PopupState::WorktreeSearch {
+                    filtered, selected, ..
+                } = &state.popup
+                {
+                    filtered.get(*selected).copied()
+                } else {
+                    None
+                };
+                state.close_popup();
+                if let Some((pi, wi)) = target
+                    && let Some(proj) = state.snapshot.projects.get(pi)
+                {
+                    state.active_project = pi;
+                    save_last_project(&proj.name);
+                    if let Some(section) = state.selection_section.get_mut(pi) {
+                        *section = SelectionSection::Worktrees;
+                    }
+                    if let Some(sel) = state.worktree_selected.get_mut(pi) {
+                        *sel = wi.min(proj.cached_worktrees.len().saturating_sub(1));
+                    }
+                    if let Some(wt) = proj.cached_worktrees.get(wi)
+                        && let Some(ref path) = wt.path
+                        && let Err(e) = tmux::find_or_create_pane(
+                            path,
+                            &proj.name,
+                            state.snapshot.default_agent_command.as_deref(),
+                        )
+                    {
+                        state.notify(format!("Focus failed: {}", e));
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let PopupState::WorktreeSearch {
+                    filtered, selected, ..
+                } = &mut state.popup
+                    && *selected + 1 < filtered.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Up => {
+                if let PopupState::WorktreeSearch { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Backspace => {
+                if let PopupState::WorktreeSearch { input, .. } = &mut state.popup {
+                    input.pop();
+                }
+                state.recompute_worktree_search();
+            }
+            KeyCode::Char(ch) => {
+                if let PopupState::WorktreeSearch { input, .. } = &mut state.popup {
+                    input.push(ch);
+                }
+                state.recompute_worktree_search();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if matches!(state.popup, PopupState::ChangeSummary { .. }) {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -1510,6 +1659,8 @@ async fn handle_key(
                 state.open_mr_overview();
             } else if ch == kb.activity_feed {
                 state.open_activity_feed();
+            } else if ch == kb.worktree_search {
+                state.open_worktree_search();
             } else if ch == 'K' {
                 state.open_keybindings_help();
             }
@@ -1542,6 +1693,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             worktree_path: worktree_path.clone(),
         }),
         PopupState::ProjectFilter { .. }
+        | PopupState::WorktreeSearch { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
@@ -1813,4 +1965,49 @@ fn show_connection_error(sock_path: &std::path::Path) {
 
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_worktree_entries;
+
+    fn entries() -> Vec<(usize, usize, String)> {
+        vec![
+            (0, 0, "pertmux/main".to_string()),
+            (0, 1, "pertmux/feat-search".to_string()),
+            (1, 0, "mainapi/main".to_string()),
+            (1, 1, "mainapi/fix-auth".to_string()),
+        ]
+    }
+
+    #[test]
+    fn empty_input_returns_all_in_order() {
+        let result = filter_worktree_entries(&entries(), "");
+        assert_eq!(result, vec![(0, 0), (0, 1), (1, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn matches_branch_name() {
+        let result = filter_worktree_entries(&entries(), "search");
+        assert_eq!(result, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn matches_project_name() {
+        let result = filter_worktree_entries(&entries(), "mainapi");
+        assert_eq!(result, vec![(1, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn matches_project_slash_branch() {
+        let result = filter_worktree_entries(&entries(), "pertmux/main");
+        assert!(result.contains(&(0, 0)));
+        assert_eq!(result[0], (0, 0));
+    }
+
+    #[test]
+    fn no_match_returns_empty() {
+        let result = filter_worktree_entries(&entries(), "zzzqqq");
+        assert!(result.is_empty());
+    }
 }

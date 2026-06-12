@@ -239,6 +239,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | `delete_worktree` | string | `"d"` | Delete selected worktree |
 | `merge_worktree` | string | `"M"` | Merge selected worktree into default branch |
 | `open_worktree_with_prompt` | string | `"w"` | Create worktree and inject a prompt into the agent (requires `default_worktree_with_prompt`) |
+| `worktree_search` | string | `"W"` | Global worktree search — fuzzy search worktrees across all projects |
 
 ## Keybindings
 
@@ -266,6 +267,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `w` | Worktree panel | Create worktree and inject a prompt (requires `default_worktree_with_prompt` config) |
 | `d` | Worktree panel | Delete selected worktree |
 | `M` | Worktree panel | Merge selected worktree into default branch |
+| `W` | Global | Fuzzy search worktrees across all projects |
 | `q`/`Esc` | Global | Quit client (daemon keeps running) |
 | `prefix+a` | tmux | Toggle dashboard popup |
 
