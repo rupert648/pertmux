@@ -297,8 +297,8 @@ fn draw_worktree_search_popup(
     selected: usize,
     area: Rect,
 ) {
-    let popup_w = 64u16.min(area.width.saturating_sub(4));
-    let list_h = filtered.len().clamp(1, 12) as u16;
+    let popup_w = 90u16.min(area.width.saturating_sub(4));
+    let list_h = filtered.len().clamp(1, 16) as u16;
     let popup_h = (list_h + 4).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
