@@ -16,15 +16,24 @@ pub struct OpenCode {
 
 impl OpenCode {
     pub fn new(db_path: Option<String>) -> Self {
+        // timeout_global is the catch-all: it bounds the entire request,
+        // including waiting for the response status/headers. Without it, an
+        // opencode that accepts the TCP connection but never replies leaves the
+        // blocking call stuck in recvfrom forever. Because the App is !Send and
+        // runs on the daemon's single task, that freezes the whole daemon.
         let status_agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
+                .timeout_global(Some(TIMEOUT))
                 .timeout_connect(Some(TIMEOUT))
+                .timeout_recv_response(Some(TIMEOUT))
                 .timeout_recv_body(Some(TIMEOUT))
                 .build(),
         );
         let send_agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
+                .timeout_global(Some(SEND_TIMEOUT))
                 .timeout_connect(Some(SEND_TIMEOUT))
+                .timeout_recv_response(Some(SEND_TIMEOUT))
                 .timeout_recv_body(Some(SEND_TIMEOUT))
                 .build(),
         );
