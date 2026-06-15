@@ -467,7 +467,7 @@ async fn handle_create_worktree(app: &App, project_idx: usize, branch: &str) -> 
         .get(project_idx)
         .map(|p| p.config.local_path.clone())
         .ok_or_else(|| anyhow::anyhow!("invalid project index"))?;
-    crate::worktrunk::create_worktree(&local_path, branch).await
+    crate::worktrunk::create_worktree(&local_path, branch, !app.skip_worktrunk_hooks).await
 }
 
 async fn handle_remove_worktree(app: &App, project_idx: usize, branch: &str) -> Result<String> {
@@ -476,7 +476,7 @@ async fn handle_remove_worktree(app: &App, project_idx: usize, branch: &str) -> 
         .get(project_idx)
         .map(|p| p.config.local_path.clone())
         .ok_or_else(|| anyhow::anyhow!("invalid project index"))?;
-    crate::worktrunk::remove_worktree(&local_path, branch).await
+    crate::worktrunk::remove_worktree(&local_path, branch, !app.skip_worktrunk_hooks).await
 }
 
 async fn handle_merge_worktree(
@@ -487,7 +487,7 @@ async fn handle_merge_worktree(
     if app.projects.get(project_idx).is_none() {
         anyhow::bail!("invalid project index");
     }
-    crate::worktrunk::merge_worktree(worktree_path).await
+    crate::worktrunk::merge_worktree(worktree_path, !app.skip_worktrunk_hooks).await
 }
 
 fn send_action_result(broadcast_tx: &broadcast::Sender<DaemonMsg>, result: Result<String>) {

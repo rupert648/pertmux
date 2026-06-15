@@ -65,6 +65,10 @@ pub struct Config {
     /// when the client connects. Case-insensitive match.
     #[serde(default)]
     pub auto_switch_project: bool,
+    /// Skip configured worktrunk hooks during create/remove/merge worktree
+    /// actions. When true, pertmux passes `--no-hooks` to `wt`.
+    #[serde(default)]
+    pub skip_worktrunk_hooks: bool,
 }
 
 impl Default for Config {
@@ -83,6 +87,7 @@ impl Default for Config {
             project: None,
             agent_action: default_agent_actions(),
             auto_switch_project: false,
+            skip_worktrunk_hooks: false,
         }
     }
 }
@@ -616,6 +621,18 @@ local_path = "/tmp/bad"
 "#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_worktrunk_hooks_default_false() {
+        let cfg = load_from_str("refresh_interval = 2\n");
+        assert!(!cfg.skip_worktrunk_hooks);
+    }
+
+    #[test]
+    fn test_skip_worktrunk_hooks_override_true() {
+        let cfg = load_from_str("skip_worktrunk_hooks = true\n");
+        assert!(cfg.skip_worktrunk_hooks);
     }
 
     #[test]

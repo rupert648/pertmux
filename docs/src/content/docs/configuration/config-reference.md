@@ -19,6 +19,7 @@ pertmux -c ./path/to/config.toml serve
 | `mr_list_interval` | integer | `300` | How often (in seconds) to refresh the MR/PR list from the forge |
 | `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
 | `default_worktree_with_prompt` | string | — | Command template for creating a worktree with an injected prompt. Use `{{msg}}` as the placeholder (e.g. `"opencode run {{msg}}"`). Enables the `w` keybinding — see [Worktree with Prompt](/features/worktree-management/#create-with-prompt). |
+| `skip_worktrunk_hooks` | boolean | `false` | Skip configured [worktrunk hooks](https://worktrunk.dev) during create/remove/merge actions. Set to `true` to pass `--no-hooks` to `wt`. |
 
 ## `[gitlab]`
 

@@ -184,27 +184,20 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
     Ok(worktrees)
 }
 
-pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
+pub async fn create_worktree(local_path: &str, branch: &str, run_hooks: bool) -> Result<String> {
     info!(
-        "create_worktree: start (path={}, branch={})",
-        local_path, branch
+        "create_worktree: start (path={}, branch={}, run_hooks={})",
+        local_path, branch, run_hooks
     );
     let t = std::time::Instant::now();
 
-    let output = run_wt(
-        &[
-            "-C",
-            local_path,
-            "switch",
-            "--create",
-            branch,
-            "--no-cd",
-            "-y",
-            "--no-verify",
-        ],
-        WT_ACTION_TIMEOUT,
-    )
-    .await?;
+    let mut args = vec![
+        "-C", local_path, "switch", "--create", branch, "--no-cd", "-y",
+    ];
+    if !run_hooks {
+        args.push("--no-hooks");
+    }
+    let output = run_wt(&args, WT_ACTION_TIMEOUT).await?;
 
     info!(
         "create_worktree: wt exited (status={}) in {:.2?}",
@@ -230,27 +223,26 @@ pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
     Ok(format!("Created worktree: {}", branch))
 }
 
-pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
+pub async fn remove_worktree(local_path: &str, branch: &str, run_hooks: bool) -> Result<String> {
     info!(
-        "remove_worktree: start (path={}, branch={})",
-        local_path, branch
+        "remove_worktree: start (path={}, branch={}, run_hooks={})",
+        local_path, branch, run_hooks
     );
     let t = std::time::Instant::now();
 
-    let output = run_wt(
-        &[
-            "-C",
-            local_path,
-            "remove",
-            branch,
-            "-y",
-            "-f",
-            "--foreground",
-            "--no-verify",
-        ],
-        WT_ACTION_TIMEOUT,
-    )
-    .await?;
+    let mut args = vec![
+        "-C",
+        local_path,
+        "remove",
+        branch,
+        "-y",
+        "-f",
+        "--foreground",
+    ];
+    if !run_hooks {
+        args.push("--no-hooks");
+    }
+    let output = run_wt(&args, WT_ACTION_TIMEOUT).await?;
 
     info!(
         "remove_worktree: wt exited (status={}) in {:.2?}",
@@ -276,15 +268,18 @@ pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
     Ok(format!("Removed worktree: {}", branch))
 }
 
-pub async fn merge_worktree(worktree_path: &str) -> Result<String> {
-    info!("merge_worktree: start (path={})", worktree_path);
+pub async fn merge_worktree(worktree_path: &str, run_hooks: bool) -> Result<String> {
+    info!(
+        "merge_worktree: start (path={}, run_hooks={})",
+        worktree_path, run_hooks
+    );
     let t = std::time::Instant::now();
 
-    let output = run_wt(
-        &["-C", worktree_path, "merge", "-y", "--no-verify"],
-        WT_ACTION_TIMEOUT,
-    )
-    .await?;
+    let mut args = vec!["-C", worktree_path, "merge", "-y"];
+    if !run_hooks {
+        args.push("--no-hooks");
+    }
+    let output = run_wt(&args, WT_ACTION_TIMEOUT).await?;
 
     info!(
         "merge_worktree: wt exited (status={}) in {:.2?}",

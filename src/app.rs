@@ -144,6 +144,7 @@ pub struct App {
     /// every snapshot so clients see history even after reconnecting.
     pub activity_feed: VecDeque<ActivityEntry>,
     pub auto_switch_project: bool,
+    pub skip_worktrunk_hooks: bool,
 }
 
 impl App {
@@ -235,6 +236,7 @@ impl App {
             global_mrs: Vec::new(),
             activity_feed: VecDeque::new(),
             auto_switch_project: config.auto_switch_project,
+            skip_worktrunk_hooks: config.skip_worktrunk_hooks,
         }
     }
 
