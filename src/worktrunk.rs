@@ -29,6 +29,38 @@ async fn run_wt(args: &[&str], timeout: Duration) -> Result<std::process::Output
     }
 }
 
+/// Build a failure detail from a `wt` invocation. `wt` prints hook progress
+/// banners (`◎ Running pre-switch ...`) to stderr, so the actual error is
+/// usually the last non-empty line. Returns `(full, summary)`: `full` is the
+/// whole stdout+stderr with newlines collapsed to ` | ` (single log line so
+/// journald never hides the tail), `summary` is the last non-empty line for the
+/// client-facing message.
+fn wt_failure_detail(output: &std::process::Output) -> (String, String) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    summarize_wt_output(&stderr, &stdout, &output.status.to_string())
+}
+
+/// Pure core of `wt_failure_detail`, split out for testing. `fallback` is used
+/// when no output line is available.
+fn summarize_wt_output(stderr: &str, stdout: &str, fallback: &str) -> (String, String) {
+    let combined: Vec<&str> = stderr
+        .lines()
+        .chain(stdout.lines())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let full = combined.join(" | ");
+    let summary = combined
+        .iter()
+        .rev()
+        .find(|l| l.starts_with('✗') || l.starts_with("error") || l.starts_with("fatal"))
+        .or_else(|| combined.last())
+        .map(|l| l.trim_start_matches('✗').trim().to_string())
+        .unwrap_or_else(|| fallback.to_string());
+    (full, summary)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WtCommit {
@@ -206,13 +238,9 @@ pub async fn create_worktree(local_path: &str, branch: &str, run_hooks: bool) ->
     );
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "create_worktree: failed (branch={}): {}",
-            branch,
-            stderr.trim()
-        );
-        anyhow::bail!("{}", stderr.trim());
+        let (full, summary) = wt_failure_detail(&output);
+        warn!("create_worktree: failed (branch={}): {}", branch, full);
+        anyhow::bail!("{}", summary);
     }
 
     info!(
@@ -251,13 +279,9 @@ pub async fn remove_worktree(local_path: &str, branch: &str, run_hooks: bool) ->
     );
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "remove_worktree: failed (branch={}): {}",
-            branch,
-            stderr.trim()
-        );
-        anyhow::bail!("{}", stderr.trim());
+        let (full, summary) = wt_failure_detail(&output);
+        warn!("remove_worktree: failed (branch={}): {}", branch, full);
+        anyhow::bail!("{}", summary);
     }
 
     info!(
@@ -288,13 +312,9 @@ pub async fn merge_worktree(worktree_path: &str, run_hooks: bool) -> Result<Stri
     );
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "merge_worktree: failed (path={}): {}",
-            worktree_path,
-            stderr.trim()
-        );
-        anyhow::bail!("{}", stderr.trim());
+        let (full, summary) = wt_failure_detail(&output);
+        warn!("merge_worktree: failed (path={}): {}", worktree_path, full);
+        anyhow::bail!("{}", summary);
     }
 
     info!(
@@ -329,6 +349,28 @@ pub fn format_age(timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_summarize_wt_output_picks_error_line() {
+        let stderr = "◎ Running pre-switch user:fetch\n  git fetch origin main\n✗ Branch test already exists\n↳ To switch to the existing branch, run without --create";
+        let (full, summary) = summarize_wt_output(stderr, "", "exit status: 1");
+        assert_eq!(summary, "Branch test already exists");
+        assert!(full.contains("pre-switch"));
+        assert!(full.contains(" | "));
+    }
+
+    #[test]
+    fn test_summarize_wt_output_falls_back_to_last_line() {
+        let (_, summary) = summarize_wt_output("some warning\nplain failure", "", "exit status: 1");
+        assert_eq!(summary, "plain failure");
+    }
+
+    #[test]
+    fn test_summarize_wt_output_empty_uses_fallback() {
+        let (full, summary) = summarize_wt_output("", "", "exit status: 1");
+        assert_eq!(summary, "exit status: 1");
+        assert_eq!(full, "");
+    }
 
     const REAL_WT_JSON: &str = r#"[
         {
