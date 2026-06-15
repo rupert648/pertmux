@@ -1,8 +1,33 @@
 use anyhow::Result;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
 use tracing::{info, warn};
+
+/// Upper bound for a `wt` invocation. Without one, a `wt` that blocks on a
+/// network fetch or a git credential helper (no controlling tty under systemd)
+/// hangs the daemon command loop forever and the client action popup never
+/// clears. `list` is local and quick; create/remove/merge may touch the network.
+const WT_LIST_TIMEOUT: Duration = Duration::from_secs(30);
+const WT_ACTION_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Run a `wt` subcommand with stdin closed and a hard timeout. `kill_on_drop`
+/// ensures the child is reaped if we time out (the future owning it is dropped).
+async fn run_wt(args: &[&str], timeout: Duration) -> Result<std::process::Output> {
+    let child = Command::new("wt")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(out) => Ok(out?),
+        Err(_) => anyhow::bail!("wt {} timed out after {:?}", args.join(" "), timeout),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -103,13 +128,17 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
     info!("fetch_worktrees: start (path={})", local_path);
     let t = std::time::Instant::now();
 
-    let output = match Command::new("wt")
-        .args(["-C", local_path, "list", "--format=json"])
-        .output()
-        .await
+    let output = match run_wt(
+        &["-C", local_path, "list", "--format=json"],
+        WT_LIST_TIMEOUT,
+    )
+    .await
     {
         Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        Err(e)
+            if e.downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
             info!("fetch_worktrees: wt binary not found, returning empty");
             return Ok(vec![]);
         }
@@ -119,7 +148,7 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
                 t.elapsed(),
                 e
             );
-            return Err(e.into());
+            return Err(e);
         }
     };
 
@@ -162,8 +191,8 @@ pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
     );
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args([
+    let output = run_wt(
+        &[
             "-C",
             local_path,
             "switch",
@@ -172,9 +201,10 @@ pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
             "--no-cd",
             "-y",
             "--no-verify",
-        ])
-        .output()
-        .await?;
+        ],
+        WT_ACTION_TIMEOUT,
+    )
+    .await?;
 
     info!(
         "create_worktree: wt exited (status={}) in {:.2?}",
@@ -207,8 +237,8 @@ pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
     );
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args([
+    let output = run_wt(
+        &[
             "-C",
             local_path,
             "remove",
@@ -217,9 +247,10 @@ pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
             "-f",
             "--foreground",
             "--no-verify",
-        ])
-        .output()
-        .await?;
+        ],
+        WT_ACTION_TIMEOUT,
+    )
+    .await?;
 
     info!(
         "remove_worktree: wt exited (status={}) in {:.2?}",
@@ -249,10 +280,11 @@ pub async fn merge_worktree(worktree_path: &str) -> Result<String> {
     info!("merge_worktree: start (path={})", worktree_path);
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args(["-C", worktree_path, "merge", "-y", "--no-verify"])
-        .output()
-        .await?;
+    let output = run_wt(
+        &["-C", worktree_path, "merge", "-y", "--no-verify"],
+        WT_ACTION_TIMEOUT,
+    )
+    .await?;
 
     info!(
         "merge_worktree: wt exited (status={}) in {:.2?}",
