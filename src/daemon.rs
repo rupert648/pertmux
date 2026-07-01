@@ -261,6 +261,16 @@ pub async fn run(config: Config) -> Result<()> {
                         info!("cmd: AgentAction done (ok={})", result.is_ok());
                         send_action_result(&broadcast_tx, result);
                     }
+                    ClientMsg::CodexHook(event) => {
+                        info!(
+                            "cmd: CodexHook event={} session_id={}",
+                            event.hook_event_name, event.session_id
+                        );
+                        app.refresh().await;
+                        app.apply_codex_hook_event(&event);
+                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
+                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                    }
                     ClientMsg::SelectMr { project_idx, mr_iid } => {
                         info!("cmd: SelectMr project_idx={} mr_iid={}", project_idx, mr_iid);
                         let t = std::time::Instant::now();

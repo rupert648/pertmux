@@ -97,7 +97,7 @@ Claude Code appears as the `claude` process in tmux panes. pertmux matches this 
 
 ## Codex CLI
 
-[Codex CLI](https://github.com/openai/codex) is OpenAI's terminal coding agent. Like Claude Code, it requires **no special startup flags** — pertmux reads its local SQLite databases automatically.
+[Codex CLI](https://github.com/openai/codex) is OpenAI's terminal coding agent. Like Claude Code, it requires **no special startup flags** — pertmux reads its local SQLite databases automatically. For lower-latency status updates, pertmux can also install Codex hooks that notify the daemon as Codex starts, receives prompts, and finishes turns.
 
 ### No special flags needed
 
@@ -108,6 +108,30 @@ codex
 ```
 
 pertmux reads Codex's local databases in `~/.codex/` to determine session status and details.
+
+### Optional Codex hooks
+
+Install global hooks:
+
+```bash
+pertmux install --codex-hooks
+```
+
+This writes `~/.codex/hooks.json` entries for:
+
+- `SessionStart` — refreshes Codex session metadata
+- `UserPromptSubmit` — marks the matching Codex pane as Busy
+- `Stop` — marks the matching Codex pane as Idle
+
+The hook command is `pertmux codex-hook`. It reads Codex's JSON hook payload on stdin, sends a framed IPC message to the pertmux daemon, and exits quietly if the daemon is not running.
+
+Codex requires non-managed command hooks to be reviewed and trusted before they run. After installing, start Codex and run `/hooks` once to trust the generated hook definitions. For one-off testing, start Codex with `--dangerously-bypass-hook-trust`.
+
+For a repo-local install instead of a global install, use:
+
+```bash
+pertmux install --codex-hooks --local
+```
 
 ### Config
 
@@ -138,6 +162,11 @@ pertmux matches a tmux pane's working directory to a thread's `cwd` in the state
 - Recent `codex.op="user_input"` span with no subsequent completion → **Busy**
 - Recent `codex.op="interrupt"` or turn completion → **Idle**
 - No matching thread → **Unknown**
+
+When Codex hooks are installed and trusted, hook events provide an immediate status source on top of that polling fallback. For any Codex session that has emitted hook events, pertmux prioritizes the latest hook-derived status over the SQLite polling heuristic:
+
+- `UserPromptSubmit` → **Busy**
+- `Stop` → **Idle**
 
 ### What it shows
 

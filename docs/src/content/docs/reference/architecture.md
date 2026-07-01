@@ -41,6 +41,7 @@ The daemon (`pertmux serve`) runs persistently in the background. It:
 - Listens on `/tmp/pertmux-{USER}.sock`
 - Broadcasts `DashboardSnapshot` to all connected clients via `tokio::sync::broadcast`
 - Processes client commands (refresh, worktree actions, etc.)
+- Processes `CodexHook` messages from `pertmux codex-hook` for immediate Codex status hints
 
 ## Client
 
@@ -71,6 +72,8 @@ All refresh intervals are configurable in the TOML config file.
 | Worktrees | 30 seconds | Timer |
 | MR details | 60 seconds | Timer |
 | MR list | 300 seconds | Timer + manual (`r` key) |
+
+Codex hooks are an event-driven fast path layered on top of the tmux/agent polling interval. `UserPromptSubmit` marks the matching Codex pane Busy, `Stop` marks it Idle, and hook-derived status is prioritized over the SQLite polling heuristic for that Codex session. The regular polling path continues to refresh metadata from Codex's local SQLite databases.
 
 ## Paths
 

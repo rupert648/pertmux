@@ -57,6 +57,28 @@ pertmux cleanup
 - Removes `read_state.db` (comment tracking) and `last_project` persistence files.
 - Skips the live socket if the daemon is still running.
 
+### `pertmux install`
+
+Install optional integrations.
+
+```bash
+pertmux install --codex-hooks
+pertmux install --codex-hooks --local
+pertmux install --codex-hooks --local --repo /path/to/repo
+pertmux install --codex-hooks --force
+```
+
+`--codex-hooks` installs global Codex hooks into `~/.codex/hooks.json` by default. The hooks call `pertmux codex-hook` for `SessionStart`, `UserPromptSubmit`, and `Stop`, allowing Codex to notify the daemon immediately when a session starts, a user prompt is submitted, or a turn finishes.
+
+Codex requires non-managed command hooks to be reviewed and trusted. After installing, start Codex and run `/hooks` once to trust the generated hook definitions. For one-off testing, you can start Codex with `--dangerously-bypass-hook-trust`.
+
+| Option | Description |
+|--------|-------------|
+| `--codex-hooks` | Install the Codex hook integration |
+| `--local` | Install repo-local hooks into `.codex/hooks.json` instead of global hooks |
+| `--repo <path>` | Repository path for `--local` installs; defaults to the current directory |
+| `--force` | Replace an invalid existing hooks file |
+
 ## Global options
 
 | Option | Description |

@@ -2,6 +2,7 @@ mod agent_changes;
 mod app;
 mod banner;
 mod client;
+mod codex_hooks;
 mod coding_agent;
 mod config;
 mod daemon;
@@ -20,6 +21,7 @@ mod ui;
 mod worktrunk;
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -52,6 +54,27 @@ enum Commands {
     Status,
     #[command(about = "Remove stale socket, read state, and cached data")]
     Cleanup,
+    #[command(about = "Install optional pertmux integrations")]
+    Install {
+        /// Install Codex hooks that notify the pertmux daemon.
+        #[arg(long)]
+        codex_hooks: bool,
+        /// Install into the current repository instead of ~/.codex/hooks.json.
+        #[arg(long)]
+        local: bool,
+        /// Repository path for --local installs (defaults to current directory).
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Replace an invalid existing hooks.json.
+        #[arg(long)]
+        force: bool,
+    },
+    #[command(hide = true)]
+    CodexHook {
+        /// Print diagnostics to stderr. Hook stdout always remains empty.
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 #[tokio::main]
@@ -75,6 +98,19 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Cleanup => client::cleanup(),
+        Commands::Install {
+            codex_hooks,
+            local,
+            repo,
+            force,
+        } => {
+            if codex_hooks {
+                codex_hooks::install(local, repo, force)
+            } else {
+                anyhow::bail!("no install task selected; try `pertmux install --codex-hooks`")
+            }
+        }
+        Commands::CodexHook { verbose } => codex_hooks::send_from_stdin(verbose).await,
     }
 }
 

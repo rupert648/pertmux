@@ -10,7 +10,8 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 - **Worktree management** — list, create, remove, and merge worktrees via [worktrunk](https://github.com/max-sixty/worktrunk)
 - **Multi-project support** — fuzzy finder (`f` key) with overview panel showing MR counts
 - **Smart tmux integration** — focus panes across sessions, auto-detect existing windows
-- **Coding agent monitoring** — track Claude/opencode instances across tmux panes
+- **Coding agent monitoring** — track Claude, opencode, and Codex instances across tmux panes
+- **Codex hook integration** — optional Codex hooks notify the daemon immediately when Codex starts, receives a prompt, or finishes a turn
 - **MR Overview** — press `m` to see all your open MRs across all configured forges, with quick navigation to configured projects or browser-open for unconfigured ones
 - **Activity feed** — live log of agent state changes and MR events; press `A` to open the feed popup, navigate with `j`/`k`, and press `Enter` to jump directly to the relevant tmux pane or MR
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
@@ -86,9 +87,12 @@ pertmux status                   # show socket path, daemon state
 pertmux --version                # show version
 pertmux -c config.toml serve     # start daemon with specific config
 pertmux serve --foreground       # run in foreground (for debugging)
+pertmux install --codex-hooks    # install global Codex hook integration
 ```
 
 The daemon must be started before connecting. It forks to the background automatically, logging to `/tmp/pertmux-daemon.log` and listening on `/tmp/pertmux-{USER}.sock`.
+
+For lower-latency Codex status updates across all worktrees, run `pertmux install --codex-hooks`. It writes `~/.codex/hooks.json` entries that call `pertmux codex-hook`; start Codex and run `/hooks` once to review and trust the hook definitions. Use `pertmux install --codex-hooks --local` for a repo-local `.codex/hooks.json` install.
 
 ## Configuration
 

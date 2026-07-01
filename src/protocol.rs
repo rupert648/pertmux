@@ -9,6 +9,34 @@ use crate::types::{AgentPane, SessionDetail};
 use crate::worktrunk::WtWorktree;
 use serde::{Deserialize, Serialize};
 
+/// JSON payload received from Codex command hooks.
+///
+/// Codex sends one JSON object on stdin for every configured command hook. We
+/// keep this intentionally narrow and ignore unknown fields so pertmux remains
+/// tolerant of Codex adding hook metadata over time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexHookEvent {
+    pub session_id: String,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    pub cwd: String,
+    pub hook_event_name: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub stop_hook_active: Option<bool>,
+    #[serde(default)]
+    pub last_assistant_message: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
 /// Navigation target carried by an activity entry.
 /// Used by the activity feed popup to jump to the relevant tmux pane or MR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +255,8 @@ pub enum ClientMsg {
         session_id: String,
         prompt: String,
     },
+    /// Notification from `pertmux codex-hook`, invoked by Codex command hooks.
+    CodexHook(Box<CodexHookEvent>),
     Stop,
 }
 

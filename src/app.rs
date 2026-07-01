@@ -11,7 +11,8 @@ use crate::git::discover_worktrees;
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{
-    ActivityEntry, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot, RefreshStep,
+    ActivityEntry, CodexHookEvent, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot,
+    RefreshStep,
 };
 use crate::read_state::ReadStateDb;
 use crate::tmux;
@@ -126,6 +127,7 @@ pub struct App {
     pub pending_changes: Vec<MrChange>,
     pub pending_agent_changes: Vec<AgentChange>,
     previous_pane_statuses: HashMap<String, PaneStatus>,
+    codex_hook_statuses: HashMap<String, PaneStatus>,
     pub agent_actions: Vec<AgentActionConfig>,
     pub global_mrs: Vec<GlobalMrEntry>,
     /// Full activity feed history, accumulated by the daemon and included in
@@ -217,6 +219,7 @@ impl App {
             pending_changes: Vec::new(),
             pending_agent_changes: Vec::new(),
             previous_pane_statuses: HashMap::new(),
+            codex_hook_statuses: HashMap::new(),
             agent_actions: config.agent_action,
             global_mrs: Vec::new(),
             activity_feed: VecDeque::new(),
@@ -253,6 +256,7 @@ impl App {
             if let Some(agent) = self.find_agent(&pane.pane_command) {
                 pane.status = agent.query_status(pane);
                 agent.enrich_pane(pane);
+                self.apply_cached_codex_hook_status(pane);
             }
         }
 
@@ -351,6 +355,103 @@ impl App {
             self.error = Some(e);
         }
         info!("app::refresh: done in {:.2?}", t.elapsed());
+    }
+
+    pub fn apply_codex_hook_event(&mut self, event: &CodexHookEvent) {
+        let Some(idx) = self.find_codex_pane_for_hook(event) else {
+            return;
+        };
+
+        {
+            let pane = &mut self.panes[idx];
+            pane.agent = Some("codex".to_string());
+            pane.db_session_id = Some(event.session_id.clone());
+            if let Some(model) = &event.model {
+                pane.model = Some(model.clone());
+            }
+            pane.last_activity = Some(JiffTimestamp::now());
+            if let Some(message) = &event.last_assistant_message {
+                pane.last_response = Some(truncate_chars(message, 120));
+            }
+        }
+
+        let next_status = match event.hook_event_name.as_str() {
+            "UserPromptSubmit" => Some(PaneStatus::Busy),
+            "Stop" => Some(PaneStatus::Idle),
+            "SessionStart" => None,
+            _ => None,
+        };
+
+        let Some(next_status) = next_status else {
+            self.update_detail();
+            return;
+        };
+
+        self.codex_hook_statuses
+            .insert(event.session_id.clone(), next_status.clone());
+
+        let pane = &mut self.panes[idx];
+        let prev_status = self
+            .previous_pane_statuses
+            .get(&pane.pane_id)
+            .cloned()
+            .unwrap_or_else(|| pane.status.clone());
+
+        if statuses_match(&prev_status, &next_status) {
+            pane.status = next_status.clone();
+            self.previous_pane_statuses
+                .insert(pane.pane_id.clone(), next_status);
+            self.update_detail();
+            return;
+        }
+
+        pane.status = next_status.clone();
+        pane.status_changed_at = Some(JiffTimestamp::now());
+
+        if let Some(change_type) = agent_change_type(&prev_status, &next_status) {
+            let agent_change = AgentChange {
+                pane_id: pane.pane_id.clone(),
+                pane_path: pane.pane_path.clone(),
+                session_name: pane.session_name.clone(),
+                change_type,
+            };
+            self.activity_feed
+                .push_front(ActivityEntry::from(&agent_change));
+            self.pending_agent_changes.push(agent_change);
+            self.activity_feed.truncate(50);
+        }
+
+        self.previous_pane_statuses
+            .insert(pane.pane_id.clone(), next_status);
+        self.update_detail();
+    }
+
+    fn find_codex_pane_for_hook(&self, event: &CodexHookEvent) -> Option<usize> {
+        self.panes
+            .iter()
+            .position(|pane| {
+                pane.agent.as_deref() == Some("codex")
+                    && pane.db_session_id.as_deref() == Some(event.session_id.as_str())
+            })
+            .or_else(|| {
+                self.panes.iter().position(|pane| {
+                    is_codex_pane(pane) && paths_match(&pane.pane_path, &event.cwd)
+                })
+            })
+    }
+
+    fn apply_cached_codex_hook_status(&self, pane: &mut AgentPane) {
+        if !is_codex_pane(pane) {
+            return;
+        }
+
+        let Some(session_id) = pane.db_session_id.as_deref() else {
+            return;
+        };
+
+        if let Some(status) = self.codex_hook_statuses.get(session_id) {
+            pane.status = status.clone();
+        }
     }
 
     fn build_groups(&mut self, panes: &[AgentPane]) {
@@ -988,5 +1089,30 @@ fn agent_change_type(from: &PaneStatus, to: &PaneStatus) -> Option<AgentChangeTy
         }
         (_, PaneStatus::Retry { .. }) => Some(AgentChangeType::Retry),
         _ => None,
+    }
+}
+
+fn is_codex_pane(pane: &AgentPane) -> bool {
+    pane.agent.as_deref() == Some("codex") || pane.pane_command == "codex"
+}
+
+fn paths_match(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+
+    let left_canonical = std::fs::canonicalize(left).ok();
+    let right_canonical = std::fs::canonicalize(right).ok();
+    match (left_canonical, right_canonical) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        input.to_string()
+    } else {
+        input.chars().take(max_chars).collect()
     }
 }

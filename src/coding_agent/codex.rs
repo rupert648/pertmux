@@ -80,7 +80,11 @@ fn find_thread_for_path(
         candidates.push(s.to_string());
     }
 
-    let placeholders: Vec<String> = candidates.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+    let placeholders: Vec<String> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect();
     let query = format!(
         "SELECT id, title, model, tokens_used, updated_at \
          FROM threads \
@@ -91,8 +95,10 @@ fn find_thread_for_path(
     );
 
     let mut stmt = conn.prepare(&query).ok()?;
-    let params: Vec<&dyn rusqlite::types::ToSql> =
-        candidates.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+    let params: Vec<&dyn rusqlite::types::ToSql> = candidates
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
     stmt.query_row(&*params, |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -127,9 +133,7 @@ fn query_thread_status(logs_conn: &Connection, thread_id: &str) -> PaneStatus {
     };
 
     let rows: Vec<String> = stmt
-        .query_map(rusqlite::params![thread_id], |row| {
-            row.get::<_, String>(0)
-        })
+        .query_map(rusqlite::params![thread_id], |row| row.get::<_, String>(0))
         .ok()
         .map(|iter| iter.filter_map(|r| r.ok()).collect())
         .unwrap_or_default();
@@ -233,8 +237,7 @@ impl CodingAgent for Codex {
             first_msg_query,
             rusqlite::params![pane.db_session_id.as_deref().unwrap_or("")],
             |row| row.get::<_, String>(0),
-        )
-            && !first_msg.is_empty()
+        ) && !first_msg.is_empty()
         {
             pane.db_session_title = Some(truncate_str(&first_msg, 80));
         }
