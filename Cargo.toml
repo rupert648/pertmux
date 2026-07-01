@@ -17,12 +17,12 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 futures = "0.3"
 ureq = { version = "3", features = ["json"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 dirs = "6"
-sysinfo = "0.38"
+sysinfo = "0.39"
 netstat2 = "0.11"
 toml = "1"
 clap = { version = "4", features = ["derive"] }
