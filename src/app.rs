@@ -299,10 +299,11 @@ impl App {
                             session_name: pane.session_name.clone(),
                             change_type,
                         };
-                        self.activity_feed
-                            .push_front(ActivityEntry::from(&agent_change));
+                        record_activity(
+                            &mut self.activity_feed,
+                            ActivityEntry::from(&agent_change),
+                        );
                         self.pending_agent_changes.push(agent_change);
-                        self.activity_feed.truncate(50);
                     }
                 }
             }
@@ -430,10 +431,8 @@ impl App {
                 session_name: pane.session_name.clone(),
                 change_type,
             };
-            self.activity_feed
-                .push_front(ActivityEntry::from(&agent_change));
+            record_activity(&mut self.activity_feed, ActivityEntry::from(&agent_change));
             self.pending_agent_changes.push(agent_change);
-            self.activity_feed.truncate(50);
         }
 
         self.previous_pane_statuses
@@ -524,9 +523,8 @@ impl App {
                         let changes =
                             detect_mr_list_changes(&proj.config.name, &proj.cached_mrs, &mrs);
                         for c in &changes {
-                            self.activity_feed.push_front(ActivityEntry::from(c));
+                            record_activity(&mut self.activity_feed, ActivityEntry::from(c));
                         }
-                        self.activity_feed.truncate(50);
                         self.pending_changes.extend(changes);
                     }
                     proj.cached_mrs = mrs;
@@ -698,9 +696,8 @@ impl App {
                 if let Some(ref old_detail) = proj.cached_mr_detail {
                     let changes = detect_mr_detail_changes(&project_name, old_detail, &detail);
                     for c in &changes {
-                        self.activity_feed.push_front(ActivityEntry::from(c));
+                        record_activity(&mut self.activity_feed, ActivityEntry::from(c));
                     }
-                    self.activity_feed.truncate(50);
                     self.pending_changes.extend(changes);
                 }
                 proj.cached_mr_detail = Some(detail);
@@ -1086,6 +1083,29 @@ fn detect_mr_detail_changes(
     changes
 }
 
+fn record_activity(activity_feed: &mut VecDeque<ActivityEntry>, entry: ActivityEntry) {
+    if let Some(crate::protocol::ActivityTarget::Pane { pane_path, .. }) = &entry.target {
+        activity_feed.retain(|existing| {
+            let Some(crate::protocol::ActivityTarget::Pane {
+                pane_path: existing_path,
+                ..
+            }) = &existing.target
+            else {
+                return true;
+            };
+
+            !worktree_paths_match(existing_path, pane_path)
+        });
+    }
+
+    activity_feed.push_front(entry);
+    activity_feed.truncate(50);
+}
+
+fn worktree_paths_match(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/') || paths_match(left, right)
+}
+
 fn statuses_match(a: &PaneStatus, b: &PaneStatus) -> bool {
     matches!(
         (a, b),
@@ -1129,5 +1149,84 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
         input.to_string()
     } else {
         input.chars().take(max_chars).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ActivityKind, ActivityTarget};
+
+    fn pane_activity(path: &str, message: &str, received_at_secs: u64) -> ActivityEntry {
+        ActivityEntry {
+            label: path.rsplit('/').next().unwrap_or(path).to_string(),
+            message: message.to_string(),
+            kind: ActivityKind::AgentBusy,
+            received_at_secs,
+            target: Some(ActivityTarget::Pane {
+                pane_id: format!("pane-{received_at_secs}"),
+                pane_path: path.to_string(),
+            }),
+        }
+    }
+
+    fn mr_activity(received_at_secs: u64) -> ActivityEntry {
+        ActivityEntry {
+            label: "pertmux".to_string(),
+            message: "!42 pipeline ok".to_string(),
+            kind: ActivityKind::MrPipelineSucceeded,
+            received_at_secs,
+            target: Some(ActivityTarget::MergeRequest {
+                project_name: "pertmux".to_string(),
+                iid: 42,
+            }),
+        }
+    }
+
+    #[test]
+    fn record_activity_replaces_previous_status_for_worktree() {
+        let mut feed = VecDeque::new();
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature", "working", 1),
+        );
+        record_activity(&mut feed, mr_activity(2));
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature/", "finished", 3),
+        );
+
+        assert_eq!(feed.len(), 2);
+        assert_eq!(feed[0].message, "finished");
+        assert_eq!(feed[0].received_at_secs, 3);
+        assert_eq!(feed[1].message, "!42 pipeline ok");
+    }
+
+    #[test]
+    fn record_activity_keeps_distinct_worktrees() {
+        let mut feed = VecDeque::new();
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-a", "working", 1),
+        );
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-b", "retrying", 2),
+        );
+
+        assert_eq!(feed.len(), 2);
+        assert_eq!(feed[0].message, "retrying");
+        assert_eq!(feed[1].message, "working");
+    }
+
+    #[test]
+    fn record_activity_keeps_multiple_mr_events() {
+        let mut feed = VecDeque::new();
+        record_activity(&mut feed, mr_activity(1));
+        record_activity(&mut feed, mr_activity(2));
+
+        assert_eq!(feed.len(), 2);
+        assert_eq!(feed[0].received_at_secs, 2);
+        assert_eq!(feed[1].received_at_secs, 1);
     }
 }
