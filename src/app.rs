@@ -30,6 +30,16 @@ pub enum SelectionSection {
     Worktrees,
 }
 
+#[derive(Clone)]
+pub struct WorktreeFilterEntry {
+    pub project_idx: usize,
+    pub worktree_idx: usize,
+    pub project_name: String,
+    pub branch: String,
+    pub path: String,
+    pub is_main: bool,
+}
+
 pub enum PopupState {
     None,
     CreateWorktree {
@@ -61,6 +71,11 @@ pub enum PopupState {
     ProjectFilter {
         input: String,
         filtered: Vec<(usize, String)>,
+        selected: usize,
+    },
+    WorktreeFilter {
+        input: String,
+        filtered: Vec<WorktreeFilterEntry>,
         selected: usize,
     },
     ChangeSummary {

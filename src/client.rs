@@ -1,4 +1,4 @@
-use crate::app::{PopupState, SelectionSection};
+use crate::app::{PopupState, SelectionSection, WorktreeFilterEntry};
 use crate::banner::{DIM, GRAY, GREEN, ORANGE, RESET, WHITE};
 use crate::daemon;
 use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
@@ -590,6 +590,53 @@ impl ClientState {
         };
     }
 
+    fn open_worktree_filter(&mut self) {
+        let all = self.all_worktree_filter_entries();
+        if all.is_empty() {
+            self.notify("No worktrees found");
+            return;
+        }
+
+        self.popup = PopupState::WorktreeFilter {
+            input: String::new(),
+            filtered: all,
+            selected: 0,
+        };
+    }
+
+    fn all_worktree_filter_entries(&self) -> Vec<WorktreeFilterEntry> {
+        self.snapshot
+            .projects
+            .iter()
+            .enumerate()
+            .flat_map(|(project_idx, project)| {
+                project
+                    .cached_worktrees
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(worktree_idx, wt)| {
+                        let path = wt.path.clone()?;
+                        let branch = wt.branch.clone().unwrap_or_else(|| {
+                            if wt.is_main {
+                                "main".to_string()
+                            } else {
+                                path.rsplit('/').next().unwrap_or(&path).to_string()
+                            }
+                        });
+
+                        Some(WorktreeFilterEntry {
+                            project_idx,
+                            worktree_idx,
+                            project_name: project.name.clone(),
+                            branch,
+                            path,
+                            is_main: wt.is_main,
+                        })
+                    })
+            })
+            .collect()
+    }
+
     fn recompute_project_filter(&mut self) {
         if let PopupState::ProjectFilter {
             input,
@@ -623,6 +670,45 @@ impl ClientState {
                             .iter()
                             .find(|(_, n)| *n == name)
                             .map(|(i, _)| (*i, name.to_string()))
+                    })
+                    .collect();
+            }
+
+            if *selected >= filtered.len() {
+                *selected = filtered.len().saturating_sub(1);
+            }
+        }
+    }
+
+    fn recompute_worktree_filter(&mut self) {
+        let all = self.all_worktree_filter_entries();
+        if let PopupState::WorktreeFilter {
+            input,
+            filtered,
+            selected,
+        } = &mut self.popup
+        {
+            if input.is_empty() {
+                *filtered = all;
+            } else {
+                use nucleo_matcher::Matcher;
+                use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+
+                let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+                let pattern = Pattern::parse(input, CaseMatching::Ignore, Normalization::Smart);
+                let labels: Vec<String> = all
+                    .iter()
+                    .map(|entry| format!("{} {} {}", entry.project_name, entry.branch, entry.path))
+                    .collect();
+                let matches = pattern.match_list(labels.iter().map(String::as_str), &mut matcher);
+
+                *filtered = matches
+                    .into_iter()
+                    .filter_map(|(label, _score)| {
+                        labels
+                            .iter()
+                            .position(|candidate| candidate == label)
+                            .and_then(|idx| all.get(idx).cloned())
                     })
                     .collect();
             }
@@ -971,6 +1057,63 @@ async fn handle_key(
         return Ok(());
     }
 
+    if matches!(state.popup, PopupState::WorktreeFilter { .. }) {
+        match code {
+            KeyCode::Esc => state.close_popup(),
+            KeyCode::Enter => {
+                if let PopupState::WorktreeFilter {
+                    filtered, selected, ..
+                } = std::mem::replace(&mut state.popup, PopupState::None)
+                    && let Some(entry) = filtered.get(selected)
+                {
+                    state.active_project = entry.project_idx;
+                    if let Some(project) = state.snapshot.projects.get(entry.project_idx) {
+                        save_last_project(&project.name);
+                    }
+                    if let Some(section) = state.selection_section.get_mut(entry.project_idx) {
+                        *section = SelectionSection::Worktrees;
+                    }
+                    if let Some(selected) = state.worktree_selected.get_mut(entry.project_idx) {
+                        *selected = entry.worktree_idx;
+                    }
+                    if let Err(e) = focus_selected(state) {
+                        state.notify(format!("Focus failed: {}", e));
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let PopupState::WorktreeFilter {
+                    filtered, selected, ..
+                } = &mut state.popup
+                    && *selected + 1 < filtered.len()
+                {
+                    *selected += 1;
+                }
+            }
+            KeyCode::Up => {
+                if let PopupState::WorktreeFilter { selected, .. } = &mut state.popup
+                    && *selected > 0
+                {
+                    *selected -= 1;
+                }
+            }
+            KeyCode::Backspace => {
+                if let PopupState::WorktreeFilter { input, .. } = &mut state.popup {
+                    input.pop();
+                }
+                state.recompute_worktree_filter();
+            }
+            KeyCode::Char(ch) => {
+                if let PopupState::WorktreeFilter { input, .. } = &mut state.popup {
+                    input.push(ch);
+                }
+                state.recompute_worktree_filter();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if matches!(state.popup, PopupState::ChangeSummary { .. }) {
         match code {
             KeyCode::Esc => state.close_popup(),
@@ -1299,6 +1442,8 @@ async fn handle_key(
                 }
             } else if ch == kb.filter_projects {
                 state.open_project_filter();
+            } else if ch == '/' {
+                state.open_worktree_filter();
             } else if ch == kb.create_worktree {
                 state.open_create_popup();
             } else if ch == kb.open_worktree_with_prompt {
@@ -1345,6 +1490,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
             worktree_path: worktree_path.clone(),
         }),
         PopupState::ProjectFilter { .. }
+        | PopupState::WorktreeFilter { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }

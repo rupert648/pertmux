@@ -1,4 +1,4 @@
-use crate::app::PopupState;
+use crate::app::{PopupState, WorktreeFilterEntry};
 use crate::client::ClientState;
 use crate::config::{AgentActionConfig, ProjectForge};
 use crate::protocol::ActivityKind;
@@ -24,6 +24,16 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     } = &state.popup
     {
         draw_project_filter_popup(frame, input, filtered, *selected, area);
+        return;
+    }
+
+    if let PopupState::WorktreeFilter {
+        input,
+        filtered,
+        selected,
+    } = &state.popup
+    {
+        draw_worktree_filter_popup(frame, input, filtered, *selected, area);
         return;
     }
 
@@ -67,6 +77,7 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     let (title, body_lines, show_cursor) = match &state.popup {
         PopupState::None
         | PopupState::ProjectFilter { .. }
+        | PopupState::WorktreeFilter { .. }
         | PopupState::ChangeSummary { .. }
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
@@ -196,6 +207,133 @@ pub(crate) fn draw_popup_client(frame: &mut Frame, state: &ClientState, area: Re
     frame.render_widget(paragraph, rect);
 
     let _ = show_cursor;
+}
+
+fn draw_worktree_filter_popup(
+    frame: &mut Frame,
+    input: &str,
+    filtered: &[WorktreeFilterEntry],
+    selected: usize,
+    area: Rect,
+) {
+    let max_visible = 8usize;
+    let visible_count = filtered.len().min(max_visible);
+    let popup_w = (area.width * 3 / 4)
+        .max(60)
+        .min(area.width.saturating_sub(4));
+    let popup_h = ((visible_count as u16 * 2) + 5).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let rect = Rect::new(x, y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            " Find Worktree ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT));
+
+    let inner = block.inner(rect);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let input_line = Line::from(vec![
+        Span::styled(
+            " / ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            input,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("\u{2588}", Style::default().fg(ACCENT)),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), chunks[0]);
+
+    let divider = Line::from(Span::styled(
+        "\u{2500}".repeat(inner.width as usize),
+        Style::default().fg(Color::Indexed(236)),
+    ));
+    frame.render_widget(Paragraph::new(divider.clone()), chunks[1]);
+
+    let scroll_offset = if selected >= visible_count {
+        selected - visible_count + 1
+    } else {
+        0
+    };
+    let available_width = inner.width as usize;
+    let mut result_lines: Vec<Line> = Vec::new();
+
+    for (i, entry) in filtered
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_count)
+    {
+        let is_selected = i == selected;
+        let prefix = if is_selected { " \u{25b8} " } else { "   " };
+        let branch_style = if is_selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else if entry.is_main {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let project_style = if is_selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Indexed(244))
+        };
+        let path_style = Style::default().fg(Color::DarkGray);
+        let suffix = if entry.is_main { "  main" } else { "" };
+        let fixed = 3 + entry.project_name.len() + 3 + suffix.len();
+        let branch_max = available_width.saturating_sub(fixed).max(8);
+        let branch = crate::ui::helpers::truncate(&entry.branch, branch_max);
+
+        result_lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(ACCENT)),
+            Span::styled(entry.project_name.as_str(), project_style),
+            Span::styled(" / ", Style::default().fg(Color::Indexed(236))),
+            Span::styled(branch, branch_style),
+            Span::styled(suffix, path_style),
+        ]));
+
+        let path_max = available_width.saturating_sub(5);
+        result_lines.push(Line::from(vec![
+            Span::styled("     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                crate::ui::helpers::truncate(&entry.path, path_max),
+                path_style,
+            ),
+        ]));
+    }
+
+    if result_lines.is_empty() {
+        result_lines.push(Line::from(Span::styled(
+            "   no matches",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(result_lines), chunks[2]);
+
+    let help = Line::from(Span::styled(
+        "\u{2191}/\u{2193} navigate \u{00b7} Enter focus \u{00b7} Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(Paragraph::new(help), chunks[3]);
 }
 
 fn draw_project_filter_popup(
@@ -814,7 +952,8 @@ fn draw_keybindings_popup(frame: &mut Frame, state: &ClientState, area: Rect) {
     let config_entries = kb.entries();
 
     // Extra hardcoded action entries that are not in KeybindingsConfig.
-    let extra_entries: &[(char, &str)] = &[('K', "Keybindings (this modal)")];
+    let extra_entries: &[(char, &str)] =
+        &[('/', "Find worktree"), ('K', "Keybindings (this modal)")];
 
     // Total rows: header + nav + blank + header + config + extra + blank + help.
     let content_rows = 1 + nav_entries.len() + 1 + 1 + config_entries.len() + extra_entries.len();
