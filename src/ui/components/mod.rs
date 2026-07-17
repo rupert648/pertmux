@@ -3,6 +3,7 @@ pub(crate) mod cards;
 pub(crate) mod change_summary;
 pub(crate) mod detail_panel;
 pub(crate) mod list_panel;
+pub(crate) mod loading;
 pub(crate) mod mr_sections;
 pub(crate) mod notification;
 pub(crate) mod overview;

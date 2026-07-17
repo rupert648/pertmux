@@ -76,6 +76,10 @@ pub fn draw_client(frame: &mut Frame, state: &ClientState) {
     components::popup::draw_popup_client(frame, state, area);
 }
 
+pub fn draw_loading(frame: &mut Frame, tick: usize) {
+    components::loading::draw_loading(frame, tick);
+}
+
 fn draw_right_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     // MR detail gets 3 parts, activity feed gets 2 parts (60/40 split).
     // Using Fill so both panels scale proportionally with the terminal height.

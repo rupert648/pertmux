@@ -663,13 +663,20 @@ pub async fn run() -> Result<()> {
         .send(Bytes::from(serde_json::to_vec(&handshake)?))
         .await?;
 
-    let initial_snapshot = wait_for_initial_snapshot(&mut framed).await?;
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    let initial_snapshot = match wait_for_initial_snapshot(&mut framed, &mut terminal).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            return Err(error);
+        }
+    };
 
     let mut state = ClientState::from_snapshot(initial_snapshot);
     let result = run_client_loop(&mut terminal, &mut state, &mut framed).await;
@@ -816,24 +823,43 @@ pub fn cleanup() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn wait_for_initial_snapshot(
+async fn wait_for_initial_snapshot<B>(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
-) -> Result<DashboardSnapshot> {
-    while let Some(frame) = framed.next().await {
-        let bytes = frame?;
-        let msg: DaemonMsg = serde_json::from_slice(&bytes)?;
-        match msg {
-            DaemonMsg::Snapshot(snap) => return Ok(*snap),
-            DaemonMsg::HandshakeAck { .. } => {}
-            DaemonMsg::Progress(_) => {} // ignore progress during initial connect
-            DaemonMsg::ActionResult { ok, message } => {
-                if !ok {
-                    anyhow::bail!(message);
+    terminal: &mut Terminal<B>,
+) -> Result<DashboardSnapshot>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(120));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut tick = 0;
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                terminal.draw(|frame| ui::draw_loading(frame, tick))?;
+                tick = tick.wrapping_add(1);
+            }
+            frame = framed.next() => {
+                let Some(frame) = frame else {
+                    anyhow::bail!("daemon disconnected before initial snapshot");
+                };
+                let bytes = frame?;
+                let msg: DaemonMsg = serde_json::from_slice(&bytes)?;
+                match msg {
+                    DaemonMsg::Snapshot(snap) => return Ok(*snap),
+                    DaemonMsg::HandshakeAck { .. } => {}
+                    DaemonMsg::Progress(_) => {}
+                    DaemonMsg::ActionResult { ok, message } => {
+                        if !ok {
+                            anyhow::bail!(message);
+                        }
+                    }
                 }
             }
         }
     }
-    anyhow::bail!("daemon disconnected before initial snapshot")
 }
 
 async fn run_client_loop<B>(
