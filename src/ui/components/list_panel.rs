@@ -1,5 +1,4 @@
 use super::mr_sections::draw_mr_sections_client;
-use crate::app::SelectionSection;
 use crate::client::ClientState;
 use crate::types::PaneStatus;
 use crate::ui::ACCENT;
@@ -14,11 +13,11 @@ use ratatui::{
 
 pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     let title_right = if let Some(proj) = state.snapshot.projects.get(state.active_project) {
-        let mr_count = proj.dashboard.linked_mrs.len();
+        let worktree_count = proj.cached_worktrees.len();
         format!(
-            " {} MR{}  {}s ago ",
-            mr_count,
-            if mr_count == 1 { "" } else { "s" },
+            " {} worktree{}  {}s ago ",
+            worktree_count,
+            if worktree_count == 1 { "" } else { "s" },
             state.snapshot.seconds_since_refresh,
         )
     } else {
@@ -42,8 +41,6 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
             Span::styled("/", Style::default().fg(Color::DarkGray)),
             Span::styled("jk", Style::default().fg(ACCENT)),
             Span::styled(" nav  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Tab", Style::default().fg(ACCENT)),
-            Span::styled(" section  ", Style::default().fg(Color::DarkGray)),
             Span::styled(kb.filter_projects.to_string(), Style::default().fg(ACCENT)),
             Span::styled(" projects  ", Style::default().fg(Color::DarkGray)),
             Span::styled("K", Style::default().fg(ACCENT)),
@@ -103,10 +100,6 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
     }
 
     if let Some(proj) = state.snapshot.projects.get(state.active_project) {
-        let section = state
-            .selection_section
-            .get(state.active_project)
-            .unwrap_or(&SelectionSection::Worktrees);
         draw_mr_sections_client(
             frame,
             proj,
@@ -116,7 +109,6 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
                 .worktree_selected
                 .get(state.active_project)
                 .unwrap_or(&0),
-            section,
             inner,
         );
         return;

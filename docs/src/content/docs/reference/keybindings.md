@@ -10,7 +10,6 @@ These keys are hardcoded and cannot be remapped.
 | Key | Action |
 |-----|--------|
 | `j` / `k` or `↑` / `↓` | Navigate list |
-| `Tab` | Toggle between MR list and worktree panel |
 | `Enter` | Focus selected pane/worktree in tmux |
 
 ## Actions (configurable)
@@ -59,4 +58,4 @@ activity_feed = "F"
 
 Missing keys use their defaults. Each action must have a unique key — duplicates are rejected at startup with a clear error message.
 
-Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable.
+Navigation keys (`j`/`k`/`↑`/`↓`/`Enter`/`Esc`/`q`) are not configurable.

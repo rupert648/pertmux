@@ -1,4 +1,3 @@
-use super::ACCENT;
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use jiff::Timestamp;
 use ratatui::{
@@ -70,35 +69,6 @@ pub(crate) fn truncate(s: &str, max: usize) -> String {
         format!("{}...", truncated)
     } else {
         s.chars().take(max).collect()
-    }
-}
-
-pub(crate) fn leak_status(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
-}
-
-// ─── Merge status ────────────────────────────────────────────────────────────
-
-pub(crate) fn merge_status_display(
-    status: Option<&str>,
-    has_conflicts: Option<bool>,
-) -> (&'static str, &'static str, Color) {
-    if has_conflicts == Some(true) {
-        return ("\u{2717}", "conflicts", Color::Red);
-    }
-    match status {
-        Some("mergeable") => ("\u{2713}", "mergeable", Color::Green),
-        Some("not_approved") => ("\u{25cb}", "not approved", Color::Yellow),
-        Some("checking") => ("\u{29d7}", "checking", ACCENT),
-        Some("ci_must_pass") | Some("ci_still_running") => ("\u{29d7}", "CI running", ACCENT),
-        Some("broken_status") => ("\u{2717}", "broken", Color::Red),
-        Some("need_rebase") => ("\u{21bb}", "needs rebase", Color::Yellow),
-        Some("blocked_status") => ("\u{2298}", "blocked", Color::Red),
-        Some("discussions_not_resolved") => ("\u{25ce}", "discussions open", Color::Yellow),
-        Some("draft_status") => ("\u{25c7}", "draft", Color::DarkGray),
-        Some("not_open") => ("\u{2500}", "closed", Color::DarkGray),
-        Some(other) => ("?", leak_status(other), Color::DarkGray),
-        None => ("\u{2500}", "unknown", Color::DarkGray),
     }
 }
 

@@ -1,5 +1,4 @@
 use super::pipeline::render_pipeline_dots;
-use crate::app::SelectionSection;
 use crate::client::ClientState;
 use crate::protocol::ProjectSnapshot;
 use crate::types::SessionDetail;
@@ -18,10 +17,6 @@ use ratatui::{
 
 pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
     if let Some(proj) = state.snapshot.projects.get(state.active_project) {
-        let section = state
-            .selection_section
-            .get(state.active_project)
-            .unwrap_or(&SelectionSection::Worktrees);
         draw_mr_detail_panel_client(
             frame,
             proj,
@@ -31,7 +26,6 @@ pub(crate) fn draw_detail_panel_client(frame: &mut Frame, state: &ClientState, a
                 .worktree_selected
                 .get(state.active_project)
                 .unwrap_or(&0),
-            section,
             area,
         );
         return;
@@ -91,11 +85,9 @@ fn draw_mr_detail_panel_client(
     panes: &[crate::types::AgentPane],
     mr_selected: usize,
     worktree_selected: usize,
-    section: &SelectionSection,
     area: Rect,
 ) {
-    let render =
-        ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected, section);
+    let render = ProjectRenderData::from_snapshot(proj, panes, mr_selected, worktree_selected);
     draw_mr_detail_panel_render(frame, &render, area);
 }
 

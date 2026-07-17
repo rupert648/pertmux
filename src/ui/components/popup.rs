@@ -940,7 +940,6 @@ fn draw_keybindings_popup(frame: &mut Frame, state: &ClientState, area: Rect) {
     // Static navigation entries (not configurable).
     let nav_entries: &[(&str, &str)] = &[
         ("\u{2191}\u{2193} / jk", "Navigate"),
-        ("Tab", "Switch section (MRs / Worktrees)"),
         ("\u{23ce}", "Focus pane in tmux"),
         ("q / Esc", "Quit"),
     ];

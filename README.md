@@ -229,7 +229,7 @@ Define custom agent actions sent to coding agent instances. When present, replac
 
 #### `[keybindings]`
 
-Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`) are not configurable. Each action must have a unique key — duplicates are rejected at startup.
+Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Enter`/`Esc`/`q`) are not configurable. Each action must have a unique key — duplicates are rejected at startup.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -251,7 +251,6 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Tab`/`Enter`/`Esc`/`q`)
 | Key | Action |
 |-----|--------|
 | `j`/`k` or `↑`/`↓` | Navigate list |
-| `Tab` | Toggle between MR list and worktree panel |
 | `Enter` | Focus selected pane/worktree in tmux |
 
 ### Actions (configurable)

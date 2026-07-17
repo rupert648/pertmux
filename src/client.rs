@@ -200,28 +200,10 @@ impl ClientState {
     }
 
     fn move_up(&mut self) {
-        if let Some(proj) = self.snapshot.projects.get(self.active_project) {
-            match self
-                .selection_section
-                .get(self.active_project)
-                .unwrap_or(&SelectionSection::Worktrees)
-            {
-                SelectionSection::MergeRequests => {
-                    if self.mr_selected[self.active_project] > 0 {
-                        self.mr_selected[self.active_project] -= 1;
-                    }
-                }
-                SelectionSection::Worktrees => {
-                    if self.worktree_selected[self.active_project] > 0 {
-                        self.worktree_selected[self.active_project] -= 1;
-                    }
-                }
-            }
-
-            if self.mr_selected[self.active_project] >= proj.dashboard.linked_mrs.len()
-                && !proj.dashboard.linked_mrs.is_empty()
-            {
-                self.mr_selected[self.active_project] = proj.dashboard.linked_mrs.len() - 1;
+        if self.snapshot.projects.get(self.active_project).is_some() {
+            self.selection_section[self.active_project] = SelectionSection::Worktrees;
+            if self.worktree_selected[self.active_project] > 0 {
+                self.worktree_selected[self.active_project] -= 1;
             }
         } else if !self.snapshot.panes.is_empty() && self.selected > 0 {
             self.selected -= 1;
@@ -230,43 +212,14 @@ impl ClientState {
 
     fn move_down(&mut self) {
         if let Some(proj) = self.snapshot.projects.get(self.active_project) {
-            match self
-                .selection_section
-                .get(self.active_project)
-                .unwrap_or(&SelectionSection::Worktrees)
+            self.selection_section[self.active_project] = SelectionSection::Worktrees;
+            if !proj.cached_worktrees.is_empty()
+                && self.worktree_selected[self.active_project] < proj.cached_worktrees.len() - 1
             {
-                SelectionSection::MergeRequests => {
-                    if !proj.dashboard.linked_mrs.is_empty()
-                        && self.mr_selected[self.active_project]
-                            < proj.dashboard.linked_mrs.len() - 1
-                    {
-                        self.mr_selected[self.active_project] += 1;
-                    }
-                }
-                SelectionSection::Worktrees => {
-                    if !proj.cached_worktrees.is_empty()
-                        && self.worktree_selected[self.active_project]
-                            < proj.cached_worktrees.len() - 1
-                    {
-                        self.worktree_selected[self.active_project] += 1;
-                    }
-                }
+                self.worktree_selected[self.active_project] += 1;
             }
         } else if !self.snapshot.panes.is_empty() && self.selected < self.snapshot.panes.len() - 1 {
             self.selected += 1;
-        }
-    }
-
-    fn toggle_section(&mut self) {
-        if self.snapshot.projects.get(self.active_project).is_some() {
-            let section = self
-                .selection_section
-                .get_mut(self.active_project)
-                .expect("selection section exists for project");
-            *section = match section {
-                SelectionSection::MergeRequests => SelectionSection::Worktrees,
-                SelectionSection::Worktrees => SelectionSection::MergeRequests,
-            };
         }
     }
 
@@ -316,30 +269,20 @@ impl ClientState {
     }
 
     fn copy_selected_branch(&mut self) {
-        let branch = if let Some(proj) = self.snapshot.projects.get(self.active_project) {
-            match self
-                .selection_section
-                .get(self.active_project)
-                .unwrap_or(&SelectionSection::Worktrees)
-            {
-                SelectionSection::MergeRequests => proj
-                    .dashboard
-                    .linked_mrs
-                    .get(*self.mr_selected.get(self.active_project).unwrap_or(&0))
-                    .map(|l| l.mr.source_branch.clone()),
-                SelectionSection::Worktrees => proj
-                    .cached_worktrees
+        let branch = self
+            .snapshot
+            .projects
+            .get(self.active_project)
+            .and_then(|proj| {
+                proj.cached_worktrees
                     .get(
                         *self
                             .worktree_selected
                             .get(self.active_project)
                             .unwrap_or(&0),
                     )
-                    .and_then(|wt| wt.branch.clone()),
-            }
-        } else {
-            None
-        };
+                    .and_then(|wt| wt.branch.clone())
+            });
 
         if let Some(branch) = branch {
             let ok = std::process::Command::new("pbcopy")
@@ -360,12 +303,7 @@ impl ClientState {
     }
 
     fn open_create_popup(&mut self) {
-        if let Some(_proj) = self.snapshot.projects.get(self.active_project)
-            && matches!(
-                self.selection_section.get(self.active_project),
-                Some(SelectionSection::Worktrees)
-            )
-        {
+        if self.snapshot.projects.get(self.active_project).is_some() {
             self.popup = PopupState::CreateWorktree {
                 input: String::new(),
             };
@@ -379,12 +317,7 @@ impl ClientState {
             );
             return;
         }
-        if let Some(_proj) = self.snapshot.projects.get(self.active_project)
-            && matches!(
-                self.selection_section.get(self.active_project),
-                Some(SelectionSection::Worktrees)
-            )
-        {
+        if self.snapshot.projects.get(self.active_project).is_some() {
             self.popup = PopupState::CreateWorktreeWithPrompt {
                 branch_input: String::new(),
                 prompt_input: String::new(),
@@ -395,10 +328,6 @@ impl ClientState {
 
     fn open_remove_popup(&mut self) {
         if let Some(proj) = self.snapshot.projects.get(self.active_project)
-            && matches!(
-                self.selection_section.get(self.active_project),
-                Some(SelectionSection::Worktrees)
-            )
             && let Some(wt) = proj.cached_worktrees.get(
                 *self
                     .worktree_selected
@@ -425,10 +354,6 @@ impl ClientState {
 
     fn open_merge_popup(&mut self) {
         if let Some(proj) = self.snapshot.projects.get(self.active_project)
-            && matches!(
-                self.selection_section.get(self.active_project),
-                Some(SelectionSection::Worktrees)
-            )
             && let Some(wt) = proj.cached_worktrees.get(
                 *self
                     .worktree_selected
@@ -1417,11 +1342,6 @@ async fn handle_key(
             state.move_down();
             maybe_send_select_mr(state, framed, before).await?;
         }
-        KeyCode::Tab => {
-            let before = state.current_mr_iid();
-            state.toggle_section();
-            maybe_send_select_mr(state, framed, before).await?;
-        }
         KeyCode::Enter => {
             if let Err(e) = focus_selected(state) {
                 state.notify(format!("Focus failed: {}", e));
@@ -1586,36 +1506,18 @@ async fn maybe_send_select_mr(
 
 fn focus_selected(state: &ClientState) -> Result<()> {
     if let Some(proj) = state.snapshot.projects.get(state.active_project) {
-        match state
-            .selection_section
-            .get(state.active_project)
-            .unwrap_or(&SelectionSection::Worktrees)
+        if let Some(wt) = proj.cached_worktrees.get(
+            *state
+                .worktree_selected
+                .get(state.active_project)
+                .unwrap_or(&0),
+        ) && let Some(ref path) = wt.path
         {
-            SelectionSection::MergeRequests => {
-                if let Some(linked) = proj
-                    .dashboard
-                    .linked_mrs
-                    .get(*state.mr_selected.get(state.active_project).unwrap_or(&0))
-                    && let Some(pane) = linked.tmux_pane.as_ref()
-                {
-                    tmux::switch_to_pane(&pane.pane_id)?;
-                }
-            }
-            SelectionSection::Worktrees => {
-                if let Some(wt) = proj.cached_worktrees.get(
-                    *state
-                        .worktree_selected
-                        .get(state.active_project)
-                        .unwrap_or(&0),
-                ) && let Some(ref path) = wt.path
-                {
-                    tmux::find_or_create_pane(
-                        path,
-                        &proj.name,
-                        state.snapshot.default_agent_command.as_deref(),
-                    )?;
-                }
-            }
+            tmux::find_or_create_pane(
+                path,
+                &proj.name,
+                state.snapshot.default_agent_command.as_deref(),
+            )?;
         }
     } else if let Some(pane) = state.snapshot.panes.get(state.selected) {
         tmux::switch_to_pane(&pane.pane_id)?;

@@ -1,4 +1,3 @@
-use crate::app::SelectionSection;
 use crate::client::ClientState;
 use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
@@ -27,7 +26,6 @@ pub(crate) struct ProjectRenderData<'a> {
     pub(crate) cached_threads_iid: Option<u64>,
     pub(crate) mr_selected: usize,
     pub(crate) worktree_selected: usize,
-    pub(crate) mr_focused: bool,
 }
 
 impl<'a> ProjectRenderData<'a> {
@@ -36,7 +34,6 @@ impl<'a> ProjectRenderData<'a> {
         panes: &'a [AgentPane],
         mr_selected: usize,
         worktree_selected: usize,
-        section: &'a SelectionSection,
     ) -> Self {
         Self {
             dashboard: &proj.dashboard,
@@ -48,7 +45,6 @@ impl<'a> ProjectRenderData<'a> {
             cached_threads_iid: proj.cached_threads_iid,
             mr_selected,
             worktree_selected,
-            mr_focused: matches!(section, SelectionSection::MergeRequests),
         }
     }
 }

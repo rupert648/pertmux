@@ -1,7 +1,6 @@
-use crate::linking::LinkedMergeRequest;
 use crate::types::AgentPane;
 use crate::ui::ACCENT;
-use crate::ui::helpers::{compact_status_badge, merge_status_display, truncate};
+use crate::ui::helpers::{compact_status_badge, truncate};
 use crate::worktrunk::{self, WtWorktree};
 use ratatui::{
     Frame,
@@ -10,93 +9,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
-
-pub(crate) fn render_mr_card(
-    frame: &mut Frame,
-    linked: &LinkedMergeRequest,
-    rect: Rect,
-    is_selected: bool,
-) {
-    let border_color = if is_selected {
-        ACCENT
-    } else {
-        Color::Indexed(238)
-    };
-
-    let iid_label = format!(" !{} ", linked.mr.iid);
-    let iid_style = if is_selected {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let block = Block::default()
-        .title(Line::from(Span::styled(iid_label, iid_style)))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border_color));
-
-    let card_inner = block.inner(rect);
-    frame.render_widget(block, rect);
-
-    if card_inner.width == 0 || card_inner.height == 0 {
-        return;
-    }
-
-    let title_color = if is_selected {
-        Color::White
-    } else {
-        Color::Gray
-    };
-    let content_w = card_inner.width as usize;
-    let draft_space = if linked.mr.draft { 9 } else { 0 };
-    let title = truncate(&linked.mr.title, content_w.saturating_sub(draft_space));
-
-    let mut title_spans = vec![Span::styled(title, Style::default().fg(title_color))];
-    if linked.mr.draft {
-        title_spans.push(Span::styled(
-            " [draft]",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::DIM),
-        ));
-    }
-    if is_selected {
-        for s in &mut title_spans {
-            s.style = s.style.add_modifier(Modifier::BOLD);
-        }
-    }
-
-    let (icon, text, color) = merge_status_display(
-        linked.mr.detailed_merge_status.as_deref(),
-        linked.mr.has_conflicts,
-    );
-    let mut status_spans: Vec<Span> = vec![
-        Span::styled(format!("{} {}", icon, text), Style::default().fg(color)),
-        Span::styled(" \u{00b7} ", Style::default().fg(Color::Indexed(238))),
-        Span::styled(
-            format!("{} comments", linked.mr.user_notes_count),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ];
-    if linked.has_new_activity {
-        status_spans.push(Span::styled(
-            " \u{00b7} ",
-            Style::default().fg(Color::Indexed(238)),
-        ));
-        status_spans.push(Span::styled(
-            "\u{25cf} new",
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-    if let Some(ref pane) = linked.tmux_pane {
-        status_spans.push(Span::raw(" "));
-        status_spans.push(compact_status_badge(&pane.status));
-    }
-
-    let content = vec![Line::from(title_spans), Line::from(status_spans)];
-    frame.render_widget(Paragraph::new(content), card_inner);
-}
 
 pub(crate) fn render_worktree_card(
     frame: &mut Frame,
@@ -171,30 +83,31 @@ pub(crate) fn render_worktree_card(
         return;
     }
 
-    let mut line1_spans: Vec<Span> = Vec::new();
-    if let Some(ref symbols) = wt.symbols
-        && !symbols.is_empty()
-    {
-        line1_spans.push(Span::styled(
-            format!("{} ", symbols),
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-    let msg = &wt.commit.message;
-    let truncated = if msg.len() > card_inner.width as usize - 4 {
-        format!("{}\u{2026}", &msg[..card_inner.width as usize - 5])
-    } else {
-        msg.clone()
-    };
-    line1_spans.push(Span::styled(truncated, Style::default().fg(Color::Gray)));
-
     let age = worktrunk::format_age(wt.commit.timestamp);
-    let mut line2_spans = vec![Span::styled(age, Style::default().fg(Color::DarkGray))];
+    let symbols = wt
+        .symbols
+        .as_deref()
+        .filter(|symbols| !symbols.is_empty())
+        .map(|symbols| format!("{} ", symbols))
+        .unwrap_or_default();
+    let metadata_width = age.chars().count() + 2 + usize::from(pane.is_some()) * 4;
+    let message_width =
+        (card_inner.width as usize).saturating_sub(symbols.chars().count() + metadata_width);
+    let message = truncate(&wt.commit.message, message_width);
+    let used_width = symbols.chars().count() + message.chars().count() + metadata_width;
+    let padding = (card_inner.width as usize).saturating_sub(used_width);
+
+    let mut content_spans = Vec::new();
+    if !symbols.is_empty() {
+        content_spans.push(Span::styled(symbols, Style::default().fg(Color::Yellow)));
+    }
+    content_spans.push(Span::styled(message, Style::default().fg(Color::Gray)));
+    content_spans.push(Span::raw(" ".repeat(padding + 2)));
+    content_spans.push(Span::styled(age, Style::default().fg(Color::DarkGray)));
     if let Some(pane) = pane {
-        line2_spans.push(Span::raw(" "));
-        line2_spans.push(compact_status_badge(&pane.status));
+        content_spans.push(Span::raw(" "));
+        content_spans.push(compact_status_badge(&pane.status));
     }
 
-    let content = vec![Line::from(line1_spans), Line::from(line2_spans)];
-    frame.render_widget(Paragraph::new(content), card_inner);
+    frame.render_widget(Paragraph::new(Line::from(content_spans)), card_inner);
 }
