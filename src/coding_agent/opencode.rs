@@ -1,17 +1,38 @@
 use super::CodingAgent;
-use crate::discovery;
+use crate::discovery::{self, ListenerMap};
 use crate::types::{AgentPane, PaneStatus, SessionDetail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub struct OpenCode {
     db_path: Option<String>,
+    /// Reusable HTTP agent for status queries (short timeout).
+    status_agent: ureq::Agent,
+    /// Reusable HTTP agent for sending prompts (longer timeout).
+    send_agent: ureq::Agent,
 }
 
 impl OpenCode {
     pub fn new(db_path: Option<String>) -> Self {
-        Self { db_path }
+        let status_agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_connect(Some(TIMEOUT))
+                .timeout_recv_body(Some(TIMEOUT))
+                .build(),
+        );
+        let send_agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_connect(Some(SEND_TIMEOUT))
+                .timeout_recv_body(Some(SEND_TIMEOUT))
+                .build(),
+        );
+        Self {
+            db_path,
+            status_agent,
+            send_agent,
+        }
     }
 }
 
@@ -41,12 +62,12 @@ impl CodingAgent for OpenCode {
         "opencode"
     }
 
-    fn query_status(&self, pane: &AgentPane) -> PaneStatus {
-        let Some(port) = discovery::discover_port(pane.pane_pid) else {
+    fn query_status(&self, pane: &AgentPane, sys: &System, listeners: &ListenerMap) -> PaneStatus {
+        let Some(port) = discovery::discover_port(sys, listeners, pane.pane_pid) else {
             return PaneStatus::Unknown;
         };
 
-        let Some(map) = get_session_status(port) else {
+        let Some(map) = get_session_status(&self.status_agent, port) else {
             return PaneStatus::Unknown;
         };
 
@@ -54,7 +75,15 @@ impl CodingAgent for OpenCode {
     }
 
     fn send_prompt(&self, pane_pid: u32, session_id: &str, prompt: &str) -> anyhow::Result<String> {
-        let port = discovery::discover_port(pane_pid)
+        // send_prompt is a rare user action, so fresh scans are acceptable.
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+        let listeners = discovery::build_listener_map();
+        let port = discovery::discover_port(&sys, &listeners, pane_pid)
             .ok_or_else(|| anyhow::anyhow!("Could not discover opencode port"))?;
 
         let url = format!("http://127.0.0.1:{}/session/{}/message", port, session_id);
@@ -62,14 +91,8 @@ impl CodingAgent for OpenCode {
             "parts": [{"type": "text", "text": prompt}]
         });
 
-        let agent = ureq::Agent::new_with_config(
-            ureq::config::Config::builder()
-                .timeout_connect(Some(SEND_TIMEOUT))
-                .timeout_recv_body(Some(SEND_TIMEOUT))
-                .build(),
-        );
-
-        let response = agent
+        let response = self
+            .send_agent
             .post(&url)
             .send_json(&body)
             .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
@@ -93,14 +116,8 @@ impl CodingAgent for OpenCode {
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
-fn get_session_status(port: u16) -> Option<SessionStatusMap> {
+fn get_session_status(agent: &ureq::Agent, port: u16) -> Option<SessionStatusMap> {
     let url = format!("http://127.0.0.1:{}/session/status", port);
-    let agent = ureq::Agent::new_with_config(
-        ureq::config::Config::builder()
-            .timeout_connect(Some(TIMEOUT))
-            .timeout_recv_body(Some(TIMEOUT))
-            .build(),
-    );
     let mut response = agent.get(&url).call().ok()?;
     response.body_mut().read_json::<SessionStatusMap>().ok()
 }

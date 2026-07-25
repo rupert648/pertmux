@@ -34,7 +34,15 @@ pub fn link_all(
 
     let pane_by_canonical_path: HashMap<PathBuf, &AgentPane> = panes
         .iter()
-        .filter_map(|pane| canonicalize_path(&pane.pane_path).map(|path| (path, pane)))
+        .filter_map(|pane| {
+            // Use the pre-computed canonical path (set once in tmux::make_agent_pane)
+            // to avoid repeated fs::canonicalize syscalls per pane per tick.
+            pane.canonical_path
+                .as_deref()
+                .map(PathBuf::from)
+                .or_else(|| canonicalize_path(&pane.pane_path))
+                .map(|path| (path, pane))
+        })
         .collect();
 
     let mut linked_mrs = Vec::with_capacity(mrs.len());
@@ -117,6 +125,9 @@ mod tests {
     }
 
     fn make_pane(pane_id: &str, pane_path: &str) -> AgentPane {
+        let canonical_path = std::fs::canonicalize(pane_path)
+            .ok()
+            .and_then(|p| p.to_str().map(String::from));
         AgentPane {
             pane_id: pane_id.to_string(),
             session_name: "s".to_string(),
@@ -124,6 +135,7 @@ mod tests {
             pane_index: 0,
             pane_title: "pane".to_string(),
             pane_path: pane_path.to_string(),
+            canonical_path,
             pane_pid: 1,
             pane_command: "opencode".to_string(),
             status: PaneStatus::Idle,

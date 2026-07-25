@@ -6,3 +6,7 @@ docs/.astro/
 *.png
 *.mov
 !docs/public/**/*.png
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

@@ -1,9 +1,13 @@
 use crate::types::{AgentPane, PaneStatus};
 use std::path::Path;
 use std::process::Command;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{Pid, System};
 
-pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>> {
+/// List tmux panes running a registered coding agent.
+///
+/// Accepts a pre-refreshed `&System` to avoid redundant `/proc` scans — the
+/// caller is expected to refresh the process table once per tick.
+pub fn list_agent_panes(process_names: &[&str], sys: &System) -> anyhow::Result<Vec<AgentPane>> {
     let format_str = "#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_title}\t#{pane_current_path}\t#{pane_pid}\t#{pane_current_command}";
 
     let output = Command::new("tmux")
@@ -45,21 +49,14 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
     }
 
     // Secondary check: scan child processes of unmatched pane shells.
-    // Only pay the sysinfo cost if there are unmatched panes to check.
+    // Uses the pre-refreshed System passed by the caller.
     if !unmatched.is_empty() {
-        let mut sys = System::new();
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-        );
-
         for raw in &unmatched {
             let shell_pid = raw.fields[6].parse::<u32>().unwrap_or(0);
             if shell_pid == 0 {
                 continue;
             }
-            if let Some(agent_name) = find_agent_child(&sys, shell_pid, process_names) {
+            if let Some(agent_name) = find_agent_child(sys, shell_pid, process_names) {
                 let field_refs: Vec<&str> = raw.fields.iter().map(String::as_str).collect();
                 let mut pane = make_agent_pane(&field_refs);
                 pane.pane_command = agent_name;
@@ -72,13 +69,18 @@ pub fn list_agent_panes(process_names: &[&str]) -> anyhow::Result<Vec<AgentPane>
 }
 
 fn make_agent_pane(fields: &[&str]) -> AgentPane {
+    let pane_path = fields[5].to_string();
+    let canonical_path = std::fs::canonicalize(&pane_path)
+        .ok()
+        .and_then(|p| p.to_str().map(String::from));
     AgentPane {
         pane_id: fields[0].to_string(),
         session_name: fields[1].to_string(),
         window_index: fields[2].parse().unwrap_or(0),
         pane_index: fields[3].parse().unwrap_or(0),
         pane_title: fields[4].to_string(),
-        pane_path: fields[5].to_string(),
+        pane_path,
+        canonical_path,
         pane_pid: fields[6].parse().unwrap_or(0),
         pane_command: fields[7].to_string(),
         status: PaneStatus::Unknown,

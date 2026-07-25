@@ -1,25 +1,55 @@
 use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use std::collections::HashMap;
+use sysinfo::{Pid, System};
+
+/// Pre-computed map of PID → TCP listening port.
+///
+/// Built once per refresh tick by [`build_listener_map`] and shared across all
+/// `discover_port` calls, avoiding redundant `/proc/net/tcp` and `/proc/*/fd`
+/// scans (which are the most expensive part of the old per-pane approach).
+pub type ListenerMap = HashMap<u32, u16>;
+
+/// Scan the system socket table once and return a map from PID to its TCP
+/// listening port. Only includes LISTEN-state TCP sockets.
+pub fn build_listener_map() -> ListenerMap {
+    let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
+    let proto_flags = ProtocolFlags::TCP;
+
+    let Ok(sockets) = get_sockets_info(af_flags, proto_flags) else {
+        return HashMap::new();
+    };
+
+    let mut map = HashMap::new();
+    for socket in sockets {
+        if let ProtocolSocketInfo::Tcp(tcp) = &socket.protocol_socket_info
+            && tcp.state == TcpState::Listen
+        {
+            for &pid in &socket.associated_pids {
+                // First listener wins — stable across ticks.
+                map.entry(pid).or_insert(tcp.local_port);
+            }
+        }
+    }
+    map
+}
 
 /// Discover the HTTP port for an opencode instance given the pane's PID.
 ///
 /// Walks the process tree from the shell PID to find the opencode process,
 /// then checks it and its children for a TCP listener.
-pub fn discover_port(pane_pid: u32) -> Option<u16> {
-    let mut sys = System::new();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-    );
-
-    let opencode_pid = find_opencode_pid(&sys, pane_pid)?;
+///
+/// Accepts a pre-refreshed `&System` and pre-built `&ListenerMap` to avoid
+/// redundant `/proc` scans — the caller is expected to build both once per tick.
+pub fn discover_port(sys: &System, listeners: &ListenerMap, pane_pid: u32) -> Option<u16> {
+    let opencode_pid = find_opencode_pid(sys, pane_pid)?;
 
     // Collect opencode PID + all its children (the HTTP server may run in a child worker).
     let mut candidate_pids = vec![opencode_pid];
-    candidate_pids.extend(find_child_pids(&sys, opencode_pid));
+    candidate_pids.extend(find_child_pids(sys, opencode_pid));
 
-    find_listening_port(&candidate_pids)
+    candidate_pids
+        .iter()
+        .find_map(|pid| listeners.get(pid).copied())
 }
 
 /// Find the opencode process in the tree rooted at `shell_pid`.
@@ -80,26 +110,4 @@ fn find_child_pids(sys: &System, parent_pid: u32) -> Vec<u32> {
             }
         })
         .collect()
-}
-
-/// Find a TCP listening port owned by any of the given PIDs using netstat2.
-fn find_listening_port(pids: &[u32]) -> Option<u16> {
-    let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
-    let proto_flags = ProtocolFlags::TCP;
-
-    let sockets = get_sockets_info(af_flags, proto_flags).ok()?;
-
-    for socket in sockets {
-        if let ProtocolSocketInfo::Tcp(tcp) = &socket.protocol_socket_info
-            && tcp.state == TcpState::Listen
-        {
-            for &sock_pid in &socket.associated_pids {
-                if pids.contains(&sock_pid) {
-                    return Some(tcp.local_port);
-                }
-            }
-        }
-    }
-
-    None
 }
