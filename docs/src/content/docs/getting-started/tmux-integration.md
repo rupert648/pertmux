@@ -66,3 +66,10 @@ Typical flow:
 2. **Open pertmux** with `prefix+a`, navigate to a worktree, press `Enter`
 3. pertmux opens the worktree as a new window in the matching session
 4. **Flip between projects** with `prefix+J` / `prefix+K` — each session has its own set of worktree windows
+
+### Resuming Codex sessions
+
+If `default_agent_command` starts interactive Codex (for example, `codex`), pertmux records the
+Codex session ID in the worktree's Git metadata. When no tmux pane exists and you open that
+worktree again, pertmux starts `codex resume <session-id>` instead of a new conversation. This
+survives tmux shutdowns and computer restarts without adding files to the worktree itself.

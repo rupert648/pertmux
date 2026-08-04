@@ -109,6 +109,12 @@ codex
 
 pertmux reads Codex's local databases in `~/.codex/` to determine session status and details.
 
+When pertmux observes a Codex session in a worktree, it stores the session ID in that
+worktree's Git metadata. Opening the worktree again with a configured interactive `codex`
+command automatically runs `codex resume <session-id>`, restoring the conversation after tmux
+is shut down or the computer is restarted. The metadata lives under Git's per-worktree directory,
+so it does not create an untracked file in the checkout.
+
 ### Optional Codex hooks
 
 Install global hooks:

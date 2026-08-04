@@ -1,4 +1,5 @@
 use crate::agent_changes::{AgentChange, AgentChangeType};
+use crate::codex_session;
 use crate::coding_agent;
 use crate::coding_agent::CodingAgent;
 use crate::config::{AgentActionConfig, Config, KeybindingsConfig, ProjectConfig, ProjectForge};
@@ -273,6 +274,15 @@ impl App {
                 agent.enrich_pane(pane);
                 self.apply_cached_codex_hook_status(pane);
             }
+            if is_codex_pane(pane)
+                && let Some(session_id) = pane.db_session_id.as_deref()
+                && let Err(error) = codex_session::persist(&pane.pane_path, session_id)
+            {
+                warn!(
+                    "app::refresh: failed to persist Codex session for {}: {}",
+                    pane.pane_path, error
+                );
+            }
         }
 
         let prev_changed_at: HashMap<String, Option<JiffTimestamp>> = self
@@ -374,6 +384,13 @@ impl App {
     }
 
     pub fn apply_codex_hook_event(&mut self, event: &CodexHookEvent) {
+        if let Err(error) = codex_session::persist(&event.cwd, &event.session_id) {
+            warn!(
+                "app::apply_codex_hook_event: failed to persist Codex session for {}: {}",
+                event.cwd, error
+            );
+        }
+
         let Some(idx) = self.find_codex_pane_for_hook(event) else {
             return;
         };

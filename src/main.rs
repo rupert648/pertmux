@@ -3,6 +3,7 @@ mod app;
 mod banner;
 mod client;
 mod codex_hooks;
+mod codex_session;
 mod coding_agent;
 mod config;
 mod daemon;

@@ -1,3 +1,4 @@
+use crate::codex_session;
 use crate::types::{AgentPane, PaneStatus};
 use std::path::Path;
 use std::process::Command;
@@ -168,6 +169,7 @@ pub fn find_or_create_pane(
     let new_pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !new_pane_id.is_empty() {
         if let Some(cmd) = agent_command {
+            let cmd = codex_session::resume_command(path, cmd);
             let split_output = Command::new("tmux")
                 .args([
                     "split-window",
@@ -188,7 +190,7 @@ pub fn find_or_create_pane(
             }
 
             Command::new("tmux")
-                .args(["send-keys", "-t", &new_pane_id, cmd, "Enter"])
+                .args(["send-keys", "-t", &new_pane_id, &cmd, "Enter"])
                 .output()?;
 
             switch_to_pane(&new_pane_id)?;
