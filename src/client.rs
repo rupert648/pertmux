@@ -714,8 +714,10 @@ pub async fn stop() -> Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while sock_path.exists() {
         if std::time::Instant::now() >= deadline {
-            eprintln!("warning: daemon did not shut down within 5 s");
-            break;
+            anyhow::bail!(
+                "daemon did not shut down within 5 s; socket still exists at {}",
+                sock_path.display()
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }

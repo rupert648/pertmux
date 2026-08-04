@@ -5,11 +5,12 @@ use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION}
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{error, info, warn};
 
@@ -109,19 +110,10 @@ pub async fn run(config: Config) -> Result<()> {
 
     let (broadcast_tx, _) = broadcast::channel::<DaemonMsg>(32);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<ClientMsg>(64);
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     let mut app = App::new(config);
-    if app.has_projects() {
-        app.refresh_mrs(None).await;
-        app.refresh_global_mrs(None).await;
-    }
-    app.refresh().await;
-    app.refresh_worktrees(None).await;
-    app.pending_changes.clear();
-
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
-    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
-
     let client_count = Arc::new(AtomicUsize::new(0));
     let pending_for_offline: Arc<Mutex<Vec<MrChange>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -130,6 +122,7 @@ pub async fn run(config: Config) -> Result<()> {
     let accept_latest_snapshot = Arc::clone(&latest_snapshot);
     let accept_client_count = Arc::clone(&client_count);
     let accept_pending_for_offline = Arc::clone(&pending_for_offline);
+    let accept_shutdown_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         accept_loop(
             listener,
@@ -138,9 +131,35 @@ pub async fn run(config: Config) -> Result<()> {
             accept_latest_snapshot,
             accept_client_count,
             accept_pending_for_offline,
+            accept_shutdown_tx,
         )
         .await;
     });
+
+    let initialized = run_until_shutdown(&mut shutdown_rx, async {
+        if app.has_projects() {
+            app.refresh_mrs(None).await;
+            app.refresh_global_mrs(None).await;
+        }
+        app.refresh().await;
+        app.refresh_worktrees(None).await;
+        app.pending_changes.clear();
+    })
+    .await
+    .is_some();
+
+    if !initialized {
+        info!("shutdown requested during initialization");
+        drop(_guard);
+        info!("stopped");
+        return Ok(());
+    }
+
+    {
+        let mut guard = latest_snapshot.lock().await;
+        *guard = app.snapshot();
+    }
+    let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
 
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
     let mut detail_interval = tokio::time::interval(app.mr_detail_interval);
@@ -154,173 +173,84 @@ pub async fn run(config: Config) -> Result<()> {
     let mut shutdown = false;
 
     while !shutdown {
+        let mut stop_wait_rx = shutdown_rx.clone();
         tokio::select! {
+            biased;
+            _ = stop_wait_rx.wait_for(|requested| *requested) => {
+                info!("received stop signal");
+                shutdown = true;
+            }
             Some(cmd) = cmd_rx.recv() => {
-                match cmd {
-                    ClientMsg::Stop => {
-                        info!("received stop command");
-                        shutdown = true;
-                    }
-                    ClientMsg::Refresh => {
-                        info!("cmd: Refresh — starting full refresh");
-                        let t = std::time::Instant::now();
-                        app.refresh().await;
-                        app.refresh_mrs(Some(&broadcast_tx)).await;
-                        app.refresh_global_mrs(Some(&broadcast_tx)).await;
-                        app.refresh_worktrees(Some(&broadcast_tx)).await;
-                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: Refresh done in {:.2?}", t.elapsed());
-                    }
-                    ClientMsg::CreateWorktree { project_idx, branch } => {
-                        info!("cmd: CreateWorktree project_idx={} branch={}", project_idx, branch);
-                        let t = std::time::Instant::now();
-                        let result = handle_create_worktree(&app, project_idx, &branch).await;
-                        info!(
-                            "cmd: CreateWorktree wt call done in {:.2?} (ok={})",
-                            t.elapsed(),
-                            result.is_ok()
-                        );
-                        send_action_result(&broadcast_tx, result);
-                        info!("cmd: CreateWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
-                        info!("cmd: CreateWorktree refreshing panes…");
-                        app.refresh().await;
-                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: CreateWorktree fully complete in {:.2?}", t.elapsed());
-                    }
-                    // Same as CreateWorktree — the daemon only needs to create the
-                    // worktree and broadcast the updated snapshot.  The client handles
-                    // opening the tmux pane with the filled-in prompt command once it
-                    // receives the new snapshot containing the worktree path.
-                    ClientMsg::CreateWorktreeWithPrompt { project_idx, branch, .. } => {
-                        info!(
-                            "cmd: CreateWorktreeWithPrompt project_idx={} branch={}",
-                            project_idx, branch
-                        );
-                        let t = std::time::Instant::now();
-                        let result = handle_create_worktree(&app, project_idx, &branch).await;
-                        info!(
-                            "cmd: CreateWorktreeWithPrompt wt call done in {:.2?} (ok={})",
-                            t.elapsed(),
-                            result.is_ok()
-                        );
-                        send_action_result(&broadcast_tx, result);
-                        info!("cmd: CreateWorktreeWithPrompt refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
-                        info!("cmd: CreateWorktreeWithPrompt refreshing panes…");
-                        app.refresh().await;
-                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: CreateWorktreeWithPrompt fully complete in {:.2?}", t.elapsed());
-                    }
-                    ClientMsg::RemoveWorktree { project_idx, branch } => {
-                        info!("cmd: RemoveWorktree project_idx={} branch={}", project_idx, branch);
-                        let t = std::time::Instant::now();
-                        let result = handle_remove_worktree(&app, project_idx, &branch).await;
-                        info!(
-                            "cmd: RemoveWorktree wt call done in {:.2?} (ok={})",
-                            t.elapsed(),
-                            result.is_ok()
-                        );
-                        send_action_result(&broadcast_tx, result);
-                        info!("cmd: RemoveWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
-                        info!("cmd: RemoveWorktree refreshing panes…");
-                        app.refresh().await;
-                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: RemoveWorktree fully complete in {:.2?}", t.elapsed());
-                    }
-                    ClientMsg::MergeWorktree { project_idx, worktree_path } => {
-                        info!(
-                            "cmd: MergeWorktree project_idx={} path={}",
-                            project_idx, worktree_path
-                        );
-                        let t = std::time::Instant::now();
-                        let result = handle_merge_worktree(&app, project_idx, &worktree_path).await;
-                        info!(
-                            "cmd: MergeWorktree wt call done in {:.2?} (ok={})",
-                            t.elapsed(),
-                            result.is_ok()
-                        );
-                        send_action_result(&broadcast_tx, result);
-                        info!("cmd: MergeWorktree refreshing project {} worktrees only…", project_idx);
-                        app.refresh_worktrees_for_project(project_idx, Some(&broadcast_tx)).await;
-                        info!("cmd: MergeWorktree refreshing panes…");
-                        app.refresh().await;
-                        let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: MergeWorktree fully complete in {:.2?}", t.elapsed());
-                    }
-                    ClientMsg::AgentAction { pane_pid, session_id, prompt } => {
-                        info!("cmd: AgentAction pane_pid={} session_id={}", pane_pid, session_id);
-                        let result = app.send_agent_prompt(pane_pid, &session_id, &prompt);
-                        info!("cmd: AgentAction done (ok={})", result.is_ok());
-                        send_action_result(&broadcast_tx, result);
-                    }
-                    ClientMsg::CodexHook(event) => {
-                        info!(
-                            "cmd: CodexHook event={} session_id={}",
-                            event.hook_event_name, event.session_id
-                        );
-                        app.refresh().await;
-                        app.apply_codex_hook_event(&event);
-                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                    }
-                    ClientMsg::SelectMr { project_idx, mr_iid } => {
-                        info!("cmd: SelectMr project_idx={} mr_iid={}", project_idx, mr_iid);
-                        let t = std::time::Instant::now();
-                        if let Some(proj) = app.projects.get_mut(project_idx)
-                            && let Some(idx) = proj.dashboard.linked_mrs.iter().position(|l| l.mr.iid == mr_iid)
-                        {
-                            proj.mr_selected = idx;
-                            app.active_project = project_idx;
-                        }
-                        app.refresh_mr_detail().await;
-                        drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                        broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
-                        info!("cmd: SelectMr done in {:.2?}", t.elapsed());
-                    }
-                    ClientMsg::Handshake { .. } => {}
+                let completed = run_until_shutdown(
+                    &mut shutdown_rx,
+                    handle_command(
+                        cmd,
+                        &mut app,
+                        &broadcast_tx,
+                        &latest_snapshot,
+                        &client_count,
+                        &pending_for_offline,
+                    ),
+                )
+                .await
+                .is_some();
+                if !completed {
+                    shutdown = true;
                 }
             }
             _ = refresh_interval.tick() => {
-                info!("tick: refresh start");
-                let t = std::time::Instant::now();
-                app.refresh().await;
-                info!("tick: refresh done in {:.2?}", t.elapsed());
-                drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                let completed = run_until_shutdown(&mut shutdown_rx, async {
+                    info!("tick: refresh start");
+                    let t = std::time::Instant::now();
+                    app.refresh().await;
+                    info!("tick: refresh done in {:.2?}", t.elapsed());
+                    drain_changes(&mut app, &client_count, &pending_for_offline).await;
+                    broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                }).await.is_some();
+                if !completed {
+                    shutdown = true;
+                }
             }
             _ = detail_interval.tick() => {
-                info!("tick: mr_detail start");
-                let t = std::time::Instant::now();
-                app.refresh_mr_detail().await;
-                info!("tick: mr_detail done in {:.2?}", t.elapsed());
-                drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                let completed = run_until_shutdown(&mut shutdown_rx, async {
+                    info!("tick: mr_detail start");
+                    let t = std::time::Instant::now();
+                    app.refresh_mr_detail().await;
+                    info!("tick: mr_detail done in {:.2?}", t.elapsed());
+                    drain_changes(&mut app, &client_count, &pending_for_offline).await;
+                    broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                }).await.is_some();
+                if !completed {
+                    shutdown = true;
+                }
             }
             _ = worktree_interval.tick() => {
-                info!("tick: worktrees start");
-                let t = std::time::Instant::now();
-                app.refresh_worktrees(Some(&broadcast_tx)).await;
-                let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                info!("tick: worktrees done in {:.2?}", t.elapsed());
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                let completed = run_until_shutdown(&mut shutdown_rx, async {
+                    info!("tick: worktrees start");
+                    let t = std::time::Instant::now();
+                    app.refresh_worktrees(Some(&broadcast_tx)).await;
+                    let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+                    info!("tick: worktrees done in {:.2?}", t.elapsed());
+                    broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                }).await.is_some();
+                if !completed {
+                    shutdown = true;
+                }
             }
             _ = mr_list_interval.tick() => {
-                info!("tick: mr_list start");
-                let t = std::time::Instant::now();
-                app.refresh_mrs(Some(&broadcast_tx)).await;
-                app.refresh_global_mrs(Some(&broadcast_tx)).await;
-                let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
-                info!("tick: mr_list done in {:.2?}", t.elapsed());
-                drain_changes(&mut app, &client_count, &pending_for_offline).await;
-                broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                let completed = run_until_shutdown(&mut shutdown_rx, async {
+                    info!("tick: mr_list start");
+                    let t = std::time::Instant::now();
+                    app.refresh_mrs(Some(&broadcast_tx)).await;
+                    app.refresh_global_mrs(Some(&broadcast_tx)).await;
+                    let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+                    info!("tick: mr_list done in {:.2?}", t.elapsed());
+                    drain_changes(&mut app, &client_count, &pending_for_offline).await;
+                    broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                }).await.is_some();
+                if !completed {
+                    shutdown = true;
+                }
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("shutting down");
@@ -343,6 +273,7 @@ async fn accept_loop(
     latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
     client_count: Arc<AtomicUsize>,
     pending_for_offline: Arc<Mutex<Vec<MrChange>>>,
+    shutdown_tx: watch::Sender<bool>,
 ) {
     loop {
         match listener.accept().await {
@@ -352,6 +283,7 @@ async fn accept_loop(
                 let latest_snapshot = Arc::clone(&latest_snapshot);
                 let client_count = Arc::clone(&client_count);
                 let pending_for_offline = Arc::clone(&pending_for_offline);
+                let shutdown_tx = shutdown_tx.clone();
                 client_count.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(
@@ -360,6 +292,7 @@ async fn accept_loop(
                         cmd_tx,
                         latest_snapshot,
                         &pending_for_offline,
+                        shutdown_tx,
                     )
                     .await
                     {
@@ -384,6 +317,7 @@ async fn handle_client(
     cmd_tx: mpsc::Sender<ClientMsg>,
     latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
     pending_for_offline: &Arc<Mutex<Vec<MrChange>>>,
+    shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
@@ -430,6 +364,10 @@ async fn handle_client(
                                 };
                                 framed.send(Bytes::from(serde_json::to_vec(&ack)?)).await?;
                             }
+                            ClientMsg::Stop => {
+                                let _ = shutdown_tx.send(true);
+                                break;
+                            }
                             other => {
                                 let _ = cmd_tx.send(other).await;
                             }
@@ -454,6 +392,215 @@ async fn handle_client(
     }
 
     Ok(())
+}
+
+async fn handle_command(
+    cmd: ClientMsg,
+    app: &mut App,
+    broadcast_tx: &broadcast::Sender<DaemonMsg>,
+    latest_snapshot: &Arc<Mutex<DashboardSnapshot>>,
+    client_count: &Arc<AtomicUsize>,
+    pending_for_offline: &Arc<Mutex<Vec<MrChange>>>,
+) {
+    match cmd {
+        ClientMsg::Stop => {
+            info!("received stop command");
+        }
+        ClientMsg::Refresh => {
+            info!("cmd: Refresh — starting full refresh");
+            let t = std::time::Instant::now();
+            app.refresh().await;
+            app.refresh_mrs(Some(broadcast_tx)).await;
+            app.refresh_global_mrs(Some(broadcast_tx)).await;
+            app.refresh_worktrees(Some(broadcast_tx)).await;
+            let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+            drain_changes(app, client_count, pending_for_offline).await;
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!("cmd: Refresh done in {:.2?}", t.elapsed());
+        }
+        ClientMsg::CreateWorktree {
+            project_idx,
+            branch,
+        } => {
+            info!(
+                "cmd: CreateWorktree project_idx={} branch={}",
+                project_idx, branch
+            );
+            let t = std::time::Instant::now();
+            let result = handle_create_worktree(app, project_idx, &branch).await;
+            info!(
+                "cmd: CreateWorktree wt call done in {:.2?} (ok={})",
+                t.elapsed(),
+                result.is_ok()
+            );
+            send_action_result(broadcast_tx, result);
+            info!(
+                "cmd: CreateWorktree refreshing project {} worktrees only…",
+                project_idx
+            );
+            app.refresh_worktrees_for_project(project_idx, Some(broadcast_tx))
+                .await;
+            info!("cmd: CreateWorktree refreshing panes…");
+            app.refresh().await;
+            let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!("cmd: CreateWorktree fully complete in {:.2?}", t.elapsed());
+        }
+        ClientMsg::CreateWorktreeWithPrompt {
+            project_idx,
+            branch,
+            ..
+        } => {
+            info!(
+                "cmd: CreateWorktreeWithPrompt project_idx={} branch={}",
+                project_idx, branch
+            );
+            let t = std::time::Instant::now();
+            let result = handle_create_worktree(app, project_idx, &branch).await;
+            info!(
+                "cmd: CreateWorktreeWithPrompt wt call done in {:.2?} (ok={})",
+                t.elapsed(),
+                result.is_ok()
+            );
+            send_action_result(broadcast_tx, result);
+            info!(
+                "cmd: CreateWorktreeWithPrompt refreshing project {} worktrees only…",
+                project_idx
+            );
+            app.refresh_worktrees_for_project(project_idx, Some(broadcast_tx))
+                .await;
+            info!("cmd: CreateWorktreeWithPrompt refreshing panes…");
+            app.refresh().await;
+            let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!(
+                "cmd: CreateWorktreeWithPrompt fully complete in {:.2?}",
+                t.elapsed()
+            );
+        }
+        ClientMsg::RemoveWorktree {
+            project_idx,
+            branch,
+        } => {
+            info!(
+                "cmd: RemoveWorktree project_idx={} branch={}",
+                project_idx, branch
+            );
+            let t = std::time::Instant::now();
+            let result = handle_remove_worktree(app, project_idx, &branch).await;
+            info!(
+                "cmd: RemoveWorktree wt call done in {:.2?} (ok={})",
+                t.elapsed(),
+                result.is_ok()
+            );
+            send_action_result(broadcast_tx, result);
+            info!(
+                "cmd: RemoveWorktree refreshing project {} worktrees only…",
+                project_idx
+            );
+            app.refresh_worktrees_for_project(project_idx, Some(broadcast_tx))
+                .await;
+            info!("cmd: RemoveWorktree refreshing panes…");
+            app.refresh().await;
+            let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!("cmd: RemoveWorktree fully complete in {:.2?}", t.elapsed());
+        }
+        ClientMsg::MergeWorktree {
+            project_idx,
+            worktree_path,
+        } => {
+            info!(
+                "cmd: MergeWorktree project_idx={} path={}",
+                project_idx, worktree_path
+            );
+            let t = std::time::Instant::now();
+            let result = handle_merge_worktree(app, project_idx, &worktree_path).await;
+            info!(
+                "cmd: MergeWorktree wt call done in {:.2?} (ok={})",
+                t.elapsed(),
+                result.is_ok()
+            );
+            send_action_result(broadcast_tx, result);
+            info!(
+                "cmd: MergeWorktree refreshing project {} worktrees only…",
+                project_idx
+            );
+            app.refresh_worktrees_for_project(project_idx, Some(broadcast_tx))
+                .await;
+            info!("cmd: MergeWorktree refreshing panes…");
+            app.refresh().await;
+            let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!("cmd: MergeWorktree fully complete in {:.2?}", t.elapsed());
+        }
+        ClientMsg::AgentAction {
+            pane_pid,
+            session_id,
+            prompt,
+        } => {
+            info!(
+                "cmd: AgentAction pane_pid={} session_id={}",
+                pane_pid, session_id
+            );
+            let result = app.send_agent_prompt(pane_pid, &session_id, &prompt);
+            info!("cmd: AgentAction done (ok={})", result.is_ok());
+            send_action_result(broadcast_tx, result);
+        }
+        ClientMsg::CodexHook(event) => {
+            info!(
+                "cmd: CodexHook event={} session_id={}",
+                event.hook_event_name, event.session_id
+            );
+            app.refresh().await;
+            app.apply_codex_hook_event(&event);
+            drain_changes(app, client_count, pending_for_offline).await;
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+        }
+        ClientMsg::SelectMr {
+            project_idx,
+            mr_iid,
+        } => {
+            info!(
+                "cmd: SelectMr project_idx={} mr_iid={}",
+                project_idx, mr_iid
+            );
+            let t = std::time::Instant::now();
+            if let Some(proj) = app.projects.get_mut(project_idx)
+                && let Some(idx) = proj
+                    .dashboard
+                    .linked_mrs
+                    .iter()
+                    .position(|linked| linked.mr.iid == mr_iid)
+            {
+                proj.mr_selected = idx;
+                app.active_project = project_idx;
+            }
+            app.refresh_mr_detail().await;
+            drain_changes(app, client_count, pending_for_offline).await;
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+            info!("cmd: SelectMr done in {:.2?}", t.elapsed());
+        }
+        ClientMsg::Handshake { .. } => {}
+    }
+}
+
+async fn run_until_shutdown<F, T>(
+    shutdown_rx: &mut watch::Receiver<bool>,
+    operation: F,
+) -> Option<T>
+where
+    F: Future<Output = T>,
+{
+    if *shutdown_rx.borrow() {
+        return None;
+    }
+
+    tokio::select! {
+        biased;
+        _ = shutdown_rx.wait_for(|requested| *requested) => None,
+        output = operation => Some(output),
+    }
 }
 
 async fn drain_changes(
@@ -534,4 +681,31 @@ async fn broadcast_snapshot(
     }
 
     let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(broadcast_snap)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_until_shutdown_returns_completed_operation() {
+        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+        let result = run_until_shutdown(&mut shutdown_rx, async { 42 }).await;
+
+        assert_eq!(result, Some(42));
+    }
+
+    #[tokio::test]
+    async fn run_until_shutdown_cancels_pending_operation() {
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            shutdown_tx.send(true).unwrap();
+        });
+
+        let result = run_until_shutdown(&mut shutdown_rx, std::future::pending::<()>()).await;
+
+        assert_eq!(result, None);
+    }
 }

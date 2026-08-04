@@ -103,11 +103,11 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
     info!("fetch_worktrees: start (path={})", local_path);
     let t = std::time::Instant::now();
 
-    let output = match Command::new("wt")
-        .args(["-C", local_path, "list", "--format=json"])
-        .output()
-        .await
-    {
+    let mut command = Command::new("wt");
+    command
+        .kill_on_drop(true)
+        .args(["-C", local_path, "list", "--format=json"]);
+    let output = match command.output().await {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             info!("fetch_worktrees: wt binary not found, returning empty");
@@ -162,19 +162,18 @@ pub async fn create_worktree(local_path: &str, branch: &str) -> Result<String> {
     );
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args([
-            "-C",
-            local_path,
-            "switch",
-            "--create",
-            branch,
-            "--no-cd",
-            "-y",
-            "--no-verify",
-        ])
-        .output()
-        .await?;
+    let mut command = Command::new("wt");
+    command.kill_on_drop(true).args([
+        "-C",
+        local_path,
+        "switch",
+        "--create",
+        branch,
+        "--no-cd",
+        "-y",
+        "--no-verify",
+    ]);
+    let output = command.output().await?;
 
     info!(
         "create_worktree: wt exited (status={}) in {:.2?}",
@@ -207,19 +206,18 @@ pub async fn remove_worktree(local_path: &str, branch: &str) -> Result<String> {
     );
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args([
-            "-C",
-            local_path,
-            "remove",
-            branch,
-            "-y",
-            "-f",
-            "--foreground",
-            "--no-verify",
-        ])
-        .output()
-        .await?;
+    let mut command = Command::new("wt");
+    command.kill_on_drop(true).args([
+        "-C",
+        local_path,
+        "remove",
+        branch,
+        "-y",
+        "-f",
+        "--foreground",
+        "--no-verify",
+    ]);
+    let output = command.output().await?;
 
     info!(
         "remove_worktree: wt exited (status={}) in {:.2?}",
@@ -249,10 +247,11 @@ pub async fn merge_worktree(worktree_path: &str) -> Result<String> {
     info!("merge_worktree: start (path={})", worktree_path);
     let t = std::time::Instant::now();
 
-    let output = Command::new("wt")
-        .args(["-C", worktree_path, "merge", "-y", "--no-verify"])
-        .output()
-        .await?;
+    let mut command = Command::new("wt");
+    command
+        .kill_on_drop(true)
+        .args(["-C", worktree_path, "merge", "-y", "--no-verify"]);
+    let output = command.output().await?;
 
     info!(
         "merge_worktree: wt exited (status={}) in {:.2?}",
