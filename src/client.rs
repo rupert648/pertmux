@@ -4,6 +4,7 @@ use crate::daemon;
 use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
 use crate::tmux;
 use crate::ui;
+use crate::worktrunk::WtWorktree;
 use anyhow::Result;
 use bytes::Bytes;
 use crossterm::{
@@ -60,6 +61,13 @@ struct WorktreeOpenRequest {
     project_name: String,
 }
 
+struct PendingWorktreeRemoval {
+    project_idx: usize,
+    original_idx: usize,
+    worktree: WtWorktree,
+    linked_pane_id: Option<String>,
+}
+
 pub struct ClientState {
     pub snapshot: DashboardSnapshot,
     pub active_project: usize,
@@ -78,6 +86,9 @@ pub struct ClientState {
     /// Set when ActionResult ok is received for a `CreateWorktreeWithPrompt`.
     /// On the next snapshot update we find the worktree path and open the pane.
     pending_open_worktree: Option<WorktreeOpenRequest>,
+    /// Keeps the optimistically removed row available for rollback until the
+    /// daemon reports whether `wt remove` succeeded.
+    pending_worktree_removal: Option<PendingWorktreeRemoval>,
 }
 
 impl ClientState {
@@ -108,6 +119,7 @@ impl ClientState {
             refresh_steps: vec![],
             pending_create_with_prompt: None,
             pending_open_worktree: None,
+            pending_worktree_removal: None,
         }
     }
 
@@ -197,6 +209,69 @@ impl ClientState {
 
     pub fn notify(&mut self, msg: impl Into<String>) {
         self.notification = Some((msg.into(), Instant::now()));
+    }
+
+    fn begin_worktree_removal(&mut self) -> Option<ClientMsg> {
+        if self.pending_worktree_removal.is_some() {
+            return None;
+        }
+
+        let PopupState::ConfirmRemove {
+            branch,
+            linked_pane_id,
+        } = &self.popup
+        else {
+            return None;
+        };
+
+        let branch = branch.clone();
+        let linked_pane_id = linked_pane_id.clone();
+        let project_idx = self.active_project;
+        let project = self.snapshot.projects.get_mut(project_idx)?;
+        let (original_idx, worktree) =
+            take_worktree_by_branch(&mut project.cached_worktrees, &branch)?;
+
+        if let Some(selected) = self.worktree_selected.get_mut(project_idx) {
+            *selected = (*selected).min(project.cached_worktrees.len().saturating_sub(1));
+        }
+
+        self.pending_worktree_removal = Some(PendingWorktreeRemoval {
+            project_idx,
+            original_idx,
+            worktree,
+            linked_pane_id,
+        });
+        self.popup = PopupState::None;
+
+        Some(ClientMsg::RemoveWorktree {
+            project_idx,
+            branch,
+        })
+    }
+
+    fn finish_worktree_removal(&mut self, ok: bool) -> bool {
+        let Some(pending) = self.pending_worktree_removal.take() else {
+            return false;
+        };
+
+        if ok {
+            if let Some(pane_id) = pending.linked_pane_id
+                && matches!(self.popup, PopupState::None)
+            {
+                self.popup = PopupState::ConfirmKillTmuxWindow {
+                    branch: pending.worktree.branch.unwrap_or_default(),
+                    pane_id,
+                };
+            }
+        } else if let Some(project) = self.snapshot.projects.get_mut(pending.project_idx) {
+            restore_worktree(
+                &mut project.cached_worktrees,
+                pending.original_idx,
+                pending.worktree,
+            );
+        }
+
+        true
     }
 
     fn move_up(&mut self) {
@@ -327,6 +402,11 @@ impl ClientState {
     }
 
     fn open_remove_popup(&mut self) {
+        if self.pending_worktree_removal.is_some() {
+            self.notify("A worktree removal is already in progress");
+            return;
+        }
+
         if let Some(proj) = self.snapshot.projects.get(self.active_project)
             && let Some(wt) = proj.cached_worktrees.get(
                 *self
@@ -907,6 +987,10 @@ where
                             }
                             DaemonMsg::ActionResult { ok, message } => {
                                 state.notify(message);
+                                if state.finish_worktree_removal(ok) {
+                                    continue;
+                                }
+
                                 if ok {
                                     // If a CreateWorktreeWithPrompt was submitted, move the
                                     // pending open request so it fires on the next snapshot.
@@ -916,21 +1000,7 @@ where
                                         state.pending_open_worktree = Some(pending);
                                     }
 
-                                    // After a successful worktree removal, offer to kill
-                                    // the linked tmux window using the pane_id that was
-                                    // captured when the popup was opened (before deletion).
-                                    if let PopupState::ConfirmRemove {
-                                        branch,
-                                        linked_pane_id: Some(pane_id),
-                                    } = &state.popup
-                                    {
-                                        let branch = branch.clone();
-                                        let pane_id = pane_id.clone();
-                                        state.popup =
-                                            PopupState::ConfirmKillTmuxWindow { branch, pane_id };
-                                    } else {
-                                        state.popup = PopupState::None;
-                                    }
+                                    state.popup = PopupState::None;
                                 } else {
                                     // Creation failed — discard any pending open request.
                                     state.pending_create_with_prompt = None;
@@ -1339,10 +1409,17 @@ async fn handle_key(
         match code {
             KeyCode::Esc => state.close_popup(),
             KeyCode::Enter => {
+                if matches!(state.popup, PopupState::ConfirmRemove { .. }) {
+                    if let Some(msg) = state.begin_worktree_removal() {
+                        state.notify("Removing worktree...");
+                        send_msg(framed, msg).await?;
+                    }
+                    return Ok(());
+                }
+
                 if let Some(msg) = popup_action_msg(state) {
                     let toast = match &state.popup {
                         PopupState::CreateWorktree { .. } => "Creating worktree...",
-                        PopupState::ConfirmRemove { .. } => "Removing worktree...",
                         PopupState::ConfirmMerge { .. } => "Merging worktree...",
                         _ => "",
                     };
@@ -1434,10 +1511,6 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
                 branch,
             })
         }
-        PopupState::ConfirmRemove { branch, .. } => Some(ClientMsg::RemoveWorktree {
-            project_idx,
-            branch: branch.clone(),
-        }),
         PopupState::ConfirmMerge { worktree_path, .. } => Some(ClientMsg::MergeWorktree {
             project_idx,
             worktree_path: worktree_path.clone(),
@@ -1448,6 +1521,7 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::AgentActions { .. }
         | PopupState::MrOverview { .. }
         | PopupState::ActivityFeed { .. }
+        | PopupState::ConfirmRemove { .. }
         | PopupState::ConfirmKillTmuxWindow { .. }
         | PopupState::KeybindingsHelp
         // CreateWorktreeWithPrompt is handled in its own if block above — it never
@@ -1455,6 +1529,20 @@ fn popup_action_msg(state: &ClientState) -> Option<ClientMsg> {
         | PopupState::CreateWorktreeWithPrompt { .. }
         | PopupState::None => None,
     }
+}
+
+fn take_worktree_by_branch(
+    worktrees: &mut Vec<WtWorktree>,
+    branch: &str,
+) -> Option<(usize, WtWorktree)> {
+    let index = worktrees
+        .iter()
+        .position(|worktree| worktree.branch.as_deref() == Some(branch))?;
+    Some((index, worktrees.remove(index)))
+}
+
+fn restore_worktree(worktrees: &mut Vec<WtWorktree>, original_idx: usize, worktree: WtWorktree) {
+    worktrees.insert(original_idx.min(worktrees.len()), worktree);
 }
 
 fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
@@ -1697,4 +1785,66 @@ fn show_connection_error(sock_path: &std::path::Path) {
 
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{restore_worktree, take_worktree_by_branch};
+    use crate::worktrunk::{WtCommit, WtWorktree};
+
+    fn worktree(branch: &str) -> WtWorktree {
+        WtWorktree {
+            branch: Some(branch.into()),
+            path: Some(format!("/tmp/{branch}")),
+            kind: "worktree".into(),
+            commit: WtCommit {
+                sha: "abc123".into(),
+                short_sha: "abc123".into(),
+                message: String::new(),
+                timestamp: 0,
+            },
+            working_tree: None,
+            main_state: None,
+            main: None,
+            remote: None,
+            worktree: None,
+            is_main: false,
+            is_current: false,
+            is_previous: false,
+            symbols: None,
+        }
+    }
+
+    #[test]
+    fn optimistic_removal_takes_matching_worktree() {
+        let mut worktrees = vec![worktree("one"), worktree("two"), worktree("three")];
+
+        let (index, removed) = take_worktree_by_branch(&mut worktrees, "two").unwrap();
+
+        assert_eq!(index, 1);
+        assert_eq!(removed.branch.as_deref(), Some("two"));
+        assert_eq!(
+            worktrees
+                .iter()
+                .filter_map(|worktree| worktree.branch.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["one", "three"]
+        );
+    }
+
+    #[test]
+    fn failed_removal_restores_original_order() {
+        let mut worktrees = vec![worktree("one"), worktree("two"), worktree("three")];
+        let (index, removed) = take_worktree_by_branch(&mut worktrees, "two").unwrap();
+
+        restore_worktree(&mut worktrees, index, removed);
+
+        assert_eq!(
+            worktrees
+                .iter()
+                .filter_map(|worktree| worktree.branch.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["one", "two", "three"]
+        );
+    }
 }
