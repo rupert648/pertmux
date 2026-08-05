@@ -836,11 +836,16 @@ where
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(120));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tick = 0;
+    let mut refresh_steps = vec![RefreshStep {
+        label: "Connecting".to_string(),
+        done: 0,
+        total: 1,
+    }];
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                terminal.draw(|frame| ui::draw_loading(frame, tick))?;
+                terminal.draw(|frame| ui::draw_loading(frame, tick, &refresh_steps))?;
                 tick = tick.wrapping_add(1);
             }
             frame = framed.next() => {
@@ -852,7 +857,7 @@ where
                 match msg {
                     DaemonMsg::Snapshot(snap) => return Ok(*snap),
                     DaemonMsg::HandshakeAck { .. } => {}
-                    DaemonMsg::Progress(_) => {}
+                    DaemonMsg::Progress(steps) => refresh_steps = steps,
                     DaemonMsg::ActionResult { ok, message } => {
                         if !ok {
                             anyhow::bail!(message);

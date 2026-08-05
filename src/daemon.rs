@@ -1,14 +1,14 @@
 use crate::app::App;
 use crate::config::Config;
 use crate::mr_changes::MrChange;
-use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION};
+use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -36,6 +36,14 @@ pub fn log_path() -> PathBuf {
 /// catches internally and which therefore never reach this stack frame.
 struct DaemonShutdown {
     sock: PathBuf,
+}
+
+struct ClientSharedState {
+    latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
+    initialized: Arc<AtomicBool>,
+    latest_progress: Arc<Mutex<Vec<RefreshStep>>>,
+    client_count: Arc<AtomicUsize>,
+    pending_for_offline: Arc<Mutex<Vec<MrChange>>>,
 }
 
 impl DaemonShutdown {
@@ -114,41 +122,82 @@ pub async fn run(config: Config) -> Result<()> {
 
     let mut app = App::new(config);
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
+    let initialized = Arc::new(AtomicBool::new(false));
+    let startup_steps = vec![
+        RefreshStep {
+            label: "Pulling forge APIs".into(),
+            done: 0,
+            total: app.projects.len(),
+        },
+        RefreshStep {
+            label: "Loading global feed".into(),
+            done: 0,
+            total: 1,
+        },
+        RefreshStep {
+            label: "Discovering agents".into(),
+            done: 0,
+            total: 1,
+        },
+        RefreshStep {
+            label: "Loading worktrees".into(),
+            done: 0,
+            total: app.projects.len(),
+        },
+    ];
+    let latest_progress = Arc::new(Mutex::new(startup_steps.clone()));
     let client_count = Arc::new(AtomicUsize::new(0));
     let pending_for_offline: Arc<Mutex<Vec<MrChange>>> = Arc::new(Mutex::new(Vec::new()));
+    let client_shared = Arc::new(ClientSharedState {
+        latest_snapshot: Arc::clone(&latest_snapshot),
+        initialized: Arc::clone(&initialized),
+        latest_progress: Arc::clone(&latest_progress),
+        client_count: Arc::clone(&client_count),
+        pending_for_offline: Arc::clone(&pending_for_offline),
+    });
 
     let accept_broadcast_tx = broadcast_tx.clone();
     let accept_cmd_tx = cmd_tx.clone();
-    let accept_latest_snapshot = Arc::clone(&latest_snapshot);
-    let accept_client_count = Arc::clone(&client_count);
-    let accept_pending_for_offline = Arc::clone(&pending_for_offline);
+    let accept_client_shared = Arc::clone(&client_shared);
     let accept_shutdown_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         accept_loop(
             listener,
             accept_broadcast_tx,
             accept_cmd_tx,
-            accept_latest_snapshot,
-            accept_client_count,
-            accept_pending_for_offline,
+            accept_client_shared,
             accept_shutdown_tx,
         )
         .await;
     });
 
-    let initialized = run_until_shutdown(&mut shutdown_rx, async {
+    let mut startup_steps = startup_steps;
+    let initialization_completed = run_until_shutdown(&mut shutdown_rx, async {
         if app.has_projects() {
+            publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
             app.refresh_mrs(None).await;
+            startup_steps[0].done = startup_steps[0].total;
+            publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
             app.refresh_global_mrs(None).await;
+            startup_steps[1].done = 1;
+            publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
+        } else {
+            startup_steps[0].done = startup_steps[0].total;
+            startup_steps[1].done = 1;
+            publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
         }
         app.refresh().await;
+        startup_steps[2].done = 1;
+        publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
         app.refresh_worktrees(None).await;
+        startup_steps[3].done = startup_steps[3].total;
+        publish_startup_progress(&broadcast_tx, &latest_progress, &startup_steps).await;
         app.pending_changes.clear();
     })
     .await
     .is_some();
 
-    if !initialized {
+    if !initialization_completed {
         info!("shutdown requested during initialization");
         drop(_guard);
         info!("stopped");
@@ -159,6 +208,8 @@ pub async fn run(config: Config) -> Result<()> {
         let mut guard = latest_snapshot.lock().await;
         *guard = app.snapshot();
     }
+    initialized.store(true, Ordering::Release);
+    latest_progress.lock().await.clear();
     let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
 
     let mut refresh_interval = tokio::time::interval(app.refresh_interval);
@@ -266,13 +317,22 @@ pub async fn run(config: Config) -> Result<()> {
     Ok(())
 }
 
+async fn publish_startup_progress(
+    broadcast_tx: &broadcast::Sender<DaemonMsg>,
+    latest_progress: &Arc<Mutex<Vec<RefreshStep>>>,
+    steps: &[RefreshStep],
+) {
+    let steps = steps.to_vec();
+    *latest_progress.lock().await = steps.clone();
+    let _ = broadcast_tx.send(DaemonMsg::Progress(steps));
+    tokio::task::yield_now().await;
+}
+
 async fn accept_loop(
     listener: UnixListener,
     broadcast_tx: broadcast::Sender<DaemonMsg>,
     cmd_tx: mpsc::Sender<ClientMsg>,
-    latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
-    client_count: Arc<AtomicUsize>,
-    pending_for_offline: Arc<Mutex<Vec<MrChange>>>,
+    shared: Arc<ClientSharedState>,
     shutdown_tx: watch::Sender<bool>,
 ) {
     loop {
@@ -280,18 +340,15 @@ async fn accept_loop(
             Ok((stream, _)) => {
                 let snapshot_rx = broadcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
-                let latest_snapshot = Arc::clone(&latest_snapshot);
-                let client_count = Arc::clone(&client_count);
-                let pending_for_offline = Arc::clone(&pending_for_offline);
+                let shared = Arc::clone(&shared);
                 let shutdown_tx = shutdown_tx.clone();
-                client_count.fetch_add(1, Ordering::SeqCst);
+                shared.client_count.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(
                         stream,
                         snapshot_rx,
                         cmd_tx,
-                        latest_snapshot,
-                        &pending_for_offline,
+                        Arc::clone(&shared),
                         shutdown_tx,
                     )
                     .await
@@ -301,7 +358,7 @@ async fn accept_loop(
                             warn!("client error: {}", e);
                         }
                     }
-                    client_count.fetch_sub(1, Ordering::SeqCst);
+                    shared.client_count.fetch_sub(1, Ordering::SeqCst);
                 });
             }
             Err(e) => {
@@ -315,28 +372,30 @@ async fn handle_client(
     stream: UnixStream,
     mut snapshot_rx: broadcast::Receiver<DaemonMsg>,
     cmd_tx: mpsc::Sender<ClientMsg>,
-    latest_snapshot: Arc<Mutex<DashboardSnapshot>>,
-    pending_for_offline: &Arc<Mutex<Vec<MrChange>>>,
+    shared: Arc<ClientSharedState>,
     shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
-    let initial_snapshot = {
+    let initial_msg = if shared.initialized.load(Ordering::Acquire) {
         let mut snapshot = {
-            let guard = latest_snapshot.lock().await;
+            let guard = shared.latest_snapshot.lock().await;
             guard.clone()
         };
         let offline_changes = {
-            let mut guard = pending_for_offline.lock().await;
+            let mut guard = shared.pending_for_offline.lock().await;
             std::mem::take(&mut *guard)
         };
         if !offline_changes.is_empty() {
             snapshot.pending_changes = offline_changes;
         }
-        snapshot
+        DaemonMsg::Snapshot(Box::new(snapshot))
+    } else {
+        DaemonMsg::Progress(shared.latest_progress.lock().await.clone())
     };
-    let msg = DaemonMsg::Snapshot(Box::new(initial_snapshot));
-    framed.send(Bytes::from(serde_json::to_vec(&msg)?)).await?;
+    framed
+        .send(Bytes::from(serde_json::to_vec(&initial_msg)?))
+        .await?;
 
     loop {
         tokio::select! {
@@ -686,6 +745,49 @@ async fn broadcast_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn client_receives_progress_before_initial_snapshot() {
+        let (server_stream, client_stream) = UnixStream::pair().expect("create stream pair");
+        let (_broadcast_tx, snapshot_rx) = broadcast::channel(4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(4);
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let steps = vec![RefreshStep {
+            label: "Pulling forge APIs".to_string(),
+            done: 1,
+            total: 3,
+        }];
+        let shared = Arc::new(ClientSharedState {
+            latest_snapshot: Arc::new(Mutex::new(App::new(Config::default()).snapshot())),
+            initialized: Arc::new(AtomicBool::new(false)),
+            latest_progress: Arc::new(Mutex::new(steps.clone())),
+            client_count: Arc::new(AtomicUsize::new(1)),
+            pending_for_offline: Arc::new(Mutex::new(Vec::new())),
+        });
+
+        let task = tokio::spawn(handle_client(
+            server_stream,
+            snapshot_rx,
+            cmd_tx,
+            shared,
+            shutdown_tx,
+        ));
+        let mut framed = Framed::new(client_stream, LengthDelimitedCodec::new());
+        let bytes = framed
+            .next()
+            .await
+            .expect("initial daemon message")
+            .expect("read initial daemon message");
+        let message: DaemonMsg = serde_json::from_slice(&bytes).expect("decode daemon message");
+
+        match message {
+            DaemonMsg::Progress(received) => assert_eq!(received, steps),
+            other => panic!("expected progress, got {other:?}"),
+        }
+
+        drop(framed);
+        task.await.expect("join client task").expect("client task");
+    }
 
     #[tokio::test]
     async fn run_until_shutdown_returns_completed_operation() {

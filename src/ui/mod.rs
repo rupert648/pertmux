@@ -1,7 +1,7 @@
 use crate::client::ClientState;
 use crate::forge_clients::types::{MergeRequestDetail, MergeRequestThread, PipelineJob};
 use crate::linking::DashboardState;
-use crate::protocol::ProjectSnapshot;
+use crate::protocol::{ProjectSnapshot, RefreshStep};
 use crate::types::AgentPane;
 use crate::worktrunk::WtWorktree;
 use ratatui::{
@@ -76,8 +76,8 @@ pub fn draw_client(frame: &mut Frame, state: &ClientState) {
     components::popup::draw_popup_client(frame, state, area);
 }
 
-pub fn draw_loading(frame: &mut Frame, tick: usize) {
-    components::loading::draw_loading(frame, tick);
+pub fn draw_loading(frame: &mut Frame, tick: usize, steps: &[RefreshStep]) {
+    components::loading::draw_loading(frame, tick, steps);
 }
 
 fn draw_right_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
