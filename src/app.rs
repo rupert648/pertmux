@@ -101,6 +101,7 @@ pub enum PopupState {
 pub struct ProjectState {
     pub config: ProjectConfig,
     pub client: Box<dyn ForgeClient>,
+    pub error: Option<String>,
     pub cached_mrs: Vec<MergeRequestSummary>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
     pub cached_pipeline_jobs: Vec<PipelineJob>,
@@ -193,6 +194,7 @@ impl App {
                 Some(ProjectState {
                     config: pc,
                     client,
+                    error: None,
                     cached_mrs: vec![],
                     cached_mr_detail: None,
                     cached_pipeline_jobs: vec![],
@@ -527,7 +529,6 @@ impl App {
         }
         drop(stream); // release borrows on self.projects before mutable iteration
 
-        let mut last_error: Option<String> = None;
         for (proj, result) in self.projects.iter_mut().zip(indexed) {
             match result.unwrap_or_else(|| Err(anyhow::anyhow!("missing"))) {
                 Ok(mrs) => {
@@ -545,15 +546,13 @@ impl App {
                         self.pending_changes.extend(changes);
                     }
                     proj.cached_mrs = mrs;
+                    proj.error = None;
                 }
                 Err(e) => {
                     warn!("app::refresh_mrs: error for {}: {}", proj.config.name, e);
-                    last_error = Some(format!("Forge error ({}): {}", proj.config.name, e));
+                    proj.error = Some(format!("Forge error: {}", e));
                 }
             }
-        }
-        if let Some(e) = last_error {
-            self.error = Some(e);
         }
         info!("app::refresh_mrs: done in {:.2?}", t.elapsed());
     }
@@ -719,6 +718,7 @@ impl App {
                 }
                 proj.cached_mr_detail = Some(detail);
                 proj.last_detail_refresh = Instant::now();
+                proj.error = None;
             }
             Err(e) => {
                 warn!(
@@ -726,7 +726,7 @@ impl App {
                     st.elapsed(),
                     e
                 );
-                self.error = Some(format!("MR detail error: {}", e));
+                proj.error = Some(format!("MR detail error: {}", e));
                 return;
             }
         }
@@ -950,6 +950,7 @@ impl App {
                     source: p.config.source.clone(),
                     project_path: p.config.project.clone(),
                     local_path: p.config.local_path.clone(),
+                    error: p.error.clone(),
                     dashboard: p.dashboard.clone(),
                     cached_worktrees: p.cached_worktrees.clone(),
                     cached_mr_detail: p.cached_mr_detail.clone(),

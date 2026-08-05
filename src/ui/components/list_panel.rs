@@ -100,6 +100,15 @@ pub(crate) fn draw_list_panel_client(frame: &mut Frame, state: &ClientState, are
     }
 
     if let Some(proj) = state.snapshot.projects.get(state.active_project) {
+        if let Some(error) = &proj.error {
+            let msg = Paragraph::new(Line::from(Span::styled(
+                error.as_str(),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+            frame.render_widget(msg, inner);
+            return;
+        }
+
         draw_mr_sections_client(
             frame,
             proj,

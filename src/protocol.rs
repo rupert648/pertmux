@@ -160,6 +160,8 @@ pub struct ProjectSnapshot {
     pub source: ProjectForge,
     pub project_path: String,
     pub local_path: String,
+    #[serde(default)]
+    pub error: Option<String>,
     pub dashboard: DashboardState,
     pub cached_worktrees: Vec<WtWorktree>,
     pub cached_mr_detail: Option<MergeRequestDetail>,
@@ -355,6 +357,7 @@ mod tests {
                 source: ProjectForge::Gitlab,
                 project_path: "team/pertmux".to_string(),
                 local_path: "/tmp/pertmux".to_string(),
+                error: Some("Forge error: unavailable".to_string()),
                 dashboard: DashboardState {
                     linked_mrs: vec![linked_mr],
                 },
