@@ -220,6 +220,10 @@ pub async fn run(config: Config) -> Result<()> {
     detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     worktree_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     mr_list_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    refresh_interval.reset();
+    detail_interval.reset();
+    worktree_interval.reset();
+    mr_list_interval.reset();
 
     let mut shutdown = false;
 
@@ -258,6 +262,7 @@ pub async fn run(config: Config) -> Result<()> {
                     drain_changes(&mut app, &client_count, &pending_for_offline).await;
                     broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                 }).await.is_some();
+                refresh_interval.reset();
                 if !completed {
                     shutdown = true;
                 }
@@ -271,6 +276,7 @@ pub async fn run(config: Config) -> Result<()> {
                     drain_changes(&mut app, &client_count, &pending_for_offline).await;
                     broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                 }).await.is_some();
+                detail_interval.reset();
                 if !completed {
                     shutdown = true;
                 }
@@ -284,6 +290,7 @@ pub async fn run(config: Config) -> Result<()> {
                     info!("tick: worktrees done in {:.2?}", t.elapsed());
                     broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                 }).await.is_some();
+                worktree_interval.reset();
                 if !completed {
                     shutdown = true;
                 }
@@ -299,6 +306,7 @@ pub async fn run(config: Config) -> Result<()> {
                     drain_changes(&mut app, &client_count, &pending_for_offline).await;
                     broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
                 }).await.is_some();
+                mr_list_interval.reset();
                 if !completed {
                     shutdown = true;
                 }

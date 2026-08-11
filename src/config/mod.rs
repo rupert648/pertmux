@@ -68,7 +68,7 @@ impl Default for Config {
         Self {
             refresh_interval: 2,
             mr_detail_interval: 60,
-            worktree_interval: 30,
+            worktree_interval: 300,
             mr_list_interval: 300,
             default_agent_command: None,
             default_worktree_with_prompt: None,
@@ -263,6 +263,11 @@ mod tests {
 
     fn load_from_str(s: &str) -> Config {
         toml::from_str(s).expect("parse failed")
+    }
+
+    #[test]
+    fn test_worktree_interval_default() {
+        assert_eq!(Config::default().worktree_interval, 300);
     }
 
     #[test]

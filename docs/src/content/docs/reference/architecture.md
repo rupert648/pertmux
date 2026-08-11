@@ -69,7 +69,7 @@ All refresh intervals are configurable in the TOML config file.
 | Data | Interval | Trigger |
 |------|----------|---------|
 | tmux panes + agent status | 2 seconds | Timer |
-| Worktrees | 30 seconds | Timer |
+| Worktrees | 5 minutes | Timer |
 | MR details | 60 seconds | Timer |
 | MR list | 300 seconds | Timer + manual (`r` key) |
 

@@ -8,7 +8,7 @@ use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
 };
 use crate::forge_clients::{GitHubClient, GitLabClient};
-use crate::git::discover_worktrees;
+use crate::git::{WorktreeInfo, discover_worktrees};
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{
@@ -25,6 +25,13 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
+
+type WorktreeRefreshResult = (
+    Duration,
+    anyhow::Result<Vec<WtWorktree>>,
+    anyhow::Result<Vec<WorktreeInfo>>,
+);
+const MAX_CONCURRENT_WORKTREE_REFRESHES: usize = 4;
 
 pub enum SelectionSection {
     MergeRequests,
@@ -108,6 +115,7 @@ pub struct ProjectState {
     pub cached_threads: Vec<MergeRequestThread>,
     pub cached_threads_iid: Option<u64>,
     pub cached_worktrees: Vec<WtWorktree>,
+    pub cached_git_worktrees: Vec<WorktreeInfo>,
     pub dashboard: DashboardState,
     pub mr_selected: usize,
     pub worktree_selected: usize,
@@ -145,6 +153,7 @@ pub struct App {
     pub pending_agent_changes: Vec<AgentChange>,
     previous_pane_statuses: HashMap<String, PaneStatus>,
     codex_hook_statuses: HashMap<String, PaneStatus>,
+    persisted_codex_sessions: HashMap<String, String>,
     pub agent_actions: Vec<AgentActionConfig>,
     pub global_mrs: Vec<GlobalMrEntry>,
     /// Full activity feed history, accumulated by the daemon and included in
@@ -201,6 +210,7 @@ impl App {
                     cached_threads: vec![],
                     cached_threads_iid: None,
                     cached_worktrees: vec![],
+                    cached_git_worktrees: vec![],
                     dashboard: DashboardState { linked_mrs: vec![] },
                     mr_selected: 0,
                     worktree_selected: 0,
@@ -238,6 +248,7 @@ impl App {
             pending_agent_changes: Vec::new(),
             previous_pane_statuses: HashMap::new(),
             codex_hook_statuses: HashMap::new(),
+            persisted_codex_sessions: HashMap::new(),
             agent_actions: config.agent_action,
             global_mrs: Vec::new(),
             activity_feed: VecDeque::new(),
@@ -278,12 +289,8 @@ impl App {
             }
             if is_codex_pane(pane)
                 && let Some(session_id) = pane.db_session_id.as_deref()
-                && let Err(error) = codex_session::persist(&pane.pane_path, session_id)
             {
-                warn!(
-                    "app::refresh: failed to persist Codex session for {}: {}",
-                    pane.pane_path, error
-                );
+                self.persist_codex_session(&pane.pane_path, session_id);
             }
         }
 
@@ -333,65 +340,12 @@ impl App {
 
         self.update_detail();
 
-        let mut link_error: Option<String> = None;
-        if let Some(ref read_state) = self.read_state {
-            for proj in &mut self.projects {
-                info!(
-                    "app::refresh: discover_worktrees for {} (path={})",
-                    proj.config.name, proj.config.local_path
-                );
-                let dt = std::time::Instant::now();
-                match discover_worktrees(&proj.config.local_path).await {
-                    Ok(worktrees) => {
-                        info!(
-                            "app::refresh: discovered {} worktrees in {:.2?}",
-                            worktrees.len(),
-                            dt.elapsed()
-                        );
-                        match link_all(
-                            &proj.cached_mrs,
-                            &worktrees,
-                            &self.panes,
-                            read_state,
-                            &proj.config.project,
-                        ) {
-                            Ok(dashboard) => {
-                                proj.dashboard = dashboard;
-                                if proj.mr_selected >= proj.dashboard.linked_mrs.len()
-                                    && !proj.dashboard.linked_mrs.is_empty()
-                                {
-                                    proj.mr_selected = proj.dashboard.linked_mrs.len() - 1;
-                                }
-                            }
-                            Err(e) => {
-                                link_error = Some(format!("Linking error: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "app::refresh: discover_worktrees failed after {:.2?}: {}",
-                            dt.elapsed(),
-                            e
-                        );
-                        link_error = Some(format!("Worktree discovery error: {}", e));
-                    }
-                }
-            }
-        }
-        if let Some(e) = link_error {
-            self.error = Some(e);
-        }
+        self.relink_dashboards();
         info!("app::refresh: done in {:.2?}", t.elapsed());
     }
 
     pub fn apply_codex_hook_event(&mut self, event: &CodexHookEvent) {
-        if let Err(error) = codex_session::persist(&event.cwd, &event.session_id) {
-            warn!(
-                "app::apply_codex_hook_event: failed to persist Codex session for {}: {}",
-                event.cwd, error
-            );
-        }
+        self.persist_codex_session(&event.cwd, &event.session_id);
 
         let Some(idx) = self.find_codex_pane_for_hook(event) else {
             return;
@@ -484,6 +438,62 @@ impl App {
 
         if let Some(status) = self.codex_hook_statuses.get(session_id) {
             pane.status = status.clone();
+        }
+    }
+
+    fn persist_codex_session(&mut self, worktree_path: &str, session_id: &str) {
+        if self
+            .persisted_codex_sessions
+            .get(worktree_path)
+            .is_some_and(|stored| stored == session_id)
+        {
+            return;
+        }
+
+        match codex_session::persist(worktree_path, session_id) {
+            Ok(()) => {
+                self.persisted_codex_sessions
+                    .insert(worktree_path.to_string(), session_id.to_string());
+            }
+            Err(error) => {
+                warn!(
+                    "app: failed to persist Codex session for {}: {}",
+                    worktree_path, error
+                );
+            }
+        }
+    }
+
+    fn relink_dashboards(&mut self) {
+        let Some(read_state) = self.read_state.as_ref() else {
+            return;
+        };
+
+        let mut link_error = None;
+        for proj in &mut self.projects {
+            match link_all(
+                &proj.cached_mrs,
+                &proj.cached_git_worktrees,
+                &self.panes,
+                read_state,
+                &proj.config.project,
+            ) {
+                Ok(dashboard) => {
+                    proj.dashboard = dashboard;
+                    if proj.mr_selected >= proj.dashboard.linked_mrs.len()
+                        && !proj.dashboard.linked_mrs.is_empty()
+                    {
+                        proj.mr_selected = proj.dashboard.linked_mrs.len() - 1;
+                    }
+                }
+                Err(error) => {
+                    link_error = Some(format!("Linking error: {error}"));
+                }
+            }
+        }
+
+        if let Some(error) = link_error {
+            self.error = Some(error);
         }
     }
 
@@ -792,13 +802,12 @@ impl App {
     /// Refresh worktrees for all projects in parallel.
     pub async fn refresh_worktrees(&mut self, progress_tx: Option<&broadcast::Sender<DaemonMsg>>) {
         info!(
-            "app::refresh_worktrees: start ({} projects, parallel)",
-            self.projects.len()
+            "app::refresh_worktrees: start ({} projects, max {} concurrent)",
+            self.projects.len(),
+            MAX_CONCURRENT_WORKTREE_REFRESHES
         );
         let t = std::time::Instant::now();
 
-        // Collect (index, name, path) so all wt calls run concurrently with no
-        // borrows on self.projects across await points.
         let entries: Vec<(usize, String, String)> = self
             .projects
             .iter()
@@ -807,33 +816,25 @@ impl App {
             .collect();
         let total = entries.len();
 
-        let mut stream = futures::stream::FuturesUnordered::new();
-        for (i, name, path) in &entries {
-            let i = *i;
-            let name = name.clone();
-            let path = path.clone();
-            stream.push(async move {
+        let mut stream =
+            futures::stream::iter(entries.into_iter().map(|(i, name, path)| async move {
                 info!(
                     "app::refresh_worktrees: fetching for {} (path={})",
                     name, path
                 );
                 let pt = std::time::Instant::now();
-                let result = worktrunk::fetch_worktrees(&path).await;
-                (i, name, pt.elapsed(), result)
-            });
-        }
+                let (worktrunk_result, git_result) =
+                    tokio::join!(worktrunk::fetch_worktrees(&path), discover_worktrees(&path));
+                (i, name, pt.elapsed(), worktrunk_result, git_result)
+            }))
+            .buffer_unordered(MAX_CONCURRENT_WORKTREE_REFRESHES);
 
         let mut done = 0;
-        let mut indexed: Vec<
-            Option<(
-                std::time::Duration,
-                anyhow::Result<Vec<crate::worktrunk::WtWorktree>>,
-            )>,
-        > = (0..total).map(|_| None).collect();
+        let mut indexed: Vec<Option<WorktreeRefreshResult>> = (0..total).map(|_| None).collect();
 
-        while let Some((i, _name, elapsed, result)) = stream.next().await {
+        while let Some((i, _name, elapsed, worktrunk_result, git_result)) = stream.next().await {
             done += 1;
-            indexed[i] = Some((elapsed, result));
+            indexed[i] = Some((elapsed, worktrunk_result, git_result));
             if let Some(tx) = progress_tx {
                 let _ = tx.send(DaemonMsg::Progress(vec![RefreshStep {
                     label: "Worktrees".into(),
@@ -846,9 +847,14 @@ impl App {
         drop(stream);
 
         for (proj, entry) in self.projects.iter_mut().zip(indexed) {
-            let (elapsed, result) = entry
-                .unwrap_or_else(|| (std::time::Duration::ZERO, Err(anyhow::anyhow!("missing"))));
-            match result {
+            let (elapsed, worktrunk_result, git_result) = entry.unwrap_or_else(|| {
+                (
+                    std::time::Duration::ZERO,
+                    Err(anyhow::anyhow!("missing worktrunk result")),
+                    Err(anyhow::anyhow!("missing Git worktree result")),
+                )
+            });
+            match worktrunk_result {
                 Ok(wts) => {
                     info!(
                         "app::refresh_worktrees: got {} worktrees for {} in {:.2?}",
@@ -871,7 +877,20 @@ impl App {
                     proj.cached_worktrees = vec![];
                 }
             }
+            match git_result {
+                Ok(worktrees) => {
+                    proj.cached_git_worktrees = worktrees;
+                }
+                Err(error) => {
+                    warn!(
+                        "app::refresh_worktrees: Git discovery error for {} after {:.2?}: {}",
+                        proj.config.name, elapsed, error
+                    );
+                    proj.cached_git_worktrees = vec![];
+                }
+            }
         }
+        self.relink_dashboards();
         info!("app::refresh_worktrees: done in {:.2?}", t.elapsed());
     }
 
@@ -882,16 +901,18 @@ impl App {
         project_idx: usize,
         progress_tx: Option<&broadcast::Sender<DaemonMsg>>,
     ) {
-        let Some(proj) = self.projects.get_mut(project_idx) else {
+        let Some(proj) = self.projects.get(project_idx) else {
             warn!(
                 "app::refresh_worktrees_for_project: invalid project_idx={}",
                 project_idx
             );
             return;
         };
+        let project_name = proj.config.name.clone();
+        let local_path = proj.config.local_path.clone();
         info!(
             "app::refresh_worktrees_for_project: fetching for {} (path={})",
-            proj.config.name, proj.config.local_path
+            project_name, local_path
         );
         let t = std::time::Instant::now();
         if let Some(tx) = progress_tx {
@@ -901,7 +922,12 @@ impl App {
                 total: 1,
             }]));
         }
-        match worktrunk::fetch_worktrees(&proj.config.local_path).await {
+        let (worktrunk_result, git_result) = tokio::join!(
+            worktrunk::fetch_worktrees(&local_path),
+            discover_worktrees(&local_path)
+        );
+        let proj = &mut self.projects[project_idx];
+        match worktrunk_result {
             Ok(wts) => {
                 info!(
                     "app::refresh_worktrees_for_project: got {} worktrees for {} in {:.2?}",
@@ -934,6 +960,21 @@ impl App {
                 proj.cached_worktrees = vec![];
             }
         }
+        match git_result {
+            Ok(worktrees) => {
+                proj.cached_git_worktrees = worktrees;
+            }
+            Err(error) => {
+                warn!(
+                    "app::refresh_worktrees_for_project: Git discovery error for {} after {:.2?}: {}",
+                    proj.config.name,
+                    t.elapsed(),
+                    error
+                );
+                proj.cached_git_worktrees = vec![];
+            }
+        }
+        self.relink_dashboards();
     }
 
     pub fn seconds_since_refresh(&self) -> u64 {

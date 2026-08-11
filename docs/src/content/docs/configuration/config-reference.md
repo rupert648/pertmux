@@ -15,7 +15,7 @@ pertmux -c ./path/to/config.toml serve
 |-----|------|---------|-------------|
 | `refresh_interval` | integer | `2` | How often (in seconds) to poll tmux panes and agent status |
 | `mr_detail_interval` | integer | `60` | How often (in seconds) to refresh MR detail and pipeline status |
-| `worktree_interval` | integer | `30` | How often (in seconds) to refresh worktree list |
+| `worktree_interval` | integer | `300` | How often (in seconds) to refresh worktree list |
 | `mr_list_interval` | integer | `300` | How often (in seconds) to refresh the MR/PR list from the forge |
 | `default_agent_command` | string | — | Command to run in a split pane when focusing a worktree (e.g. `"opencode"`) |
 | `default_worktree_with_prompt` | string | — | Command template for creating a worktree with an injected prompt. Use `{{msg}}` as the placeholder (e.g. `"opencode run {{msg}}"`). Enables the `w` keybinding — see [Worktree with Prompt](/features/worktree-management/#create-with-prompt). |
