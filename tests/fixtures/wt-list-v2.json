@@ -1,0 +1,61 @@
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main",
+    "forge": {
+      "url": "https://github.com/rupert648/pertmux",
+      "provider": "github",
+      "host": "github.com",
+      "owner": "rupert648",
+      "name": "pertmux",
+      "remote": "origin"
+    }
+  },
+  "collected": {
+    "ci": false,
+    "summary": false
+  },
+  "items": [
+    {
+      "branch": "main",
+      "head": {
+        "sha": "0954d4e53f50280b1fb5bbcecce80a27536dfbde",
+        "short_sha": "0954d4e",
+        "subject": "Fix runaway worktree refreshes",
+        "committed_at": "2026-08-11T14:14:09Z"
+      },
+      "worktree": {
+        "path": "/repo/pertmux",
+        "main": true,
+        "current": true,
+        "previous": true,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": true,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 103,
+            "deleted": 4
+          }
+        }
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "main",
+        "ahead": 0,
+        "behind": 0
+      },
+      "display": {
+        "state": "is_main",
+        "symbols": "!^|",
+        "statusline": "main  \u001b[36m!\u001b[39m\u001b[2m^\u001b[22m\u001b[2m|\u001b[22m  @\u001b[32m+103\u001b[0m \u001b[31m-4\u001b[0m"
+      }
+    }
+  ]
+}

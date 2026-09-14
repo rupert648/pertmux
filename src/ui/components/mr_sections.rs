@@ -72,7 +72,7 @@ fn draw_worktree_block_render(
     if wt_count == 0 {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  Install worktrunk (wt) for worktree listing",
+                "  No worktrees loaded — check daemon logs",
                 Style::default().fg(Color::DarkGray),
             ))),
             section_inner,

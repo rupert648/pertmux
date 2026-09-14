@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -99,6 +99,106 @@ pub struct WtWorktree {
     pub symbols: Option<String>,
 }
 
+// Keep the daemon/client representation stable while accepting both wt CLI schemas.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WtListOutput {
+    Legacy(Vec<WtWorktree>),
+    Envelope { schema: u64, items: Vec<WtItemV2> },
+}
+
+#[derive(Deserialize)]
+struct WtItemV2 {
+    branch: Option<String>,
+    head: Option<WtHeadV2>,
+    worktree: Option<WtLocationV2>,
+    default_branch: Option<WtMain>,
+    upstream: Option<WtUpstreamV2>,
+    display: Option<WtDisplayV2>,
+}
+
+#[derive(Deserialize, Default)]
+struct WtHeadV2 {
+    sha: String,
+    short_sha: String,
+    subject: Option<String>,
+    committed_at: Option<Timestamp>,
+}
+
+#[derive(Deserialize)]
+struct WtLocationV2 {
+    path: String,
+    #[serde(default)]
+    main: bool,
+    #[serde(default)]
+    current: bool,
+    #[serde(default)]
+    previous: bool,
+    #[serde(default)]
+    detached: bool,
+    changes: Option<WtWorkingTree>,
+}
+
+#[derive(Deserialize)]
+struct WtUpstreamV2 {
+    remote: String,
+    #[serde(flatten)]
+    tracking: WtRemote,
+}
+
+#[derive(Deserialize, Default)]
+struct WtDisplayV2 {
+    state: Option<String>,
+    symbols: Option<String>,
+}
+
+fn parse_worktrees(stdout: &str) -> Result<Vec<WtWorktree>> {
+    let output: WtListOutput =
+        serde_json::from_str(stdout).context("Failed to parse wt list JSON")?;
+    match output {
+        WtListOutput::Legacy(items) => {
+            Ok(items.into_iter().filter(|w| w.kind == "worktree").collect())
+        }
+        WtListOutput::Envelope { schema, items } => {
+            anyhow::ensure!(schema == 2, "Unsupported wt list JSON schema: {schema}");
+            Ok(items
+                .into_iter()
+                .filter_map(|item| {
+                    let location = item.worktree?;
+                    let head = item.head.unwrap_or_default();
+                    let display = item.display.unwrap_or_default();
+                    Some(WtWorktree {
+                        branch: item.branch,
+                        path: Some(location.path),
+                        kind: "worktree".into(),
+                        commit: WtCommit {
+                            sha: head.sha,
+                            short_sha: head.short_sha,
+                            message: head.subject.unwrap_or_default(),
+                            timestamp: head.committed_at.map_or(0, |t| t.as_second()),
+                        },
+                        working_tree: location.changes,
+                        main_state: display.state,
+                        main: item.default_branch,
+                        remote: item.upstream.map(|upstream| WtRemote {
+                            name: upstream.remote,
+                            ..upstream.tracking
+                        }),
+                        worktree: Some(WtWorktreeState {
+                            state: None,
+                            detached: location.detached,
+                        }),
+                        is_main: location.main,
+                        is_current: location.current,
+                        is_previous: location.previous,
+                        symbols: display.symbols,
+                    })
+                })
+                .collect())
+        }
+    }
+}
+
 pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
     info!("fetch_worktrees: start (path={})", local_path);
     let t = std::time::Instant::now();
@@ -145,8 +245,7 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
         return Ok(vec![]);
     }
 
-    let all: Vec<WtWorktree> = serde_json::from_str(&stdout)?;
-    let worktrees: Vec<WtWorktree> = all.into_iter().filter(|w| w.kind == "worktree").collect();
+    let worktrees = parse_worktrees(&stdout)?;
     info!(
         "fetch_worktrees: done — {} worktrees (elapsed={:.2?})",
         worktrees.len(),
@@ -375,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_parse_real_wt_json() {
-        let worktrees: Vec<WtWorktree> = serde_json::from_str(REAL_WT_JSON).unwrap();
+        let worktrees = parse_worktrees(REAL_WT_JSON).unwrap();
         assert_eq!(worktrees.len(), 2);
 
         let main = &worktrees[0];
@@ -402,6 +501,85 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_wt_v077_json() {
+        // Captured from wt v0.77.0, with the checkout path anonymized.
+        let json = include_str!("../tests/fixtures/wt-list-v2.json");
+        let worktrees = parse_worktrees(json).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        let wt = &worktrees[0];
+        assert_eq!(wt.branch.as_deref(), Some("main"));
+        assert_eq!(wt.path.as_deref(), Some("/repo/pertmux"));
+        assert_eq!(wt.kind, "worktree");
+        assert!(wt.is_main);
+        assert!(wt.is_current);
+        assert!(wt.is_previous);
+        assert_eq!(wt.commit.short_sha, "0954d4e");
+        assert_eq!(wt.commit.message, "Fix runaway worktree refreshes");
+        assert_eq!(
+            wt.commit.timestamp,
+            "2026-08-11T14:14:09Z"
+                .parse::<Timestamp>()
+                .unwrap()
+                .as_second()
+        );
+        assert_eq!(wt.main_state.as_deref(), Some("is_main"));
+        assert!(wt.main.is_none());
+        assert_eq!(wt.remote.as_ref().unwrap().name, "origin");
+        assert!(!wt.worktree.as_ref().unwrap().detached);
+        assert!(wt.working_tree.is_some());
+        assert_eq!(wt.symbols.as_deref(), Some("!^|"));
+    }
+
+    #[test]
+    fn test_parse_v2_optional_fields_and_branch_rows() {
+        let worktrees = parse_worktrees(
+            r#"{
+            "schema": 2,
+            "items": [
+                {
+                    "branch": null,
+                    "head": null,
+                    "worktree": {"path": "/repo/detached", "detached": true},
+                    "default_branch": {"ahead": 3, "behind": 1},
+                    "upstream": null,
+                    "display": null
+                },
+                {"branch": "branch-only", "head": null},
+                {"branch": "unknown", "worktree": null}
+            ]
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(worktrees.len(), 1);
+        let wt = &worktrees[0];
+        assert!(wt.branch.is_none());
+        assert_eq!(wt.path.as_deref(), Some("/repo/detached"));
+        assert_eq!(wt.commit.timestamp, 0);
+        assert!(wt.commit.message.is_empty());
+        assert!(!wt.is_main);
+        assert!(!wt.is_current);
+        assert!(!wt.is_previous);
+        assert!(wt.worktree.as_ref().unwrap().detached);
+        assert_eq!(wt.main.as_ref().unwrap().ahead, 3);
+        assert_eq!(wt.main.as_ref().unwrap().behind, 1);
+        assert!(wt.remote.is_none());
+        assert!(wt.symbols.is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_and_invalid_output() {
+        assert!(parse_worktrees("[]").unwrap().is_empty());
+        assert!(
+            parse_worktrees(r#"{"schema": 2, "items": []}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse_worktrees(r#"{"schema": 3, "items": []}"#).is_err());
+        assert!(parse_worktrees(r#"{"schema": 2}"#).is_err());
+        assert!(parse_worktrees("not json").is_err());
+    }
+
+    #[test]
     fn test_parse_minimal_wt_json() {
         let json = r#"[{
             "branch": null,
@@ -411,7 +589,7 @@ mod tests {
             "is_current": false,
             "is_previous": false
         }]"#;
-        let worktrees: Vec<WtWorktree> = serde_json::from_str(json).unwrap();
+        let worktrees = parse_worktrees(json).unwrap();
         assert_eq!(worktrees.len(), 1);
         assert!(worktrees[0].branch.is_none());
         assert!(worktrees[0].path.is_none());
@@ -434,7 +612,7 @@ mod tests {
             "new_future_field": true,
             "another_field": { "nested": 42 }
         }]"#;
-        let worktrees: Vec<WtWorktree> = serde_json::from_str(json).unwrap();
+        let worktrees = parse_worktrees(json).unwrap();
         assert_eq!(worktrees.len(), 1);
         assert_eq!(worktrees[0].branch.as_deref(), Some("feat/test"));
     }
@@ -445,8 +623,7 @@ mod tests {
             { "branch": "main", "path": "/tmp", "kind": "worktree", "commit": { "sha": "a", "short_sha": "a" }, "is_main": true, "is_current": false, "is_previous": false },
             { "branch": "feat/old", "kind": "branch", "commit": { "sha": "b", "short_sha": "b" }, "is_main": false, "is_current": false, "is_previous": false }
         ]"#;
-        let all: Vec<WtWorktree> = serde_json::from_str(json).unwrap();
-        let filtered: Vec<WtWorktree> = all.into_iter().filter(|w| w.kind == "worktree").collect();
+        let filtered = parse_worktrees(json).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].branch.as_deref(), Some("main"));
     }
