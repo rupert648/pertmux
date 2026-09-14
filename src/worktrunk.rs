@@ -112,7 +112,7 @@ struct WtItemV2 {
     branch: Option<String>,
     head: Option<WtHeadV2>,
     worktree: Option<WtLocationV2>,
-    default_branch: Option<WtMain>,
+    default_branch: Option<WtDivergenceV2>,
     upstream: Option<WtUpstreamV2>,
     display: Option<WtDisplayV2>,
 }
@@ -140,10 +140,17 @@ struct WtLocationV2 {
 }
 
 #[derive(Deserialize)]
+struct WtDivergenceV2 {
+    ahead: Option<u64>,
+    behind: Option<u64>,
+}
+
+#[derive(Deserialize)]
 struct WtUpstreamV2 {
     remote: String,
+    branch: String,
     #[serde(flatten)]
-    tracking: WtRemote,
+    divergence: WtDivergenceV2,
 }
 
 #[derive(Deserialize, Default)]
@@ -179,10 +186,19 @@ fn parse_worktrees(stdout: &str) -> Result<Vec<WtWorktree>> {
                         },
                         working_tree: location.changes,
                         main_state: display.state,
-                        main: item.default_branch,
+                        // wt emits null counts when Git status could not be determined.
+                        // Preserve the worktree and omit its unknown divergence badge.
+                        main: item.default_branch.and_then(|main| {
+                            Some(WtMain {
+                                ahead: main.ahead?,
+                                behind: main.behind?,
+                            })
+                        }),
                         remote: item.upstream.map(|upstream| WtRemote {
                             name: upstream.remote,
-                            ..upstream.tracking
+                            branch: upstream.branch,
+                            ahead: upstream.divergence.ahead.unwrap_or_default(),
+                            behind: upstream.divergence.behind.unwrap_or_default(),
                         }),
                         worktree: Some(WtWorktreeState {
                             state: None,
@@ -577,6 +593,32 @@ mod tests {
         assert!(parse_worktrees(r#"{"schema": 3, "items": []}"#).is_err());
         assert!(parse_worktrees(r#"{"schema": 2}"#).is_err());
         assert!(parse_worktrees("not json").is_err());
+    }
+
+    #[test]
+    fn test_parse_v2_undetermined_git_status() {
+        let worktrees = parse_worktrees(r#"{
+            "schema": 2,
+            "items": [{
+                "branch": "feature",
+                "head": null,
+                "worktree": {
+                    "path": "/repo/feature",
+                    "changes": null,
+                    "prunable": {"reason": "gitdir file points to non-existent location"}
+                },
+                "default_branch": {"ahead": null, "behind": null, "diff": null},
+                "upstream": {"remote": "origin", "branch": "feature", "ahead": null, "behind": null},
+                "display": {"symbols": "⊟"}
+            }]
+        }"#).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        let wt = &worktrees[0];
+        assert_eq!(wt.path.as_deref(), Some("/repo/feature"));
+        assert!(wt.main.is_none());
+        assert!(wt.working_tree.is_none());
+        assert_eq!(wt.remote.as_ref().unwrap().name, "origin");
+        assert_eq!(wt.symbols.as_deref(), Some("⊟"));
     }
 
     #[test]
