@@ -60,7 +60,7 @@ impl KeybindingsConfig {
             (*copy_branch, "Copy branch name"),
             (*filter_projects, "Switch project"),
             (*mr_overview, "My open MRs"),
-            (*activity_feed, "Activity feed"),
+            (*activity_feed, "Agent activity"),
             (*agent_actions, "Agent actions"),
             (*create_worktree, "Create worktree"),
             (*open_worktree_with_prompt, "Create worktree with prompt"),

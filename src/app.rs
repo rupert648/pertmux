@@ -550,9 +550,6 @@ impl App {
                     if !proj.cached_mrs.is_empty() {
                         let changes =
                             detect_mr_list_changes(&proj.config.name, &proj.cached_mrs, &mrs);
-                        for c in &changes {
-                            record_activity(&mut self.activity_feed, ActivityEntry::from(c));
-                        }
                         self.pending_changes.extend(changes);
                     }
                     proj.cached_mrs = mrs;
@@ -721,9 +718,6 @@ impl App {
                 info!("app::refresh_mr_detail: got detail in {:.2?}", st.elapsed());
                 if let Some(ref old_detail) = proj.cached_mr_detail {
                     let changes = detect_mr_detail_changes(&project_name, old_detail, &detail);
-                    for c in &changes {
-                        record_activity(&mut self.activity_feed, ActivityEntry::from(c));
-                    }
                     self.pending_changes.extend(changes);
                 }
                 proj.cached_mr_detail = Some(detail);
@@ -1143,19 +1137,21 @@ fn detect_mr_detail_changes(
 }
 
 fn record_activity(activity_feed: &mut VecDeque<ActivityEntry>, entry: ActivityEntry) {
-    if let Some(crate::protocol::ActivityTarget::Pane { pane_path, .. }) = &entry.target {
-        activity_feed.retain(|existing| {
-            let Some(crate::protocol::ActivityTarget::Pane {
-                pane_path: existing_path,
-                ..
-            }) = &existing.target
-            else {
-                return true;
-            };
+    let Some(crate::protocol::ActivityTarget::Pane { pane_path, .. }) = &entry.target else {
+        return;
+    };
 
-            !worktree_paths_match(existing_path, pane_path)
-        });
-    }
+    activity_feed.retain(|existing| {
+        let Some(crate::protocol::ActivityTarget::Pane {
+            pane_path: existing_path,
+            ..
+        }) = &existing.target
+        else {
+            return false;
+        };
+
+        !worktree_paths_match(existing_path, pane_path)
+    });
 
     activity_feed.push_front(entry);
     activity_feed.truncate(50);
@@ -1249,16 +1245,14 @@ mod tests {
             &mut feed,
             pane_activity("/tmp/project/feature", "working", 1),
         );
-        record_activity(&mut feed, mr_activity(2));
         record_activity(
             &mut feed,
             pane_activity("/tmp/project/feature/", "finished", 3),
         );
 
-        assert_eq!(feed.len(), 2);
+        assert_eq!(feed.len(), 1);
         assert_eq!(feed[0].message, "finished");
         assert_eq!(feed[0].received_at_secs, 3);
-        assert_eq!(feed[1].message, "!42 pipeline ok");
     }
 
     #[test]
@@ -1279,13 +1273,11 @@ mod tests {
     }
 
     #[test]
-    fn record_activity_keeps_multiple_mr_events() {
+    fn record_activity_ignores_mr_events() {
         let mut feed = VecDeque::new();
         record_activity(&mut feed, mr_activity(1));
         record_activity(&mut feed, mr_activity(2));
 
-        assert_eq!(feed.len(), 2);
-        assert_eq!(feed[0].received_at_secs, 2);
-        assert_eq!(feed[1].received_at_secs, 1);
+        assert!(feed.is_empty());
     }
 }

@@ -38,7 +38,7 @@ pub struct CodexHookEvent {
 }
 
 /// Navigation target carried by an activity entry.
-/// Used by the activity feed popup to jump to the relevant tmux pane or MR.
+/// Used by the activity popup to jump to the relevant tmux pane.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActivityTarget {
     /// Switch to a specific tmux pane (agent activities).
@@ -106,45 +106,6 @@ impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
             target: Some(ActivityTarget::Pane {
                 pane_id: change.pane_id.clone(),
                 pane_path: change.pane_path.clone(),
-            }),
-        }
-    }
-}
-
-impl From<&crate::mr_changes::MrChange> for ActivityEntry {
-    fn from(change: &crate::mr_changes::MrChange) -> Self {
-        use crate::mr_changes::MrChangeType;
-        let (message, kind) = match &change.change_type {
-            MrChangeType::PipelineFailed => (
-                format!("!{} pipeline failed", change.mr_iid),
-                ActivityKind::MrPipelineFailed,
-            ),
-            MrChangeType::PipelineSucceeded => (
-                format!("!{} pipeline ok", change.mr_iid),
-                ActivityKind::MrPipelineSucceeded,
-            ),
-            MrChangeType::NewDiscussions(n) => (
-                format!(
-                    "!{} {} new comment{}",
-                    change.mr_iid,
-                    n,
-                    if *n == 1 { "" } else { "s" }
-                ),
-                ActivityKind::MrNewDiscussions,
-            ),
-            MrChangeType::Approved => (
-                format!("!{} approved", change.mr_iid),
-                ActivityKind::MrApproved,
-            ),
-        };
-        ActivityEntry {
-            label: change.project_name.clone(),
-            message,
-            kind,
-            received_at_secs: jiff::Timestamp::now().as_second() as u64,
-            target: Some(ActivityTarget::MergeRequest {
-                project_name: change.project_name.clone(),
-                iid: change.mr_iid,
             }),
         }
     }

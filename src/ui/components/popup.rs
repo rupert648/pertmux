@@ -1,7 +1,6 @@
 use crate::app::{PopupState, WorktreeFilterEntry};
 use crate::client::ClientState;
 use crate::config::{AgentActionConfig, ProjectForge};
-use crate::protocol::ActivityKind;
 use crate::ui::ACCENT;
 use ratatui::{
     Frame,
@@ -666,7 +665,7 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
 
     let block = Block::default()
         .title(Line::from(Span::styled(
-            " Activity Feed ",
+            " Agent Activity ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )))
         .borders(Borders::ALL)
@@ -691,11 +690,6 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
     };
 
     let available_width = inner.width as usize;
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
     let mut item_lines: Vec<Line> = Vec::new();
 
     for (i, entry) in entries
@@ -706,50 +700,36 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
     {
         let is_selected = i == selected;
         let prefix = if is_selected { " \u{25b8} " } else { "   " };
-
-        let base_color = activity_kind_color(&entry.kind);
-
-        let (name_style, msg_style, time_style) = if is_selected {
-            (
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                Style::default().fg(base_color).add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
+        let name_style = if is_selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
-            (
-                Style::default().fg(Color::White),
-                Style::default().fg(base_color),
-                Style::default().fg(Color::DarkGray),
-            )
+            Style::default().fg(Color::White)
         };
 
-        let elapsed = now_secs.saturating_sub(entry.received_at_secs);
-        let time = if elapsed < 60 {
-            format!("{}s", elapsed)
-        } else if elapsed < 3600 {
-            format!("{}m", elapsed / 60)
-        } else {
-            format!("{}h", elapsed / 3600)
-        };
-
-        // Reserve: 3 (prefix) + 21 (message 20+space) + time.len() + 1 (space) = ~30 chars min.
-        let fixed = 3 + 21 + time.len() + 1;
+        let status = super::activity_feed::activity_status_label(&entry.kind);
+        let time = super::activity_feed::activity_time_ago(entry);
+        let fixed = 3 + super::activity_feed::ACTIVITY_STATUS_WIDTH + time.len() + 2;
         let label_max = available_width.saturating_sub(fixed).max(8);
         let label = crate::ui::helpers::truncate(&entry.label, label_max);
 
         item_lines.push(Line::from(vec![
             Span::styled(prefix, Style::default().fg(ACCENT)),
+            Span::styled(
+                format!(
+                    "{:<width$} ",
+                    status,
+                    width = super::activity_feed::ACTIVITY_STATUS_WIDTH
+                ),
+                super::activity_feed::activity_status_style(&entry.kind),
+            ),
             Span::styled(format!("{:<width$} ", label, width = label_max), name_style),
-            Span::styled(format!("{:<20} ", entry.message), msg_style),
-            Span::styled(time, time_style),
+            Span::styled(time, Style::default().fg(Color::Indexed(245))),
         ]));
     }
 
     if item_lines.is_empty() {
         item_lines.push(Line::from(Span::styled(
-            "   no activity yet",
+            "   no agent activity yet",
             Style::default().fg(Color::DarkGray),
         )));
     }
@@ -767,19 +747,6 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(help), chunks[2]);
-}
-
-/// Base color for each activity kind (used in the popup).
-fn activity_kind_color(kind: &ActivityKind) -> Color {
-    match kind {
-        ActivityKind::AgentBusy => ACCENT,
-        ActivityKind::AgentIdle => Color::Rgb(100, 220, 100),
-        ActivityKind::AgentRetry => Color::Rgb(220, 200, 60),
-        ActivityKind::MrPipelineFailed => Color::Rgb(220, 80, 80),
-        ActivityKind::MrPipelineSucceeded => Color::Rgb(100, 220, 100),
-        ActivityKind::MrNewDiscussions => Color::Rgb(80, 200, 220),
-        ActivityKind::MrApproved => Color::Rgb(100, 220, 100),
-    }
 }
 
 fn draw_create_with_prompt_popup(
