@@ -81,22 +81,13 @@ pub fn draw_loading(frame: &mut Frame, tick: usize, steps: &[RefreshStep]) {
 }
 
 fn draw_right_panel_client(frame: &mut Frame, state: &ClientState, area: Rect) {
-    // MR detail gets 3 parts, activity feed gets 2 parts (60/40 split).
-    // Using Fill so both panels scale proportionally with the terminal height.
     if state.snapshot.projects.len() > 1 {
         let overview_h = (state.snapshot.projects.len() as u16 + 2).min(area.height / 4);
-        let chunks = Layout::vertical([
-            Constraint::Fill(3),
-            Constraint::Fill(2),
-            Constraint::Length(overview_h),
-        ])
-        .split(area);
-        components::detail_panel::draw_detail_panel_client(frame, state, chunks[0]);
-        components::activity_feed::draw_activity_feed(frame, state, chunks[1]);
-        components::overview::draw_overview_panel(frame, state, chunks[2]);
+        let chunks =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(overview_h)]).split(area);
+        components::activity_feed::draw_activity_feed(frame, state, chunks[0]);
+        components::overview::draw_overview_panel(frame, state, chunks[1]);
     } else {
-        let chunks = Layout::vertical([Constraint::Fill(3), Constraint::Fill(2)]).split(area);
-        components::detail_panel::draw_detail_panel_client(frame, state, chunks[0]);
-        components::activity_feed::draw_activity_feed(frame, state, chunks[1]);
+        components::activity_feed::draw_activity_feed(frame, state, area);
     }
 }

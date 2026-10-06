@@ -1,6 +1,7 @@
 pub(crate) mod activity_feed;
 pub(crate) mod cards;
 pub(crate) mod change_summary;
+#[allow(dead_code)]
 pub(crate) mod detail_panel;
 pub(crate) mod list_panel;
 pub(crate) mod loading;
