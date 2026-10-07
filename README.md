@@ -13,7 +13,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 - **Coding agent monitoring** — track Claude, opencode, and Codex instances across tmux panes
 - **Codex hook integration** — optional Codex hooks notify the daemon immediately when Codex starts, receives a prompt, or finishes a turn
 - **MR Overview** — press `m` to see all your open MRs across all configured forges, with quick navigation to configured projects or browser-open for unconfigured ones
-- **Activity feed** — live log of agent state changes and MR events; press `A` to open the feed popup, navigate with `j`/`k`, and press `Enter` to jump directly to the relevant tmux pane or MR
+- **Agent activity** — rich Codex status cards with session titles, response previews, model details, and acknowledgement controls; press `A`, then `d` to handle one update or `c` to handle all
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
 ## Architecture
@@ -235,7 +235,7 @@ Remap action keys. Navigation keys (`j`/`k`/`↑`/`↓`/`Enter`/`Esc`/`q`) are n
 |-----|------|---------|-------------|
 | `refresh` | string | `"r"` | Refresh all data |
 | `mr_overview` | string | `"m"` | Open MR Overview popup showing all open MRs across forges |
-| `activity_feed` | string | `"A"` | Open Activity Feed popup — navigate and jump to recent events |
+| `activity_feed` | string | `"A"` | Open Agent Activity popup — review and acknowledge agent updates |
 | `open_browser` | string | `"o"` | Open selected MR in browser |
 | `copy_branch` | string | `"b"` | Copy selected branch name to clipboard |
 | `filter_projects` | string | `"f"` | Fuzzy filter to switch project |
@@ -261,7 +261,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 |-----|---------|--------|
 | `r` | Global | Refresh all data |
 | `m` | Global | Open MR Overview — all your open MRs across forges |
-| `A` | Global | Open Activity Feed popup — navigate recent events and jump to the relevant pane or MR |
+| `A` | Global | Open Agent Activity popup — review status cards and jump to the relevant pane |
 | `o` | MR selected | Open MR in browser |
 | `b` | Any | Copy selected branch name |
 | `f` | Global | Fuzzy filter to switch project |

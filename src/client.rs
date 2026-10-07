@@ -1284,6 +1284,24 @@ async fn handle_key(
                     *selected += 1;
                 }
             }
+            KeyCode::Char('d') => {
+                if let PopupState::ActivityFeed { selected } = &state.popup
+                    && let Some(entry) = state.snapshot.activity_feed.get(*selected)
+                    && let Some(crate::protocol::ActivityTarget::Pane { pane_path, .. }) =
+                        &entry.target
+                {
+                    send_msg(
+                        framed,
+                        ClientMsg::MarkActivityHandled {
+                            pane_path: pane_path.clone(),
+                        },
+                    )
+                    .await?;
+                }
+            }
+            KeyCode::Char('c') => {
+                send_msg(framed, ClientMsg::MarkAllActivityHandled).await?;
+            }
             KeyCode::Enter => {
                 if let PopupState::ActivityFeed { selected } =
                     std::mem::replace(&mut state.popup, PopupState::None)

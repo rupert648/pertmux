@@ -614,6 +614,25 @@ async fn handle_command(
             info!("cmd: AgentAction done (ok={})", result.is_ok());
             send_action_result(broadcast_tx, result);
         }
+        ClientMsg::MarkActivityHandled { pane_path } => {
+            info!("cmd: MarkActivityHandled path={}", pane_path);
+            let result = if app.mark_activity_handled(&pane_path) {
+                Ok("Marked activity as handled".to_string())
+            } else {
+                Err(anyhow::anyhow!("Activity is no longer available"))
+            };
+            send_action_result(broadcast_tx, result);
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+        }
+        ClientMsg::MarkAllActivityHandled => {
+            info!("cmd: MarkAllActivityHandled");
+            let handled = app.mark_all_activity_handled();
+            send_action_result(
+                broadcast_tx,
+                Ok(format!("Marked {handled} activities as handled")),
+            );
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+        }
         ClientMsg::CodexHook(event) => {
             info!(
                 "cmd: CodexHook event={} session_id={}",

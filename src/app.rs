@@ -1019,6 +1019,14 @@ impl App {
         std::mem::take(&mut self.pending_agent_changes)
     }
 
+    pub fn mark_activity_handled(&mut self, pane_path: &str) -> bool {
+        mark_feed_activity_handled(&mut self.activity_feed, pane_path)
+    }
+
+    pub fn mark_all_activity_handled(&mut self) -> usize {
+        mark_all_feed_activity_handled(&mut self.activity_feed)
+    }
+
     fn update_detail(&mut self) {
         self.detail = self.panes.get(self.selected).and_then(|pane| {
             let session_id = pane.db_session_id.as_deref()?;
@@ -1155,6 +1163,53 @@ fn record_activity(activity_feed: &mut VecDeque<ActivityEntry>, entry: ActivityE
 
     activity_feed.push_front(entry);
     activity_feed.truncate(50);
+    sort_handled_activity_last(activity_feed);
+}
+
+fn sort_handled_activity_last(activity_feed: &mut VecDeque<ActivityEntry>) {
+    activity_feed
+        .make_contiguous()
+        .sort_by_key(|entry| matches!(entry.kind, crate::protocol::ActivityKind::AgentHandled));
+}
+
+fn mark_feed_activity_handled(
+    activity_feed: &mut VecDeque<ActivityEntry>,
+    pane_path: &str,
+) -> bool {
+    let Some(entry) = activity_feed.iter_mut().find(|entry| {
+        matches!(
+            &entry.target,
+            Some(crate::protocol::ActivityTarget::Pane {
+                pane_path: entry_path,
+                ..
+            }) if worktree_paths_match(entry_path, pane_path)
+        )
+    }) else {
+        return false;
+    };
+
+    entry.kind = crate::protocol::ActivityKind::AgentHandled;
+    entry.message = "handled".to_string();
+    entry.received_at_secs = jiff::Timestamp::now().as_second() as u64;
+    sort_handled_activity_last(activity_feed);
+    true
+}
+
+fn mark_all_feed_activity_handled(activity_feed: &mut VecDeque<ActivityEntry>) -> usize {
+    let now = jiff::Timestamp::now().as_second() as u64;
+    let mut handled = 0;
+
+    for entry in activity_feed.iter_mut() {
+        if !matches!(entry.kind, crate::protocol::ActivityKind::AgentHandled) {
+            entry.kind = crate::protocol::ActivityKind::AgentHandled;
+            entry.message = "handled".to_string();
+            entry.received_at_secs = now;
+            handled += 1;
+        }
+    }
+
+    sort_handled_activity_last(activity_feed);
+    handled
 }
 
 fn worktree_paths_match(left: &str, right: &str) -> bool {
@@ -1279,5 +1334,52 @@ mod tests {
         record_activity(&mut feed, mr_activity(2));
 
         assert!(feed.is_empty());
+    }
+
+    #[test]
+    fn handled_activity_moves_after_unhandled_and_resets_on_agent_change() {
+        let mut feed = VecDeque::new();
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-a", "working", 1),
+        );
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-b", "working", 2),
+        );
+
+        assert!(mark_feed_activity_handled(
+            &mut feed,
+            "/tmp/project/feature-b"
+        ));
+        assert_eq!(feed[0].label, "feature-a");
+        assert!(matches!(feed[1].kind, ActivityKind::AgentHandled));
+
+        let mut retry = pane_activity("/tmp/project/feature-b", "retrying", 3);
+        retry.kind = ActivityKind::AgentRetry;
+        record_activity(&mut feed, retry);
+
+        assert_eq!(feed[0].label, "feature-b");
+        assert!(matches!(feed[0].kind, ActivityKind::AgentRetry));
+    }
+
+    #[test]
+    fn mark_all_activity_only_counts_new_acknowledgements() {
+        let mut feed = VecDeque::new();
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-a", "working", 1),
+        );
+        record_activity(
+            &mut feed,
+            pane_activity("/tmp/project/feature-b", "finished", 2),
+        );
+
+        assert_eq!(mark_all_feed_activity_handled(&mut feed), 2);
+        assert!(
+            feed.iter()
+                .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
+        );
+        assert_eq!(mark_all_feed_activity_handled(&mut feed), 0);
     }
 }

@@ -653,12 +653,15 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
         return;
     }
 
-    let max_visible = 15usize;
+    let max_popup_h = area.height.saturating_sub(4);
+    let cards_h = max_popup_h.saturating_sub(4);
+    let max_visible = (cards_h as usize / super::activity_feed::ACTIVITY_CARD_HEIGHT).max(1);
     let visible_count = entries.len().min(max_visible);
     let popup_w = (area.width * 3 / 4)
         .max(60)
         .min(area.width.saturating_sub(4));
-    let popup_h = (visible_count as u16 + 4).min(area.height.saturating_sub(4));
+    let popup_h = (visible_count as u16 * super::activity_feed::ACTIVITY_CARD_HEIGHT as u16 + 4)
+        .min(max_popup_h);
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
     let rect = Rect::new(x, y, popup_w, popup_h);
@@ -689,7 +692,6 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
         0
     };
 
-    let available_width = inner.width as usize;
     let mut item_lines: Vec<Line> = Vec::new();
 
     for (i, entry) in entries
@@ -698,33 +700,12 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
         .skip(scroll_offset)
         .take(visible_count)
     {
-        let is_selected = i == selected;
-        let prefix = if is_selected { " \u{25b8} " } else { "   " };
-        let name_style = if is_selected {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let status = super::activity_feed::activity_status_label(&entry.kind);
-        let time = super::activity_feed::activity_time_ago(entry);
-        let fixed = 3 + super::activity_feed::ACTIVITY_STATUS_WIDTH + time.len() + 2;
-        let label_max = available_width.saturating_sub(fixed).max(8);
-        let label = crate::ui::helpers::truncate(&entry.label, label_max);
-
-        item_lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(ACCENT)),
-            Span::styled(
-                format!(
-                    "{:<width$} ",
-                    status,
-                    width = super::activity_feed::ACTIVITY_STATUS_WIDTH
-                ),
-                super::activity_feed::activity_status_style(&entry.kind),
-            ),
-            Span::styled(format!("{:<width$} ", label, width = label_max), name_style),
-            Span::styled(time, Style::default().fg(Color::Indexed(245))),
-        ]));
+        item_lines.extend(super::activity_feed::activity_card_lines(
+            entry,
+            super::activity_feed::activity_pane(state, entry),
+            chunks[0].width,
+            i == selected,
+        ));
     }
 
     if item_lines.is_empty() {
@@ -743,7 +724,7 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
     frame.render_widget(Paragraph::new(divider), chunks[1]);
 
     let help = Line::from(Span::styled(
-        "j/k navigate \u{00b7} Enter go to \u{00b7} Esc close",
+        "j/k move \u{00b7} d handle \u{00b7} c handle all \u{00b7} Enter open \u{00b7} Esc close",
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(help), chunks[2]);

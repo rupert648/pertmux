@@ -28,7 +28,17 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `m` | Open MR Overview popup (all your open MRs across all forges) | `mr_overview` |
 | `M` | Merge selected worktree into default branch | `merge_worktree` |
 | `a` | Open agent actions panel | `agent_actions` |
-| `A` | Open Activity Feed popup — navigate recent events and jump to the relevant tmux pane or MR | `activity_feed` |
+| `A` | Open Agent Activity popup — review status cards and jump to the relevant tmux pane | `activity_feed` |
+
+## Agent Activity popup
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` or `↑` / `↓` | Move between activity cards |
+| `d` | Mark the selected activity as handled |
+| `c` | Mark every activity as handled |
+| `Enter` | Focus the selected agent pane in tmux |
+| `Esc` | Close the popup |
 
 ## Global
 
