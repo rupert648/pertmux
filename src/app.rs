@@ -281,11 +281,34 @@ impl App {
             t.elapsed()
         );
 
+        let previous_responses: HashMap<String, (Option<String>, Option<String>)> = self
+            .panes
+            .iter()
+            .map(|pane| {
+                (
+                    pane.pane_id.clone(),
+                    (pane.db_session_id.clone(), pane.last_response.clone()),
+                )
+            })
+            .collect();
+
         for pane in &mut panes {
             if let Some(agent) = self.find_agent(&pane.pane_command) {
                 pane.status = agent.query_status(pane);
                 agent.enrich_pane(pane);
                 self.apply_cached_codex_hook_status(pane);
+            }
+            if pane.last_response.is_none()
+                && pane.db_session_id.is_some()
+                && let Some((previous_session_id, previous_response)) =
+                    previous_responses.get(&pane.pane_id)
+            {
+                pane.last_response = carry_forward_last_response(
+                    pane.db_session_id.as_deref(),
+                    pane.last_response.take(),
+                    previous_session_id.as_deref(),
+                    previous_response.as_deref(),
+                );
             }
             if is_codex_pane(pane)
                 && let Some(session_id) = pane.db_session_id.as_deref()
@@ -1172,6 +1195,19 @@ fn sort_handled_activity_last(activity_feed: &mut VecDeque<ActivityEntry>) {
         .sort_by_key(|entry| matches!(entry.kind, crate::protocol::ActivityKind::AgentHandled));
 }
 
+fn carry_forward_last_response(
+    current_session_id: Option<&str>,
+    current_response: Option<String>,
+    previous_session_id: Option<&str>,
+    previous_response: Option<&str>,
+) -> Option<String> {
+    current_response.or_else(|| {
+        (current_session_id.is_some() && current_session_id == previous_session_id)
+            .then(|| previous_response.map(str::to_string))
+            .flatten()
+    })
+}
+
 fn mark_feed_activity_handled(
     activity_feed: &mut VecDeque<ActivityEntry>,
     pane_path: &str,
@@ -1381,5 +1417,36 @@ mod tests {
                 .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
         );
         assert_eq!(mark_all_feed_activity_handled(&mut feed), 0);
+    }
+
+    #[test]
+    fn codex_response_survives_refresh_for_the_same_session_only() {
+        assert_eq!(
+            carry_forward_last_response(
+                Some("session-1"),
+                None,
+                Some("session-1"),
+                Some("finished response")
+            ),
+            Some("finished response".to_string())
+        );
+        assert_eq!(
+            carry_forward_last_response(
+                Some("session-2"),
+                None,
+                Some("session-1"),
+                Some("stale response")
+            ),
+            None
+        );
+        assert_eq!(
+            carry_forward_last_response(
+                Some("session-1"),
+                Some("new response".to_string()),
+                Some("session-1"),
+                Some("old response")
+            ),
+            Some("new response".to_string())
+        );
     }
 }

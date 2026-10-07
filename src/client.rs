@@ -1,7 +1,10 @@
 use crate::app::{PopupState, SelectionSection, WorktreeFilterEntry};
 use crate::banner::{DIM, GRAY, GREEN, ORANGE, RESET, WHITE};
 use crate::daemon;
-use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
+use crate::protocol::{
+    ActivityKind, ActivityTarget, ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION,
+    RefreshStep,
+};
 use crate::tmux;
 use crate::ui;
 use crate::worktrunk::WtWorktree;
@@ -337,6 +340,14 @@ impl ClientState {
             return;
         }
         self.popup = PopupState::ActivityFeed { selected: 0 };
+    }
+
+    fn mark_activity_handled_locally(&mut self, selected: usize) -> Option<String> {
+        mark_activity_handled_in_feed(&mut self.snapshot.activity_feed, selected)
+    }
+
+    fn mark_all_activity_handled_locally(&mut self) {
+        mark_all_activity_handled_in_feed(&mut self.snapshot.activity_feed);
     }
 
     fn open_keybindings_help(&mut self) {
@@ -1285,21 +1296,16 @@ async fn handle_key(
                 }
             }
             KeyCode::Char('d') => {
-                if let PopupState::ActivityFeed { selected } = &state.popup
-                    && let Some(entry) = state.snapshot.activity_feed.get(*selected)
-                    && let Some(crate::protocol::ActivityTarget::Pane { pane_path, .. }) =
-                        &entry.target
-                {
-                    send_msg(
-                        framed,
-                        ClientMsg::MarkActivityHandled {
-                            pane_path: pane_path.clone(),
-                        },
-                    )
-                    .await?;
+                let selected = match &state.popup {
+                    PopupState::ActivityFeed { selected } => *selected,
+                    _ => 0,
+                };
+                if let Some(pane_path) = state.mark_activity_handled_locally(selected) {
+                    send_msg(framed, ClientMsg::MarkActivityHandled { pane_path }).await?;
                 }
             }
             KeyCode::Char('c') => {
+                state.mark_all_activity_handled_locally();
                 send_msg(framed, ClientMsg::MarkAllActivityHandled).await?;
             }
             KeyCode::Enter => {
@@ -1563,6 +1569,42 @@ fn restore_worktree(worktrees: &mut Vec<WtWorktree>, original_idx: usize, worktr
     worktrees.insert(original_idx.min(worktrees.len()), worktree);
 }
 
+fn mark_activity_handled_in_feed(
+    activity_feed: &mut [crate::protocol::ActivityEntry],
+    selected: usize,
+) -> Option<String> {
+    let entry = activity_feed.get_mut(selected)?;
+    if matches!(entry.kind, ActivityKind::AgentHandled) {
+        return None;
+    }
+    let Some(ActivityTarget::Pane { pane_path, .. }) = &entry.target else {
+        return None;
+    };
+    let pane_path = pane_path.clone();
+
+    entry.kind = ActivityKind::AgentHandled;
+    entry.message = "handled".to_string();
+    entry.received_at_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    activity_feed.sort_by_key(|entry| matches!(entry.kind, ActivityKind::AgentHandled));
+
+    Some(pane_path)
+}
+
+fn mark_all_activity_handled_in_feed(activity_feed: &mut [crate::protocol::ActivityEntry]) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    for entry in activity_feed {
+        entry.kind = ActivityKind::AgentHandled;
+        entry.message = "handled".to_string();
+        entry.received_at_secs = now;
+    }
+}
+
 fn build_agent_action_msg(state: &ClientState) -> Option<ClientMsg> {
     let PopupState::AgentActions {
         selected,
@@ -1807,7 +1849,11 @@ fn show_connection_error(sock_path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{restore_worktree, take_worktree_by_branch};
+    use super::{
+        mark_activity_handled_in_feed, mark_all_activity_handled_in_feed, restore_worktree,
+        take_worktree_by_branch,
+    };
+    use crate::protocol::{ActivityEntry, ActivityKind, ActivityTarget};
     use crate::worktrunk::{WtCommit, WtWorktree};
 
     fn worktree(branch: &str) -> WtWorktree {
@@ -1863,6 +1909,49 @@ mod tests {
                 .filter_map(|worktree| worktree.branch.as_deref())
                 .collect::<Vec<_>>(),
             vec!["one", "two", "three"]
+        );
+    }
+
+    fn activity(path: &str, kind: ActivityKind, received_at_secs: u64) -> ActivityEntry {
+        ActivityEntry {
+            label: path.rsplit('/').next().unwrap_or(path).to_string(),
+            message: "status".to_string(),
+            kind,
+            received_at_secs,
+            target: Some(ActivityTarget::Pane {
+                pane_id: format!("pane-{received_at_secs}"),
+                pane_path: path.to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn optimistic_handling_is_immediate_and_moves_card_after_active_work() {
+        let mut feed = vec![
+            activity("/tmp/feature-a", ActivityKind::AgentIdle, 2),
+            activity("/tmp/feature-b", ActivityKind::AgentBusy, 1),
+        ];
+
+        assert_eq!(
+            mark_activity_handled_in_feed(&mut feed, 0),
+            Some("/tmp/feature-a".to_string())
+        );
+        assert_eq!(feed[0].label, "feature-b");
+        assert!(matches!(feed[1].kind, ActivityKind::AgentHandled));
+    }
+
+    #[test]
+    fn optimistic_handle_all_updates_every_card() {
+        let mut feed = vec![
+            activity("/tmp/feature-a", ActivityKind::AgentIdle, 2),
+            activity("/tmp/feature-b", ActivityKind::AgentBusy, 1),
+        ];
+
+        mark_all_activity_handled_in_feed(&mut feed);
+
+        assert!(
+            feed.iter()
+                .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
         );
     }
 }
