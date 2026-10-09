@@ -1,5 +1,7 @@
+use crate::protocol::ActivityEntry;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use std::collections::VecDeque;
 
 pub struct ReadStateDb {
     conn: Connection,
@@ -47,6 +49,11 @@ impl ReadStateDb {
                     last_viewed_at  TEXT    NOT NULL DEFAULT (datetime('now')),
                     last_note_count INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (mr_iid, project)
+                );
+                CREATE TABLE IF NOT EXISTS app_state (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );",
             )
             .context("Failed to run database migration")
@@ -131,11 +138,47 @@ impl ReadStateDb {
             Some(last) => current_note_count as i64 > last,
         })
     }
+
+    pub fn load_activity_feed(&self) -> Result<VecDeque<ActivityEntry>> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_state WHERE key = 'activity_feed'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("Failed to load persisted activity feed")?;
+
+        value
+            .map(|json| {
+                serde_json::from_str(&json).context("Failed to decode persisted activity feed")
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    pub fn save_activity_feed(&self, activity_feed: &VecDeque<ActivityEntry>) -> Result<()> {
+        let value = serde_json::to_string(activity_feed)
+            .context("Failed to encode activity feed for persistence")?;
+        self.conn
+            .execute(
+                "INSERT INTO app_state (key, value, updated_at)
+                 VALUES ('activity_feed', ?1, datetime('now'))
+                 ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = datetime('now')",
+                params![value],
+            )
+            .context("Failed to persist activity feed")?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{ActivityContext, ActivityKind, ActivityTarget};
 
     fn open_test_db() -> ReadStateDb {
         let conn = Connection::open_in_memory().expect("Failed to open in-memory DB");
@@ -203,5 +246,31 @@ mod tests {
         let db = open_test_db();
         let unseen = db.get_unseen_note_count("project", 1, &[]).unwrap();
         assert_eq!(unseen, 0);
+    }
+
+    #[test]
+    fn activity_feed_round_trips_with_handled_state_and_context() {
+        let db = open_test_db();
+        let activity_feed = VecDeque::from([ActivityEntry {
+            label: "feature".to_string(),
+            message: "handled".to_string(),
+            kind: ActivityKind::AgentHandled,
+            received_at_secs: 123,
+            target: Some(ActivityTarget::Pane {
+                pane_id: "%7".to_string(),
+                pane_path: "/tmp/feature".to_string(),
+            }),
+            context: Some(ActivityContext {
+                session_title: Some("Persist activity cards".to_string()),
+                last_response: Some("Persistence implemented".to_string()),
+                agent: Some("codex".to_string()),
+                model: Some("gpt-6".to_string()),
+                tmux_session: Some("project".to_string()),
+            }),
+        }]);
+
+        db.save_activity_feed(&activity_feed).unwrap();
+
+        assert_eq!(db.load_activity_feed().unwrap(), activity_feed);
     }
 }

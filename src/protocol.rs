@@ -39,7 +39,7 @@ pub struct CodexHookEvent {
 
 /// Navigation target carried by an activity entry.
 /// Used by the activity popup to jump to the relevant tmux pane.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivityTarget {
     /// Switch to a specific tmux pane (agent activities).
     Pane { pane_id: String, pane_path: String },
@@ -48,7 +48,7 @@ pub enum ActivityTarget {
 }
 
 /// The kind of activity, used to assign display color in the feed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivityKind {
     /// Agent started working (Busy)
     AgentBusy,
@@ -68,10 +68,41 @@ pub enum ActivityKind {
     MrApproved,
 }
 
+/// Agent metadata retained with an activity card so it remains useful when
+/// the originating tmux pane or the pertmux daemon is no longer running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityContext {
+    #[serde(default)]
+    pub session_title: Option<String>,
+    #[serde(default)]
+    pub last_response: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub tmux_session: Option<String>,
+}
+
+impl From<&AgentPane> for ActivityContext {
+    fn from(pane: &AgentPane) -> Self {
+        let session_title = pane.db_session_title.clone().or_else(|| {
+            (!pane.pane_title.trim().is_empty()).then(|| pane.display_title().to_string())
+        });
+        Self {
+            session_title,
+            last_response: pane.last_response.clone(),
+            agent: pane.agent.clone(),
+            model: pane.model.clone(),
+            tmux_session: Some(pane.session_name.clone()),
+        }
+    }
+}
+
 /// A single entry in the activity feed, persisted in the daemon.
 /// Uses Unix seconds (`received_at_secs`) so it can be serialized
 /// across the IPC boundary and survive client reconnects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivityEntry {
     /// Short display label (last path component of pane_path, or project name)
     pub label: String,
@@ -83,6 +114,16 @@ pub struct ActivityEntry {
     /// Navigation target — used by the activity feed popup to jump to the relevant item.
     #[serde(default)]
     pub target: Option<ActivityTarget>,
+    /// Snapshot of the useful agent metadata at the time of the update.
+    #[serde(default)]
+    pub context: Option<ActivityContext>,
+}
+
+impl ActivityEntry {
+    pub fn with_pane_context(mut self, pane: &AgentPane) -> Self {
+        self.context = Some(ActivityContext::from(pane));
+        self
+    }
 }
 
 impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
@@ -109,6 +150,7 @@ impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
                 pane_id: change.pane_id.clone(),
                 pane_path: change.pane_path.clone(),
             }),
+            context: None,
         }
     }
 }
@@ -168,9 +210,8 @@ pub struct DashboardSnapshot {
     pub pending_agent_changes: Vec<AgentChange>,
     #[serde(default)]
     pub global_mrs: Vec<GlobalMrEntry>,
-    /// Full activity feed history, managed entirely by the daemon.
-    /// Persists between client connects — a fresh `pertmux connect` will
-    /// see all events that happened since the daemon started.
+    /// Full activity feed history, managed and persisted by the daemon.
+    /// A fresh daemon or client restores the latest card for each worktree.
     #[serde(default)]
     pub activity_feed: Vec<ActivityEntry>,
 }

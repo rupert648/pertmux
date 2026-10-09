@@ -54,7 +54,7 @@ pertmux cleanup
 ```
 
 - Removes the stale socket file if the daemon is not running.
-- Removes `read_state.db` (comment tracking) and `last_project` persistence files.
+- Removes `read_state.db` (comment tracking and agent activity cards) and `last_project` persistence files.
 - Skips the live socket if the daemon is still running.
 
 ### `pertmux install`

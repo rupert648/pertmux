@@ -37,7 +37,7 @@ Action keys can be remapped via the `[keybindings]` section in your config file.
 | `j` / `k` or `↑` / `↓` | Move between activity cards |
 | `d` | Mark the selected activity as handled |
 | `c` | Mark every activity as handled |
-| `Enter` | Focus the selected agent pane in tmux |
+| `Enter` | Focus the selected agent pane, or recreate it and resume Codex if it is gone |
 | `Esc` | Close the popup |
 
 ## Global

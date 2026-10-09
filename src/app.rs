@@ -12,8 +12,8 @@ use crate::git::{WorktreeInfo, discover_worktrees};
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{
-    ActivityEntry, CodexHookEvent, DaemonMsg, DashboardSnapshot, GlobalMrEntry, ProjectSnapshot,
-    RefreshStep,
+    ActivityContext, ActivityEntry, CodexHookEvent, DaemonMsg, DashboardSnapshot, GlobalMrEntry,
+    ProjectSnapshot, RefreshStep,
 };
 use crate::read_state::ReadStateDb;
 use crate::tmux;
@@ -169,10 +169,14 @@ impl App {
         let default_agent_command = config.default_agent_command.clone();
         let keybindings = config.keybindings.clone();
 
-        let read_state = if !resolved_projects.is_empty() {
-            ReadStateDb::open(None).ok()
-        } else {
-            None
+        let read_state = ReadStateDb::open(None).ok();
+        let activity_feed = match read_state.as_ref().map(ReadStateDb::load_activity_feed) {
+            Some(Ok(activity_feed)) => activity_feed,
+            Some(Err(error)) => {
+                warn!("failed to load persisted activity feed: {error}");
+                VecDeque::new()
+            }
+            None => VecDeque::new(),
         };
 
         let projects: Vec<ProjectState> = resolved_projects
@@ -251,7 +255,7 @@ impl App {
             persisted_codex_sessions: HashMap::new(),
             agent_actions: config.agent_action,
             global_mrs: Vec::new(),
-            activity_feed: VecDeque::new(),
+            activity_feed,
         }
     }
 
@@ -322,6 +326,7 @@ impl App {
             .iter()
             .map(|p| (p.pane_id.clone(), p.status_changed_at))
             .collect();
+        let mut activity_changed = false;
 
         for pane in &mut panes {
             let prev_status = self.previous_pane_statuses.get(&pane.pane_id);
@@ -343,8 +348,9 @@ impl App {
                         };
                         record_activity(
                             &mut self.activity_feed,
-                            ActivityEntry::from(&agent_change),
+                            ActivityEntry::from(&agent_change).with_pane_context(pane),
                         );
+                        activity_changed = true;
                         self.pending_agent_changes.push(agent_change);
                     }
                 }
@@ -356,6 +362,10 @@ impl App {
 
         self.build_groups(&panes);
         self.panes = panes;
+        activity_changed |= sync_activity_context(&mut self.activity_feed, &self.panes);
+        if activity_changed {
+            self.persist_activity_feed();
+        }
 
         if self.selected >= self.panes.len() && !self.panes.is_empty() {
             self.selected = self.panes.len() - 1;
@@ -396,6 +406,7 @@ impl App {
 
         let Some(next_status) = next_status else {
             self.update_detail();
+            self.sync_and_persist_activity();
             return;
         };
 
@@ -414,6 +425,7 @@ impl App {
             self.previous_pane_statuses
                 .insert(pane.pane_id.clone(), next_status);
             self.update_detail();
+            self.sync_and_persist_activity();
             return;
         }
 
@@ -427,13 +439,17 @@ impl App {
                 session_name: pane.session_name.clone(),
                 change_type,
             };
-            record_activity(&mut self.activity_feed, ActivityEntry::from(&agent_change));
+            record_activity(
+                &mut self.activity_feed,
+                ActivityEntry::from(&agent_change).with_pane_context(pane),
+            );
             self.pending_agent_changes.push(agent_change);
         }
 
         self.previous_pane_statuses
             .insert(pane.pane_id.clone(), next_status);
         self.update_detail();
+        self.persist_activity_feed();
     }
 
     fn find_codex_pane_for_hook(&self, event: &CodexHookEvent) -> Option<usize> {
@@ -1043,11 +1059,33 @@ impl App {
     }
 
     pub fn mark_activity_handled(&mut self, pane_path: &str) -> bool {
-        mark_feed_activity_handled(&mut self.activity_feed, pane_path)
+        let handled = mark_feed_activity_handled(&mut self.activity_feed, pane_path);
+        if handled {
+            self.persist_activity_feed();
+        }
+        handled
     }
 
     pub fn mark_all_activity_handled(&mut self) -> usize {
-        mark_all_feed_activity_handled(&mut self.activity_feed)
+        let handled = mark_all_feed_activity_handled(&mut self.activity_feed);
+        if handled > 0 {
+            self.persist_activity_feed();
+        }
+        handled
+    }
+
+    fn sync_and_persist_activity(&mut self) {
+        if sync_activity_context(&mut self.activity_feed, &self.panes) {
+            self.persist_activity_feed();
+        }
+    }
+
+    fn persist_activity_feed(&self) {
+        if let Some(read_state) = self.read_state.as_ref()
+            && let Err(error) = read_state.save_activity_feed(&self.activity_feed)
+        {
+            warn!("failed to persist activity feed: {error}");
+        }
     }
 
     fn update_detail(&mut self) {
@@ -1189,6 +1227,37 @@ fn record_activity(activity_feed: &mut VecDeque<ActivityEntry>, entry: ActivityE
     sort_handled_activity_last(activity_feed);
 }
 
+fn sync_activity_context(activity_feed: &mut VecDeque<ActivityEntry>, panes: &[AgentPane]) -> bool {
+    let mut changed = false;
+
+    for entry in activity_feed {
+        let Some(crate::protocol::ActivityTarget::Pane { pane_id, pane_path }) =
+            entry.target.as_mut()
+        else {
+            continue;
+        };
+        let Some(pane) = panes
+            .iter()
+            .find(|pane| pane.pane_path.trim_end_matches('/') == pane_path.trim_end_matches('/'))
+        else {
+            continue;
+        };
+
+        if pane_id != &pane.pane_id {
+            pane_id.clone_from(&pane.pane_id);
+            changed = true;
+        }
+
+        let context = ActivityContext::from(pane);
+        if entry.context.as_ref() != Some(&context) {
+            entry.context = Some(context);
+            changed = true;
+        }
+    }
+
+    changed
+}
+
 fn sort_handled_activity_last(activity_feed: &mut VecDeque<ActivityEntry>) {
     activity_feed
         .make_contiguous()
@@ -1313,6 +1382,7 @@ mod tests {
                 pane_id: format!("pane-{received_at_secs}"),
                 pane_path: path.to_string(),
             }),
+            context: None,
         }
     }
 
@@ -1326,6 +1396,28 @@ mod tests {
                 project_name: "pertmux".to_string(),
                 iid: 42,
             }),
+            context: None,
+        }
+    }
+
+    fn agent_pane(path: &str) -> AgentPane {
+        AgentPane {
+            pane_id: "%42".to_string(),
+            session_name: "project".to_string(),
+            window_index: 1,
+            pane_index: 0,
+            pane_title: "codex".to_string(),
+            pane_path: path.to_string(),
+            pane_pid: 123,
+            pane_command: "codex".to_string(),
+            status: PaneStatus::Idle,
+            db_session_title: Some("Persist activity across restarts".to_string()),
+            agent: Some("codex".to_string()),
+            model: Some("gpt-6".to_string()),
+            last_activity: None,
+            status_changed_at: None,
+            db_session_id: Some("session-42".to_string()),
+            last_response: Some("Persistence is implemented".to_string()),
         }
     }
 
@@ -1417,6 +1509,33 @@ mod tests {
                 .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
         );
         assert_eq!(mark_all_feed_activity_handled(&mut feed), 0);
+    }
+
+    #[test]
+    fn persisted_activity_reconciles_with_a_recreated_pane() {
+        let path = "/tmp/project/feature";
+        let mut entry = pane_activity(path, "finished", 1);
+        entry.kind = ActivityKind::AgentHandled;
+        let mut feed = VecDeque::from([entry]);
+
+        assert!(sync_activity_context(&mut feed, &[agent_pane(path)]));
+        assert!(matches!(feed[0].kind, ActivityKind::AgentHandled));
+        assert!(matches!(
+            feed[0].target,
+            Some(ActivityTarget::Pane { ref pane_id, .. }) if pane_id == "%42"
+        ));
+        let context = feed[0].context.as_ref().unwrap();
+        assert_eq!(
+            context.session_title.as_deref(),
+            Some("Persist activity across restarts")
+        );
+        assert_eq!(
+            context.last_response.as_deref(),
+            Some("Persistence is implemented")
+        );
+        assert_eq!(context.tmux_session.as_deref(), Some("project"));
+
+        assert!(!sync_activity_context(&mut feed, &[agent_pane(path)]));
     }
 
     #[test]

@@ -73,3 +73,12 @@ If `default_agent_command` starts interactive Codex (for example, `codex`), pert
 Codex session ID in the worktree's Git metadata. When no tmux pane exists and you open that
 worktree again, pertmux starts `codex resume <session-id>` instead of a new conversation. This
 survives tmux shutdowns and computer restarts without adding files to the worktree itself.
+
+The Agent Activity popup is also persisted across pertmux and computer restarts. Press `Enter`
+on a card whose pane no longer exists to recreate the pane for that worktree; persisted Codex
+metadata then resumes its previous conversation.
+
+tmux processes and live terminal state cannot survive the tmux server itself stopping. pertmux
+restores a selected worktree and Codex conversation on demand, but it does not restore an entire
+tmux layout. Use a tmux session persistence tool such as tmux-resurrect if you need full layout
+restoration.

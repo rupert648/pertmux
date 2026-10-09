@@ -1,5 +1,5 @@
 use crate::client::ClientState;
-use crate::protocol::{ActivityEntry, ActivityKind, ActivityTarget};
+use crate::protocol::{ActivityContext, ActivityEntry, ActivityKind, ActivityTarget};
 use crate::types::AgentPane;
 use crate::ui::ACCENT;
 use ratatui::{
@@ -134,14 +134,29 @@ pub(crate) fn activity_card_lines(
         .map(AgentPane::display_title)
         .filter(|title| !title.trim().is_empty())
         .map(single_line)
+        .or_else(|| {
+            entry
+                .context
+                .as_ref()
+                .and_then(|context| context.session_title.as_deref())
+                .filter(|title| !title.trim().is_empty())
+                .map(single_line)
+        })
         .unwrap_or_else(|| "No Codex session title yet".to_string());
     let response = pane
         .and_then(|pane| pane.last_response.as_deref())
+        .or_else(|| {
+            entry
+                .context
+                .as_ref()
+                .and_then(|context| context.last_response.as_deref())
+        })
         .filter(|response| !response.trim().is_empty())
         .map(|response| format!("↳ {}", single_line(response)))
         .unwrap_or_else(|| "↳ No response preview".to_string());
     let metadata = pane
         .map(activity_metadata)
+        .or_else(|| entry.context.as_ref().map(activity_context_metadata))
         .unwrap_or_else(|| "Agent pane is no longer active".to_string());
 
     vec![
@@ -215,6 +230,24 @@ fn activity_metadata(pane: &AgentPane) -> String {
     }
     parts.push(format!("tmux:{}", pane.session_name));
     parts.join(" · ")
+}
+
+fn activity_context_metadata(context: &ActivityContext) -> String {
+    let mut parts = Vec::new();
+    if let Some(agent) = context.agent.as_deref() {
+        parts.push(agent.to_string());
+    }
+    if let Some(model) = context.model.as_deref() {
+        parts.push(model.to_string());
+    }
+    if let Some(session) = context.tmux_session.as_deref() {
+        parts.push(format!("tmux:{session}"));
+    }
+    if parts.is_empty() {
+        "Saved activity".to_string()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 fn single_line(value: &str) -> String {
@@ -296,9 +329,10 @@ mod tests {
                 pane_id: pane.pane_id.clone(),
                 pane_path: pane.pane_path.clone(),
             }),
+            context: Some(ActivityContext::from(&pane)),
         };
 
-        let lines = activity_card_lines(&entry, Some(&pane), 72, true);
+        let lines = activity_card_lines(&entry, None, 72, true);
         let rendered = lines
             .iter()
             .flat_map(|line| line.spans.iter())

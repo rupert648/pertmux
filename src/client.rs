@@ -1717,9 +1717,43 @@ async fn navigate_to_activity(
 ) -> Result<()> {
     use crate::protocol::ActivityTarget;
     match &entry.target {
-        Some(ActivityTarget::Pane { pane_id, .. }) => {
-            if let Err(e) = tmux::switch_to_pane(pane_id) {
-                state.notify(format!("Pane no longer active: {}", e));
+        Some(ActivityTarget::Pane { pane_id, pane_path }) => {
+            if let Some(live_pane) = state.snapshot.panes.iter().find(|pane| {
+                pane.pane_id == *pane_id
+                    || pane.pane_path.trim_end_matches('/') == pane_path.trim_end_matches('/')
+            }) {
+                if let Err(error) = tmux::switch_to_pane(&live_pane.pane_id) {
+                    state.notify(format!("Could not focus pane: {error}"));
+                }
+                return Ok(());
+            }
+
+            let project_name = state
+                .snapshot
+                .projects
+                .iter()
+                .find(|project| {
+                    project.cached_worktrees.iter().any(|worktree| {
+                        worktree.path.as_deref().is_some_and(|path| {
+                            path.trim_end_matches('/') == pane_path.trim_end_matches('/')
+                        })
+                    })
+                })
+                .map(|project| project.name.as_str())
+                .or_else(|| {
+                    entry
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.tmux_session.as_deref())
+                })
+                .unwrap_or(&entry.label);
+
+            if let Err(error) = tmux::find_or_create_pane(
+                pane_path,
+                project_name,
+                state.snapshot.default_agent_command.as_deref(),
+            ) {
+                state.notify(format!("Could not restore pane: {error}"));
             }
         }
         Some(ActivityTarget::MergeRequest { project_name, iid }) => {
@@ -1922,6 +1956,7 @@ mod tests {
                 pane_id: format!("pane-{received_at_secs}"),
                 pane_path: path.to_string(),
             }),
+            context: None,
         }
     }
 
