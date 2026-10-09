@@ -81,5 +81,8 @@ Codex hooks are an event-driven fast path layered on top of the tmux/agent polli
 |------|---------|
 | `/tmp/pertmux-{USER}.sock` | Daemon Unix socket |
 | `/tmp/pertmux-daemon.log` | Daemon log file |
-| `~/.local/share/pertmux/read_state.db` | Comment read/unread tracking and persistent agent activity cards |
-| `~/.local/share/pertmux/last_project` | Last selected project persistence |
+| `<data directory>/pertmux/read_state.db` | Comment read/unread tracking and persistent agent activity cards |
+| `<data directory>/pertmux/last_project` | Last selected project persistence |
+
+The data directory is `~/Library/Application Support` on macOS. On Linux it is
+`$XDG_DATA_HOME`, which defaults to `~/.local/share`.

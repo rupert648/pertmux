@@ -13,7 +13,7 @@ Personal access tokens (configured in `~/.config/pertmux.toml` or via environmen
 
 All data stays on your machine:
 
-- **MR/PR data** is fetched from your forge's API and held in memory by the daemon. The read-state database (`~/.local/share/pertmux/read_state.db`) stores comment read state and agent activity cards, including their displayed title, response preview, model, agent, worktree path, and tmux session.
+- **MR/PR data** is fetched from your forge's API and held in memory by the daemon. The read-state database (`pertmux/read_state.db` inside the platform data directory) stores comment read state and agent activity cards, including their displayed title, response preview, model, agent, worktree path, and tmux session.
 - **Agent data** is read from local sources only — opencode's SQLite database and HTTP server, Claude Code's JSONL transcripts, and Codex CLI's SQLite databases. No data is sent externally.
 - **Worktree data** comes from local `git` and `wt` CLI commands.
 

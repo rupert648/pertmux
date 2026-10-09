@@ -9,7 +9,7 @@ pub struct ReadStateDb {
 
 impl ReadStateDb {
     /// Open (or create) the read state database.
-    /// If `path` is None, uses `~/.local/share/pertmux/read_state.db`.
+    /// If `path` is None, uses `pertmux/read_state.db` inside the platform data directory.
     pub fn open(path: Option<&str>) -> Result<Self> {
         let db_path = match path {
             Some(p) => std::path::PathBuf::from(p),
