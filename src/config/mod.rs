@@ -8,7 +8,13 @@ pub use keybindings::KeybindingsConfig;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigFile {
+    pub path: PathBuf,
+    pub contents: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentActionConfig {
@@ -110,6 +116,17 @@ impl Config {
 
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut errors: Vec<String> = Vec::new();
+
+        for (name, seconds) in [
+            ("refresh_interval", self.refresh_interval),
+            ("mr_detail_interval", self.mr_detail_interval),
+            ("worktree_interval", self.worktree_interval),
+            ("mr_list_interval", self.mr_list_interval),
+        ] {
+            if seconds == 0 {
+                errors.push(format!("config: {name} must be greater than zero."));
+            }
+        }
 
         if self.project.is_some()
             && let Some(ref gl) = self.gitlab
@@ -228,33 +245,52 @@ impl Config {
     }
 }
 
-pub fn load(explicit_path: Option<&str>) -> anyhow::Result<Config> {
+pub fn read_source(explicit_path: Option<&Path>) -> anyhow::Result<Option<ConfigFile>> {
     let path = match explicit_path {
         Some(p) => {
-            let p = PathBuf::from(p);
+            let p = p.to_path_buf();
             if !p.exists() {
                 anyhow::bail!("config file not found: {}", p.display());
             }
-            p
+            Some(p)
         }
         None => {
             let xdg_path = dirs::home_dir().map(|h| h.join(".config").join("pertmux.toml"));
             let native_path = dirs::config_dir().map(|d| d.join("pertmux.toml"));
 
-            let found = xdg_path
+            xdg_path
                 .filter(|p| p.exists())
-                .or_else(|| native_path.filter(|p| p.exists()));
-
-            match found {
-                Some(p) => p,
-                None => return Ok(Config::default()),
-            }
+                .or_else(|| native_path.filter(|p| p.exists()))
         }
     };
 
-    let content = std::fs::read_to_string(&path)?;
-    let config: Config = toml::from_str(&content)?;
-    Ok(config)
+    path.map(|path| {
+        let contents = std::fs::read_to_string(&path)?;
+        Ok(ConfigFile { path, contents })
+    })
+    .transpose()
+}
+
+pub fn parse_source(source: Option<&ConfigFile>) -> anyhow::Result<Config> {
+    match source {
+        Some(source) => toml::from_str(&source.contents)
+            .map_err(anyhow::Error::from)
+            .map_err(|error| {
+                error.context(format!(
+                    "failed to parse config file {}",
+                    source.path.display()
+                ))
+            }),
+        None => Ok(Config::default()),
+    }
+}
+
+pub fn load_with_source(
+    explicit_path: Option<&str>,
+) -> anyhow::Result<(Config, Option<ConfigFile>)> {
+    let source = read_source(explicit_path.map(Path::new))?;
+    let config = parse_source(source.as_ref())?;
+    Ok((config, source))
 }
 
 #[cfg(test)]
@@ -268,6 +304,22 @@ mod tests {
     #[test]
     fn test_worktree_interval_default() {
         assert_eq!(Config::default().worktree_interval, 300);
+    }
+
+    #[test]
+    fn test_zero_refresh_interval_is_rejected() {
+        let config = Config {
+            refresh_interval: 0,
+            ..Config::default()
+        };
+
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("refresh_interval must be greater than zero")
+        );
     }
 
     #[test]

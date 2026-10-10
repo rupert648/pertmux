@@ -17,7 +17,8 @@ pertmux serve --foreground       # stay in terminal (for debugging)
 
 The daemon forks to the background by default, logging to `/tmp/pertmux-daemon.log`. It validates your config and checks for an existing daemon before forking — errors show immediately in your terminal. Use `--foreground` to keep the daemon in your terminal for debugging.
 
-The daemon runs until stopped with `pertmux stop`.
+The daemon runs until stopped with `pertmux stop`. It watches the active config file and applies
+valid changes automatically without a restart.
 
 ### `pertmux connect`
 

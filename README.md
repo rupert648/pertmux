@@ -14,6 +14,7 @@ pertmux ([ru]-pert multiplexer) is a unified SWE dashboard that links GitLab/Git
 - **Codex hook integration** — optional Codex hooks notify the daemon immediately when Codex starts, receives a prompt, or finishes a turn
 - **MR Overview** — press `m` to see all your open MRs across all configured forges, with quick navigation to configured projects or browser-open for unconfigured ones
 - **Agent activity** — persistent Codex status cards with session titles, response previews, model details, and acknowledgement controls; press `A`, then `d` to handle one update or `c` to handle all
+- **Live configuration** — automatically validate and apply config file changes without restarting the daemon
 - **Daemon/client architecture** — background daemon keeps data fresh, TUI client connects instantly via Unix socket
 
 ## Architecture

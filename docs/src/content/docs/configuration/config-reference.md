@@ -9,6 +9,11 @@ pertmux uses a TOML configuration file. It looks for `~/.config/pertmux.toml` by
 pertmux -c ./path/to/config.toml serve
 ```
 
+The daemon checks the active config file for changes once per second. Valid edits are applied
+automatically, including projects, agents, refresh intervals, actions, and keybindings. If an edit
+does not parse or validate, pertmux keeps the last working configuration and reports the error;
+saving a corrected file triggers another reload attempt.
+
 ## Global options
 
 | Key | Type | Default | Description |

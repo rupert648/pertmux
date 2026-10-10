@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::config::Config;
+use crate::config::{self, Config, ConfigFile};
 use crate::mr_changes::MrChange;
 use crate::protocol::{ClientMsg, DaemonMsg, DashboardSnapshot, PROTOCOL_VERSION, RefreshStep};
 use anyhow::Result;
@@ -13,6 +13,57 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{error, info, warn};
+
+const CONFIG_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(PartialEq, Eq)]
+enum ConfigObservation {
+    Source(Option<ConfigFile>),
+    Error(String),
+}
+
+enum ConfigPoll {
+    Unchanged,
+    Reload(Box<Config>),
+    Rejected(String),
+}
+
+struct ConfigWatcher {
+    explicit_path: Option<PathBuf>,
+    last_observation: ConfigObservation,
+}
+
+impl ConfigWatcher {
+    fn new(explicit_path: Option<PathBuf>, initial_source: Option<ConfigFile>) -> Self {
+        Self {
+            explicit_path,
+            last_observation: ConfigObservation::Source(initial_source),
+        }
+    }
+
+    fn poll(&mut self) -> ConfigPoll {
+        let source = config::read_source(self.explicit_path.as_deref());
+        let observation = match &source {
+            Ok(source) => ConfigObservation::Source(source.clone()),
+            Err(error) => ConfigObservation::Error(error.to_string()),
+        };
+
+        if observation == self.last_observation {
+            return ConfigPoll::Unchanged;
+        }
+        self.last_observation = observation;
+
+        match source {
+            Ok(source) => match config::parse_source(source.as_ref())
+                .and_then(|config| config.validate().map(|()| config))
+            {
+                Ok(config) => ConfigPoll::Reload(Box::new(config)),
+                Err(error) => ConfigPoll::Rejected(error.to_string()),
+            },
+            Err(error) => ConfigPoll::Rejected(error.to_string()),
+        }
+    }
+}
 
 pub fn socket_path() -> PathBuf {
     let name = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
@@ -67,7 +118,11 @@ impl Drop for DaemonShutdown {
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(
+    config: Config,
+    explicit_config_path: Option<PathBuf>,
+    config_source: Option<ConfigFile>,
+) -> Result<()> {
     // Initialize structured logging to stderr (redirected to the log file in daemon mode).
     // RUST_LOG overrides the default info level, e.g. RUST_LOG=debug pertmux serve --foreground
     let _ = tracing_subscriber::fmt()
@@ -120,6 +175,7 @@ pub async fn run(config: Config) -> Result<()> {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<ClientMsg>(64);
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
+    let mut config_watcher = ConfigWatcher::new(explicit_config_path, config_source);
     let mut app = App::new(config);
     let latest_snapshot = Arc::new(Mutex::new(app.snapshot()));
     let initialized = Arc::new(AtomicBool::new(false));
@@ -212,18 +268,11 @@ pub async fn run(config: Config) -> Result<()> {
     latest_progress.lock().await.clear();
     let _ = broadcast_tx.send(DaemonMsg::Snapshot(Box::new(app.snapshot())));
 
-    let mut refresh_interval = tokio::time::interval(app.refresh_interval);
-    let mut detail_interval = tokio::time::interval(app.mr_detail_interval);
-    let mut worktree_interval = tokio::time::interval(app.worktree_interval);
-    let mut mr_list_interval = tokio::time::interval(app.mr_list_interval);
-    refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    detail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    worktree_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    mr_list_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    refresh_interval.reset();
-    detail_interval.reset();
-    worktree_interval.reset();
-    mr_list_interval.reset();
+    let mut config_interval = delayed_interval(CONFIG_POLL_INTERVAL);
+    let mut refresh_interval = delayed_interval(app.refresh_interval);
+    let mut detail_interval = delayed_interval(app.mr_detail_interval);
+    let mut worktree_interval = delayed_interval(app.worktree_interval);
+    let mut mr_list_interval = delayed_interval(app.mr_list_interval);
 
     let mut shutdown = false;
 
@@ -252,6 +301,51 @@ pub async fn run(config: Config) -> Result<()> {
                 if !completed {
                     shutdown = true;
                 }
+            }
+            _ = config_interval.tick() => {
+                match config_watcher.poll() {
+                    ConfigPoll::Unchanged => {}
+                    ConfigPoll::Rejected(message) => {
+                        warn!("config reload rejected: {message}");
+                        let summary = message.lines().next().unwrap_or("invalid configuration");
+                        let _ = broadcast_tx.send(DaemonMsg::ActionResult {
+                            ok: false,
+                            message: format!("Config reload failed: {summary}"),
+                        });
+                    }
+                    ConfigPoll::Reload(config) => {
+                        info!("config changed; reloading");
+                        let _ = broadcast_tx.send(DaemonMsg::ActionResult {
+                            ok: true,
+                            message: "Config changed; reloading…".to_string(),
+                        });
+
+                        let mut reloaded_app = App::new(*config);
+                        let completed = run_until_shutdown(
+                            &mut shutdown_rx,
+                            refresh_reloaded_app(&mut reloaded_app, &broadcast_tx),
+                        )
+                        .await
+                        .is_some();
+
+                        if completed {
+                            app = reloaded_app;
+                            refresh_interval = delayed_interval(app.refresh_interval);
+                            detail_interval = delayed_interval(app.mr_detail_interval);
+                            worktree_interval = delayed_interval(app.worktree_interval);
+                            mr_list_interval = delayed_interval(app.mr_list_interval);
+                            broadcast_snapshot(&broadcast_tx, &latest_snapshot, &mut app).await;
+                            let _ = broadcast_tx.send(DaemonMsg::ActionResult {
+                                ok: true,
+                                message: "Configuration reloaded".to_string(),
+                            });
+                            info!("config reload complete");
+                        } else {
+                            shutdown = true;
+                        }
+                    }
+                }
+                config_interval.reset();
             }
             _ = refresh_interval.tick() => {
                 let completed = run_until_shutdown(&mut shutdown_rx, async {
@@ -323,6 +417,25 @@ pub async fn run(config: Config) -> Result<()> {
     drop(_guard);
     info!("stopped");
     Ok(())
+}
+
+fn delayed_interval(period: std::time::Duration) -> tokio::time::Interval {
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval.reset();
+    interval
+}
+
+async fn refresh_reloaded_app(app: &mut App, broadcast_tx: &broadcast::Sender<DaemonMsg>) {
+    if app.has_projects() {
+        app.refresh_mrs(Some(broadcast_tx)).await;
+        app.refresh_global_mrs(Some(broadcast_tx)).await;
+    }
+    app.refresh().await;
+    app.refresh_worktrees(Some(broadcast_tx)).await;
+    app.pending_changes.clear();
+    let _ = app.take_pending_agent_changes();
+    let _ = broadcast_tx.send(DaemonMsg::Progress(vec![]));
 }
 
 async fn publish_startup_progress(
@@ -763,6 +876,49 @@ async fn broadcast_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temporary_config_path() -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pertmux-config-watch-{}-{nonce}.toml",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn config_watcher_reloads_valid_edits_and_deduplicates_failures() {
+        let path = temporary_config_path();
+        std::fs::write(&path, "refresh_interval = 2\n").unwrap();
+        let initial_source = config::read_source(Some(&path)).unwrap();
+        let mut watcher = ConfigWatcher::new(Some(path.clone()), initial_source);
+
+        assert!(matches!(watcher.poll(), ConfigPoll::Unchanged));
+
+        std::fs::write(&path, "refresh_interval = 7\n").unwrap();
+        match watcher.poll() {
+            ConfigPoll::Reload(config) => assert_eq!(config.refresh_interval, 7),
+            _ => panic!("valid edit should reload"),
+        }
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(watcher.poll(), ConfigPoll::Rejected(_)));
+        assert!(matches!(watcher.poll(), ConfigPoll::Unchanged));
+
+        std::fs::write(&path, "refresh_interval =\n").unwrap();
+        assert!(matches!(watcher.poll(), ConfigPoll::Rejected(_)));
+        assert!(matches!(watcher.poll(), ConfigPoll::Unchanged));
+
+        std::fs::write(&path, "refresh_interval = 9\n").unwrap();
+        match watcher.poll() {
+            ConfigPoll::Reload(config) => assert_eq!(config.refresh_interval, 9),
+            _ => panic!("fixed config should reload"),
+        }
+
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[tokio::test]
     async fn client_receives_progress_before_initial_snapshot() {

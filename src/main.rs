@@ -84,9 +84,14 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Serve { foreground } => {
-            let config = config::load(cli.config.as_deref())?;
+            let (config, config_source) = config::load_with_source(cli.config.as_deref())?;
             if foreground {
-                daemon::run(config).await
+                daemon::run(
+                    config,
+                    cli.config.map(std::path::PathBuf::from),
+                    config_source,
+                )
+                .await
             } else {
                 config.validate()?;
                 daemonize(cli.config.as_deref())

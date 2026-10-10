@@ -75,6 +75,10 @@ All refresh intervals are configurable in the TOML config file.
 
 Codex hooks are an event-driven fast path layered on top of the tmux/agent polling interval. `UserPromptSubmit` marks the matching Codex pane Busy, `Stop` marks it Idle, and hook-derived status is prioritized over the SQLite polling heuristic for that Codex session. The regular polling path continues to refresh metadata from Codex's local SQLite databases.
 
+The daemon also compares the active config file contents once per second. It parses and validates
+changed contents before rebuilding application state and resetting the tiered timers. Failed edits
+leave the previous application state and timers running.
+
 ## Paths
 
 | Path | Purpose |
