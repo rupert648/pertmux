@@ -732,6 +732,11 @@ async fn handle_command(
             app.mark_activity_handled(&pane_path);
             broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
         }
+        ClientMsg::DeleteHandledActivity { pane_path } => {
+            info!("cmd: DeleteHandledActivity path={}", pane_path);
+            app.delete_handled_activity(&pane_path);
+            broadcast_snapshot(broadcast_tx, latest_snapshot, app).await;
+        }
         ClientMsg::MarkAllActivityHandled => {
             info!("cmd: MarkAllActivityHandled");
             app.mark_all_activity_handled();

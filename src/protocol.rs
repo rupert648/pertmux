@@ -156,7 +156,7 @@ impl From<&crate::agent_changes::AgentChange> for ActivityEntry {
 }
 
 #[allow(dead_code)]
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +262,9 @@ pub enum ClientMsg {
         prompt: String,
     },
     MarkActivityHandled {
+        pane_path: String,
+    },
+    DeleteHandledActivity {
         pane_path: String,
     },
     MarkAllActivityHandled,

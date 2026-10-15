@@ -723,8 +723,18 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
     ));
     frame.render_widget(Paragraph::new(divider), chunks[1]);
 
+    let selected_action = if entries
+        .get(selected)
+        .is_some_and(|entry| matches!(entry.kind, crate::protocol::ActivityKind::AgentHandled))
+    {
+        "delete"
+    } else {
+        "handle"
+    };
     let help = Line::from(Span::styled(
-        "j/k move \u{00b7} d handle \u{00b7} c handle all \u{00b7} Enter open \u{00b7} Esc close",
+        format!(
+            "j/k move \u{00b7} d {selected_action} \u{00b7} c handle all \u{00b7} Enter open \u{00b7} Esc close"
+        ),
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(help), chunks[2]);

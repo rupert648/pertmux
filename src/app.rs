@@ -1066,6 +1066,14 @@ impl App {
         handled
     }
 
+    pub fn delete_handled_activity(&mut self, pane_path: &str) -> bool {
+        let deleted = delete_handled_feed_activity(&mut self.activity_feed, pane_path);
+        if deleted {
+            self.persist_activity_feed();
+        }
+        deleted
+    }
+
     pub fn mark_all_activity_handled(&mut self) -> usize {
         let handled = mark_all_feed_activity_handled(&mut self.activity_feed);
         if handled > 0 {
@@ -1300,6 +1308,26 @@ fn mark_feed_activity_handled(
     true
 }
 
+fn delete_handled_feed_activity(
+    activity_feed: &mut VecDeque<ActivityEntry>,
+    pane_path: &str,
+) -> bool {
+    let Some(index) = activity_feed.iter().position(|entry| {
+        matches!(entry.kind, crate::protocol::ActivityKind::AgentHandled)
+            && matches!(
+                &entry.target,
+                Some(crate::protocol::ActivityTarget::Pane {
+                    pane_path: entry_path,
+                    ..
+                }) if worktree_paths_match(entry_path, pane_path)
+            )
+    }) else {
+        return false;
+    };
+
+    activity_feed.remove(index).is_some()
+}
+
 fn mark_all_feed_activity_handled(activity_feed: &mut VecDeque<ActivityEntry>) -> usize {
     let now = jiff::Timestamp::now().as_second() as u64;
     let mut handled = 0;
@@ -1509,6 +1537,19 @@ mod tests {
                 .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
         );
         assert_eq!(mark_all_feed_activity_handled(&mut feed), 0);
+    }
+
+    #[test]
+    fn only_handled_activity_can_be_deleted() {
+        let path = "/tmp/project/feature";
+        let mut feed = VecDeque::from([pane_activity(path, "working", 1)]);
+
+        assert!(!delete_handled_feed_activity(&mut feed, path));
+        assert_eq!(feed.len(), 1);
+
+        assert!(mark_feed_activity_handled(&mut feed, path));
+        assert!(delete_handled_feed_activity(&mut feed, path));
+        assert!(feed.is_empty());
     }
 
     #[test]

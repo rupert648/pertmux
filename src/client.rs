@@ -71,6 +71,18 @@ struct PendingWorktreeRemoval {
     linked_pane_id: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ActivityFeedAction {
+    Handled {
+        pane_path: String,
+        new_selected: usize,
+    },
+    Deleted {
+        pane_path: String,
+        next_selected: Option<usize>,
+    },
+}
+
 pub struct ClientState {
     pub snapshot: DashboardSnapshot,
     pub active_project: usize,
@@ -342,8 +354,26 @@ impl ClientState {
         self.popup = PopupState::ActivityFeed { selected: 0 };
     }
 
-    fn mark_activity_handled_locally(&mut self, selected: usize) -> Option<String> {
-        mark_activity_handled_in_feed(&mut self.snapshot.activity_feed, selected)
+    fn handle_or_delete_activity_locally(&mut self, selected: usize) -> Option<ActivityFeedAction> {
+        let action = handle_or_delete_activity_in_feed(&mut self.snapshot.activity_feed, selected)?;
+
+        match &action {
+            ActivityFeedAction::Handled { new_selected, .. } => {
+                if let PopupState::ActivityFeed { selected } = &mut self.popup {
+                    *selected = *new_selected;
+                }
+            }
+            ActivityFeedAction::Deleted { next_selected, .. } => match next_selected {
+                Some(next_selected) => {
+                    if let PopupState::ActivityFeed { selected } = &mut self.popup {
+                        *selected = *next_selected;
+                    }
+                }
+                None => self.close_popup(),
+            },
+        }
+
+        Some(action)
     }
 
     fn mark_all_activity_handled_locally(&mut self) {
@@ -1300,8 +1330,18 @@ async fn handle_key(
                     PopupState::ActivityFeed { selected } => *selected,
                     _ => 0,
                 };
-                if let Some(pane_path) = state.mark_activity_handled_locally(selected) {
-                    send_msg(framed, ClientMsg::MarkActivityHandled { pane_path }).await?;
+                if let Some(action) = state.handle_or_delete_activity_locally(selected) {
+                    match action {
+                        ActivityFeedAction::Handled { pane_path, .. } => {
+                            state.notify("Activity handled");
+                            send_msg(framed, ClientMsg::MarkActivityHandled { pane_path }).await?;
+                        }
+                        ActivityFeedAction::Deleted { pane_path, .. } => {
+                            state.notify("Activity deleted");
+                            send_msg(framed, ClientMsg::DeleteHandledActivity { pane_path })
+                                .await?;
+                        }
+                    }
                 }
             }
             KeyCode::Char('c') => {
@@ -1569,19 +1609,27 @@ fn restore_worktree(worktrees: &mut Vec<WtWorktree>, original_idx: usize, worktr
     worktrees.insert(original_idx.min(worktrees.len()), worktree);
 }
 
-fn mark_activity_handled_in_feed(
-    activity_feed: &mut [crate::protocol::ActivityEntry],
+fn handle_or_delete_activity_in_feed(
+    activity_feed: &mut Vec<crate::protocol::ActivityEntry>,
     selected: usize,
-) -> Option<String> {
-    let entry = activity_feed.get_mut(selected)?;
-    if matches!(entry.kind, ActivityKind::AgentHandled) {
-        return None;
-    }
+) -> Option<ActivityFeedAction> {
+    let entry = activity_feed.get(selected)?;
     let Some(ActivityTarget::Pane { pane_path, .. }) = &entry.target else {
         return None;
     };
     let pane_path = pane_path.clone();
 
+    if matches!(entry.kind, ActivityKind::AgentHandled) {
+        activity_feed.remove(selected);
+        let next_selected = (!activity_feed.is_empty())
+            .then(|| selected.min(activity_feed.len().saturating_sub(1)));
+        return Some(ActivityFeedAction::Deleted {
+            pane_path,
+            next_selected,
+        });
+    }
+
+    let entry = &mut activity_feed[selected];
     entry.kind = ActivityKind::AgentHandled;
     entry.message = "handled".to_string();
     entry.received_at_secs = std::time::SystemTime::now()
@@ -1590,7 +1638,23 @@ fn mark_activity_handled_in_feed(
         .as_secs();
     activity_feed.sort_by_key(|entry| matches!(entry.kind, ActivityKind::AgentHandled));
 
-    Some(pane_path)
+    let new_selected = activity_feed
+        .iter()
+        .position(|entry| {
+            matches!(
+                &entry.target,
+                Some(ActivityTarget::Pane {
+                    pane_path: entry_path,
+                    ..
+                }) if entry_path == &pane_path
+            )
+        })
+        .unwrap_or_else(|| selected.min(activity_feed.len().saturating_sub(1)));
+
+    Some(ActivityFeedAction::Handled {
+        pane_path,
+        new_selected,
+    })
 }
 
 fn mark_all_activity_handled_in_feed(activity_feed: &mut [crate::protocol::ActivityEntry]) {
@@ -1884,8 +1948,8 @@ fn show_connection_error(sock_path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::{
-        mark_activity_handled_in_feed, mark_all_activity_handled_in_feed, restore_worktree,
-        take_worktree_by_branch,
+        ActivityFeedAction, handle_or_delete_activity_in_feed, mark_all_activity_handled_in_feed,
+        restore_worktree, take_worktree_by_branch,
     };
     use crate::protocol::{ActivityEntry, ActivityKind, ActivityTarget};
     use crate::worktrunk::{WtCommit, WtWorktree};
@@ -1961,18 +2025,45 @@ mod tests {
     }
 
     #[test]
-    fn optimistic_handling_is_immediate_and_moves_card_after_active_work() {
+    fn optimistic_handling_moves_selection_and_second_action_deletes_card() {
         let mut feed = vec![
             activity("/tmp/feature-a", ActivityKind::AgentIdle, 2),
             activity("/tmp/feature-b", ActivityKind::AgentBusy, 1),
         ];
 
         assert_eq!(
-            mark_activity_handled_in_feed(&mut feed, 0),
-            Some("/tmp/feature-a".to_string())
+            handle_or_delete_activity_in_feed(&mut feed, 0),
+            Some(ActivityFeedAction::Handled {
+                pane_path: "/tmp/feature-a".to_string(),
+                new_selected: 1,
+            })
         );
         assert_eq!(feed[0].label, "feature-b");
         assert!(matches!(feed[1].kind, ActivityKind::AgentHandled));
+
+        assert_eq!(
+            handle_or_delete_activity_in_feed(&mut feed, 1),
+            Some(ActivityFeedAction::Deleted {
+                pane_path: "/tmp/feature-a".to_string(),
+                next_selected: Some(0),
+            })
+        );
+        assert_eq!(feed.len(), 1);
+        assert_eq!(feed[0].label, "feature-b");
+    }
+
+    #[test]
+    fn deleting_last_handled_activity_clears_selection() {
+        let mut feed = vec![activity("/tmp/feature-a", ActivityKind::AgentHandled, 2)];
+
+        assert_eq!(
+            handle_or_delete_activity_in_feed(&mut feed, 0),
+            Some(ActivityFeedAction::Deleted {
+                pane_path: "/tmp/feature-a".to_string(),
+                next_selected: None,
+            })
+        );
+        assert!(feed.is_empty());
     }
 
     #[test]
