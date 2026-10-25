@@ -32,6 +32,7 @@ type WorktreeRefreshResult = (
     anyhow::Result<Vec<WorktreeInfo>>,
 );
 const MAX_CONCURRENT_WORKTREE_REFRESHES: usize = 4;
+const CODEX_SESSION_PERSIST_FAILURE_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 pub enum SelectionSection {
     MergeRequests,
@@ -154,6 +155,7 @@ pub struct App {
     previous_pane_statuses: HashMap<String, PaneStatus>,
     codex_hook_statuses: HashMap<String, PaneStatus>,
     persisted_codex_sessions: HashMap<String, String>,
+    failed_codex_session_persistence: HashMap<(String, String), Instant>,
     pub agent_actions: Vec<AgentActionConfig>,
     pub global_mrs: Vec<GlobalMrEntry>,
     /// Full activity feed history, accumulated by the daemon and included in
@@ -253,6 +255,7 @@ impl App {
             previous_pane_statuses: HashMap::new(),
             codex_hook_statuses: HashMap::new(),
             persisted_codex_sessions: HashMap::new(),
+            failed_codex_session_persistence: HashMap::new(),
             agent_actions: config.agent_action,
             global_mrs: Vec::new(),
             activity_feed,
@@ -481,11 +484,14 @@ impl App {
     }
 
     fn persist_codex_session(&mut self, worktree_path: &str, session_id: &str) {
-        if self
-            .persisted_codex_sessions
-            .get(worktree_path)
-            .is_some_and(|stored| stored == session_id)
-        {
+        let now = Instant::now();
+        if !should_attempt_codex_session_persist(
+            &self.persisted_codex_sessions,
+            &self.failed_codex_session_persistence,
+            worktree_path,
+            session_id,
+            now,
+        ) {
             return;
         }
 
@@ -493,8 +499,17 @@ impl App {
             Ok(()) => {
                 self.persisted_codex_sessions
                     .insert(worktree_path.to_string(), session_id.to_string());
+                self.failed_codex_session_persistence
+                    .remove(&(worktree_path.to_string(), session_id.to_string()));
             }
             Err(error) => {
+                self.failed_codex_session_persistence
+                    .retain(|_, failed_at| {
+                        now.saturating_duration_since(*failed_at)
+                            < CODEX_SESSION_PERSIST_FAILURE_BACKOFF
+                    });
+                self.failed_codex_session_persistence
+                    .insert((worktree_path.to_string(), session_id.to_string()), now);
                 warn!(
                     "app: failed to persist Codex session for {}: {}",
                     worktree_path, error
@@ -1131,6 +1146,27 @@ impl App {
     }
 }
 
+fn should_attempt_codex_session_persist(
+    persisted: &HashMap<String, String>,
+    failures: &HashMap<(String, String), Instant>,
+    worktree_path: &str,
+    session_id: &str,
+    now: Instant,
+) -> bool {
+    if persisted
+        .get(worktree_path)
+        .is_some_and(|stored| stored == session_id)
+    {
+        return false;
+    }
+
+    failures
+        .get(&(worktree_path.to_string(), session_id.to_string()))
+        .is_none_or(|failed_at| {
+            now.saturating_duration_since(*failed_at) >= CODEX_SESSION_PERSIST_FAILURE_BACKOFF
+        })
+}
+
 fn detect_mr_list_changes(
     project_name: &str,
     old_mrs: &[MergeRequestSummary],
@@ -1608,5 +1644,51 @@ mod tests {
             ),
             Some("new response".to_string())
         );
+    }
+
+    #[test]
+    fn codex_session_persistence_failures_back_off_per_path_and_session() {
+        let path = "/tmp/not-a-repository";
+        let failed_session = "session-1";
+        let now = Instant::now();
+        let persisted = HashMap::new();
+        let failures = HashMap::from([((path.to_string(), failed_session.to_string()), now)]);
+
+        assert!(!should_attempt_codex_session_persist(
+            &persisted,
+            &failures,
+            path,
+            failed_session,
+            now + CODEX_SESSION_PERSIST_FAILURE_BACKOFF - Duration::from_secs(1),
+        ));
+        assert!(should_attempt_codex_session_persist(
+            &persisted,
+            &failures,
+            path,
+            failed_session,
+            now + CODEX_SESSION_PERSIST_FAILURE_BACKOFF,
+        ));
+        assert!(should_attempt_codex_session_persist(
+            &persisted,
+            &failures,
+            path,
+            "session-2",
+            now + Duration::from_secs(1),
+        ));
+    }
+
+    #[test]
+    fn successfully_persisted_codex_session_stays_cached() {
+        let path = "/tmp/repository";
+        let session_id = "session-1";
+        let persisted = HashMap::from([(path.to_string(), session_id.to_string())]);
+
+        assert!(!should_attempt_codex_session_persist(
+            &persisted,
+            &HashMap::new(),
+            path,
+            session_id,
+            Instant::now(),
+        ));
     }
 }
