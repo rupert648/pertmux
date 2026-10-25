@@ -234,21 +234,7 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
 
     let inherited_limit = std::env::var_os(MAX_CONCURRENT_COMMANDS_ENV);
     let mut command = list_command(local_path, inherited_limit.as_deref());
-    let output = match command.output().await {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            info!("fetch_worktrees: wt binary not found, returning empty");
-            return Ok(vec![]);
-        }
-        Err(e) => {
-            warn!(
-                "fetch_worktrees: command error after {:.2?}: {}",
-                t.elapsed(),
-                e
-            );
-            return Err(e.into());
-        }
-    };
+    let output = command.output().await.context("Failed to run wt list")?;
 
     info!(
         "fetch_worktrees: wt exited (status={}) in {:.2?}",
@@ -258,18 +244,12 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "fetch_worktrees: wt list failed ({}): {}",
-            output.status,
-            stderr.trim()
-        );
-        return Ok(vec![]);
+        anyhow::bail!("wt list failed ({}): {}", output.status, stderr.trim());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if stdout.trim().is_empty() {
-        info!("fetch_worktrees: empty output, returning empty");
-        return Ok(vec![]);
+        anyhow::bail!("wt list returned empty output");
     }
 
     let worktrees = parse_worktrees(&stdout)?;

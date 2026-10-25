@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::worktrunk::WtWorktree;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WorktreeInfo {
@@ -28,6 +30,35 @@ pub async fn discover_worktrees(repo_path: &str) -> Result<Vec<WorktreeInfo>> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_worktree_output(&stdout)
+}
+
+/// Build the linking representation directly from a successful Worktrunk listing.
+pub fn worktree_info_from_worktrunk(worktrees: &[WtWorktree]) -> Vec<WorktreeInfo> {
+    worktrees
+        .iter()
+        .filter_map(|worktree| {
+            let path = worktree.path.as_deref()?;
+            let path = std::fs::canonicalize(path)
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| path.to_string());
+            let detached = worktree
+                .worktree
+                .as_ref()
+                .is_some_and(|state| state.detached);
+
+            Some(WorktreeInfo {
+                path,
+                branch: if detached {
+                    None
+                } else {
+                    worktree.branch.clone()
+                },
+                head_commit: worktree.commit.sha.clone(),
+                is_main: worktree.is_main,
+                is_bare: false,
+            })
+        })
+        .collect()
 }
 
 /// Parse the porcelain output of `git worktree list --porcelain`.
@@ -151,5 +182,60 @@ mod tests {
             "Expected descriptive error, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn worktrunk_conversion_canonicalizes_paths_and_preserves_detached_state() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pertmux-worktrunk-conversion-{}-{nonce}",
+            std::process::id()
+        ));
+        let checkout = root.join("checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let non_canonical = checkout.join("..").join("checkout");
+        let worktree = WtWorktree {
+            branch: Some("branch-ignored-for-detached-head".to_string()),
+            path: Some(non_canonical.to_string_lossy().to_string()),
+            kind: "worktree".to_string(),
+            commit: crate::worktrunk::WtCommit {
+                sha: "abc123".to_string(),
+                short_sha: "abc123".to_string(),
+                message: String::new(),
+                timestamp: 0,
+            },
+            working_tree: None,
+            main_state: None,
+            main: None,
+            remote: None,
+            worktree: Some(crate::worktrunk::WtWorktreeState {
+                state: None,
+                detached: true,
+            }),
+            is_main: true,
+            is_current: false,
+            is_previous: false,
+            symbols: None,
+        };
+
+        let converted = worktree_info_from_worktrunk(&[worktree]);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(
+            converted[0].path,
+            std::fs::canonicalize(&checkout)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+        assert!(converted[0].branch.is_none());
+        assert_eq!(converted[0].head_commit, "abc123");
+        assert!(converted[0].is_main);
+        assert!(!converted[0].is_bare);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

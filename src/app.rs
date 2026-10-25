@@ -8,7 +8,7 @@ use crate::forge_clients::types::{
     MergeRequestDetail, MergeRequestSummary, MergeRequestThread, PipelineJob,
 };
 use crate::forge_clients::{GitHubClient, GitLabClient};
-use crate::git::{WorktreeInfo, discover_worktrees};
+use crate::git::{WorktreeInfo, discover_worktrees, worktree_info_from_worktrunk};
 use crate::linking::{DashboardState, link_all};
 use crate::mr_changes::{MrChange, MrChangeType};
 use crate::protocol::{
@@ -33,6 +33,36 @@ type WorktreeRefreshResult = (
 );
 const MAX_CONCURRENT_WORKTREE_REFRESHES: usize = 4;
 const CODEX_SESSION_PERSIST_FAILURE_BACKOFF: Duration = Duration::from_secs(5 * 60);
+
+async fn resolve_worktree_discovery<F, Fut>(
+    worktrunk_result: anyhow::Result<Vec<WtWorktree>>,
+    git_fallback: F,
+) -> (
+    anyhow::Result<Vec<WtWorktree>>,
+    anyhow::Result<Vec<WorktreeInfo>>,
+)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<WorktreeInfo>>>,
+{
+    match worktrunk_result {
+        Ok(worktrees) => {
+            let git_worktrees = worktree_info_from_worktrunk(&worktrees);
+            (Ok(worktrees), Ok(git_worktrees))
+        }
+        Err(error) => (Err(error), git_fallback().await),
+    }
+}
+
+async fn discover_project_worktrees(
+    local_path: &str,
+) -> (
+    anyhow::Result<Vec<WtWorktree>>,
+    anyhow::Result<Vec<WorktreeInfo>>,
+) {
+    let worktrunk_result = worktrunk::fetch_worktrees(local_path).await;
+    resolve_worktree_discovery(worktrunk_result, || discover_worktrees(local_path)).await
+}
 
 pub enum SelectionSection {
     MergeRequests,
@@ -871,8 +901,7 @@ impl App {
                     name, path
                 );
                 let pt = std::time::Instant::now();
-                let (worktrunk_result, git_result) =
-                    tokio::join!(worktrunk::fetch_worktrees(&path), discover_worktrees(&path));
+                let (worktrunk_result, git_result) = discover_project_worktrees(&path).await;
                 (i, name, pt.elapsed(), worktrunk_result, git_result)
             }))
             .buffer_unordered(MAX_CONCURRENT_WORKTREE_REFRESHES);
@@ -970,10 +999,7 @@ impl App {
                 total: 1,
             }]));
         }
-        let (worktrunk_result, git_result) = tokio::join!(
-            worktrunk::fetch_worktrees(&local_path),
-            discover_worktrees(&local_path)
-        );
+        let (worktrunk_result, git_result) = discover_project_worktrees(&local_path).await;
         let proj = &mut self.projects[project_idx];
         match worktrunk_result {
             Ok(wts) => {
@@ -1690,5 +1716,46 @@ mod tests {
             session_id,
             Instant::now(),
         ));
+    }
+
+    #[tokio::test]
+    async fn successful_worktrunk_discovery_skips_git_fallback() {
+        let git_called = std::cell::Cell::new(false);
+
+        let (worktrunk_result, git_result) = resolve_worktree_discovery(Ok(Vec::new()), || async {
+            git_called.set(true);
+            Ok(Vec::new())
+        })
+        .await;
+
+        assert!(worktrunk_result.unwrap().is_empty());
+        assert!(git_result.unwrap().is_empty());
+        assert!(!git_called.get());
+    }
+
+    #[tokio::test]
+    async fn failed_worktrunk_discovery_falls_back_to_git() {
+        let git_called = std::cell::Cell::new(false);
+
+        let (worktrunk_result, git_result) = resolve_worktree_discovery(
+            Err(anyhow::anyhow!("invalid Worktrunk output")),
+            || async {
+                git_called.set(true);
+                Ok(vec![WorktreeInfo {
+                    path: "/repo".to_string(),
+                    branch: Some("main".to_string()),
+                    head_commit: "abc123".to_string(),
+                    is_main: true,
+                    is_bare: false,
+                }])
+            },
+        )
+        .await;
+
+        assert!(worktrunk_result.is_err());
+        assert!(git_called.get());
+        let fallback = git_result.unwrap();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].branch.as_deref(), Some("main"));
     }
 }
