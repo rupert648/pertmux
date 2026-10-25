@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+const MAX_CONCURRENT_COMMANDS_ENV: &str = "WORKTRUNK_MAX_CONCURRENT_COMMANDS";
+
+fn list_command(local_path: &str, inherited_limit: Option<&std::ffi::OsStr>) -> Command {
+    let mut command = Command::new("wt");
+    command
+        .kill_on_drop(true)
+        .args(["-C", local_path, "list", "--format=json"]);
+    if inherited_limit.is_none() {
+        command.env(MAX_CONCURRENT_COMMANDS_ENV, "1");
+    }
+    command
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WtCommit {
@@ -219,10 +232,8 @@ pub async fn fetch_worktrees(local_path: &str) -> Result<Vec<WtWorktree>> {
     info!("fetch_worktrees: start (path={})", local_path);
     let t = std::time::Instant::now();
 
-    let mut command = Command::new("wt");
-    command
-        .kill_on_drop(true)
-        .args(["-C", local_path, "list", "--format=json"]);
+    let inherited_limit = std::env::var_os(MAX_CONCURRENT_COMMANDS_ENV);
+    let mut command = list_command(local_path, inherited_limit.as_deref());
     let output = match command.output().await {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -416,6 +427,35 @@ pub fn format_age(timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configured_env<'a>(command: &'a Command, name: &str) -> Option<Option<&'a std::ffi::OsStr>> {
+        command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new(name))
+            .map(|(_, value)| value)
+    }
+
+    #[test]
+    fn wt_list_defaults_internal_concurrency_to_one() {
+        let command = list_command("/repo", None);
+
+        assert_eq!(
+            configured_env(&command, MAX_CONCURRENT_COMMANDS_ENV),
+            Some(Some(std::ffi::OsStr::new("1")))
+        );
+    }
+
+    #[test]
+    fn wt_list_does_not_override_user_concurrency() {
+        let command = list_command("/repo", Some(std::ffi::OsStr::new("7")));
+
+        assert_eq!(
+            configured_env(&command, MAX_CONCURRENT_COMMANDS_ENV),
+            None,
+            "the child should inherit the user's value without an override"
+        );
+    }
 
     const REAL_WT_JSON: &str = r#"[
         {
