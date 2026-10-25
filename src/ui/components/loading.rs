@@ -13,7 +13,7 @@ const SPINNER_FRAMES: [&str; 4] = ["\u{25d0}", "\u{25d3}", "\u{25d1}", "\u{25d2}
 
 pub(crate) fn draw_loading(frame: &mut Frame, tick: usize, steps: &[RefreshStep]) {
     let area = frame.area();
-    let content_height = 6_u16.saturating_add(steps.len() as u16);
+    let content_height = 8_u16.saturating_add(steps.len() as u16);
     let vertical = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(content_height.min(area.height)),
@@ -62,6 +62,11 @@ pub(crate) fn draw_loading(frame: &mut Frame, tick: usize, steps: &[RefreshStep]
             .enumerate()
             .map(|(index, step)| status_line(step, current_step == Some(index))),
     );
+    content.push(Line::from(""));
+    content.push(Line::from(Span::styled(
+        "q / Esc close",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     frame.render_widget(
         Paragraph::new(content).alignment(Alignment::Center),

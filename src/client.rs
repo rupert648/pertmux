@@ -791,7 +791,12 @@ pub async fn run() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let initial_snapshot = match wait_for_initial_snapshot(&mut framed, &mut terminal).await {
-        Ok(snapshot) => snapshot,
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => {
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            return Ok(());
+        }
         Err(error) => {
             disable_raw_mode()?;
             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -949,10 +954,24 @@ pub fn cleanup() -> anyhow::Result<()> {
 async fn wait_for_initial_snapshot<B>(
     framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
     terminal: &mut Terminal<B>,
-) -> Result<DashboardSnapshot>
+) -> Result<Option<DashboardSnapshot>>
 where
     B: Backend,
     B::Error: Send + Sync + 'static,
+{
+    let mut event_stream = EventStream::new();
+    wait_for_initial_snapshot_with_events(framed, terminal, &mut event_stream).await
+}
+
+async fn wait_for_initial_snapshot_with_events<B, S>(
+    framed: &mut Framed<UnixStream, LengthDelimitedCodec>,
+    terminal: &mut Terminal<B>,
+    event_stream: &mut S,
+) -> Result<Option<DashboardSnapshot>>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+    S: futures::Stream<Item = std::io::Result<Event>> + Unpin,
 {
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(120));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -969,6 +988,18 @@ where
                 terminal.draw(|frame| ui::draw_loading(frame, tick, &refresh_steps))?;
                 tick = tick.wrapping_add(1);
             }
+            maybe_event = event_stream.next() => {
+                match maybe_event {
+                    Some(Ok(Event::Key(key)))
+                        if key.kind == KeyEventKind::Press
+                            && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) =>
+                    {
+                        return Ok(None);
+                    }
+                    Some(Ok(_)) | Some(Err(_)) => {}
+                    None => return Ok(None),
+                }
+            }
             frame = framed.next() => {
                 let Some(frame) = frame else {
                     anyhow::bail!("daemon disconnected before initial snapshot");
@@ -976,7 +1007,7 @@ where
                 let bytes = frame?;
                 let msg: DaemonMsg = serde_json::from_slice(&bytes)?;
                 match msg {
-                    DaemonMsg::Snapshot(snap) => return Ok(*snap),
+                    DaemonMsg::Snapshot(snap) => return Ok(Some(*snap)),
                     DaemonMsg::HandshakeAck { .. } => {}
                     DaemonMsg::Progress(steps) => refresh_steps = steps,
                     DaemonMsg::ActionResult { ok, message } => {
@@ -1949,10 +1980,14 @@ fn show_connection_error(sock_path: &std::path::Path) {
 mod tests {
     use super::{
         ActivityFeedAction, handle_or_delete_activity_in_feed, mark_all_activity_handled_in_feed,
-        restore_worktree, take_worktree_by_branch,
+        restore_worktree, take_worktree_by_branch, wait_for_initial_snapshot_with_events,
     };
     use crate::protocol::{ActivityEntry, ActivityKind, ActivityTarget};
     use crate::worktrunk::{WtCommit, WtWorktree};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+    use tokio::net::UnixStream;
+    use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
     fn worktree(branch: &str) -> WtWorktree {
         WtWorktree {
@@ -2079,5 +2114,22 @@ mod tests {
             feed.iter()
                 .all(|entry| matches!(entry.kind, ActivityKind::AgentHandled))
         );
+    }
+
+    #[tokio::test]
+    async fn quit_key_closes_initial_loading_screen() {
+        let (client_stream, _server_stream) = UnixStream::pair().unwrap();
+        let mut framed = Framed::new(client_stream, LengthDelimitedCodec::new());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        let mut events = futures::stream::iter([Ok::<_, std::io::Error>(Event::Key(key))]);
+
+        let snapshot =
+            wait_for_initial_snapshot_with_events(&mut framed, &mut terminal, &mut events)
+                .await
+                .unwrap();
+
+        assert!(snapshot.is_none());
     }
 }
