@@ -43,6 +43,9 @@ When you press `c`, pertmux opens a popup dialog where you enter the branch name
 2. Create a new worktree directory
 3. Create and checkout the branch
 4. Automatically refresh the dashboard (MR linking updates immediately)
+5. Open the new worktree in tmux; when `default_agent_command` is configured,
+   this starts the command in the left side of a horizontal split and opens an
+   empty terminal on the right
 
 ## Create with prompt {#create-with-prompt}
 
@@ -91,7 +94,7 @@ Press `M` on a worktree to merge it into the default branch. pertmux runs `wt me
 
 ## Split pane with agent
 
-When the `default_agent_command` is set in your config, pressing **`Enter`** on a worktree creates a horizontal split in tmux:
+When the `default_agent_command` is set in your config, creating a worktree or pressing **`Enter`** on an existing worktree creates a horizontal split in tmux:
 - **Left pane**: Runs the specified agent command (e.g., `opencode`)
 - **Right pane**: Opens an empty terminal in the worktree directory
 

@@ -59,8 +59,8 @@ fn open_url_in_browser(url: &str) {
 struct WorktreeOpenRequest {
     project_idx: usize,
     branch: String,
-    /// Full command to send to the pane (template already filled).
-    command: String,
+    /// Command to send to the agent pane. `None` retains the single-pane fallback.
+    command: Option<String>,
     project_name: String,
 }
 
@@ -96,9 +96,9 @@ pub struct ClientState {
     /// Cleared when the daemon sends `Progress(vec![])`.
     pub refresh_steps: Vec<RefreshStep>,
     pub running: bool,
-    /// Set when `CreateWorktreeWithPrompt` is submitted, cleared on ActionResult.
-    pending_create_with_prompt: Option<WorktreeOpenRequest>,
-    /// Set when ActionResult ok is received for a `CreateWorktreeWithPrompt`.
+    /// Set when either create workflow is submitted, cleared on ActionResult.
+    pending_create: Option<WorktreeOpenRequest>,
+    /// Set when a create ActionResult succeeds.
     /// On the next snapshot update we find the worktree path and open the pane.
     pending_open_worktree: Option<WorktreeOpenRequest>,
     /// Keeps the optimistically removed row available for rollback until the
@@ -132,7 +132,7 @@ impl ClientState {
             notification: None,
             running: true,
             refresh_steps: vec![],
-            pending_create_with_prompt: None,
+            pending_create: None,
             pending_open_worktree: None,
             pending_worktree_removal: None,
         }
@@ -197,7 +197,8 @@ impl ClientState {
                 });
             match result {
                 Some((path, project_name, command)) => {
-                    if let Err(e) = tmux::find_or_create_pane(&path, &project_name, Some(&command))
+                    if let Err(e) =
+                        tmux::find_or_create_pane(&path, &project_name, command.as_deref())
                     {
                         self.notify(format!("Failed to open pane: {}", e));
                     }
@@ -1064,18 +1065,16 @@ where
                                 }
 
                                 if ok {
-                                    // If a CreateWorktreeWithPrompt was submitted, move the
-                                    // pending open request so it fires on the next snapshot.
-                                    if let Some(pending) =
-                                        state.pending_create_with_prompt.take()
-                                    {
+                                    // Move a successful create request so it fires when the
+                                    // refreshed snapshot supplies the new worktree path.
+                                    if let Some(pending) = state.pending_create.take() {
                                         state.pending_open_worktree = Some(pending);
                                     }
 
                                     state.popup = PopupState::None;
                                 } else {
                                     // Creation failed — discard any pending open request.
-                                    state.pending_create_with_prompt = None;
+                                    state.pending_create = None;
                                 }
                             }
                             DaemonMsg::HandshakeAck { .. } => {}
@@ -1476,10 +1475,10 @@ async fn handle_key(
                             .map(|p| p.name.clone())
                             .unwrap_or_default();
 
-                        state.pending_create_with_prompt = Some(WorktreeOpenRequest {
+                        state.pending_create = Some(WorktreeOpenRequest {
                             project_idx,
                             branch: branch.clone(),
-                            command,
+                            command: Some(command),
                             project_name,
                         });
 
@@ -1513,6 +1512,24 @@ async fn handle_key(
                 }
 
                 if let Some(msg) = popup_action_msg(state) {
+                    if let ClientMsg::CreateWorktree {
+                        project_idx,
+                        ref branch,
+                    } = msg
+                    {
+                        let project_name = state
+                            .snapshot
+                            .projects
+                            .get(project_idx)
+                            .map(|project| project.name.clone())
+                            .unwrap_or_default();
+                        state.pending_create = Some(WorktreeOpenRequest {
+                            project_idx,
+                            branch: branch.clone(),
+                            command: state.snapshot.default_agent_command.clone(),
+                            project_name,
+                        });
+                    }
                     let toast = match &state.popup {
                         PopupState::CreateWorktree { .. } => "Creating worktree...",
                         PopupState::ConfirmMerge { .. } => "Merging worktree...",
