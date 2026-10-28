@@ -705,6 +705,7 @@ fn draw_activity_feed_popup(frame: &mut Frame, state: &ClientState, selected: us
             super::activity_feed::activity_pane(state, entry),
             chunks[0].width,
             i == selected,
+            super::activity_feed::activity_project_color(state, entry),
         ));
     }
 

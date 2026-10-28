@@ -9,6 +9,18 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, Padding},
 };
+use std::path::Path;
+
+const PROJECT_COLORS: [Color; 8] = [
+    Color::Rgb(97, 175, 239),
+    Color::Rgb(198, 120, 221),
+    Color::Rgb(86, 182, 194),
+    Color::Rgb(152, 195, 121),
+    Color::Rgb(229, 192, 123),
+    Color::Rgb(224, 108, 117),
+    Color::Rgb(209, 154, 102),
+    Color::Rgb(126, 156, 216),
+];
 
 pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: Rect) {
     let kb_hint = state.snapshot.keybindings.activity_feed;
@@ -45,6 +57,7 @@ pub(crate) fn draw_activity_feed(frame: &mut Frame, state: &ClientState, area: R
                 activity_pane(state, entry),
                 inner.width,
                 false,
+                activity_project_color(state, entry),
             ))
         })
         .collect();
@@ -107,11 +120,59 @@ pub(crate) fn activity_pane<'a>(
         })
 }
 
+pub(crate) fn activity_project_color(state: &ClientState, entry: &ActivityEntry) -> Option<Color> {
+    let Some(ActivityTarget::Pane { pane_path, .. }) = &entry.target else {
+        return None;
+    };
+
+    state
+        .snapshot
+        .projects
+        .iter()
+        .position(|project| {
+            project
+                .cached_worktrees
+                .iter()
+                .filter_map(|worktree| worktree.path.as_deref())
+                .any(|worktree_path| same_path(pane_path, worktree_path))
+                || is_project_worktree_path(pane_path, &project.local_path)
+        })
+        .map(|index| PROJECT_COLORS[index % PROJECT_COLORS.len()])
+}
+
+fn same_path(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+fn is_project_worktree_path(activity_path: &str, project_root: &str) -> bool {
+    if same_path(activity_path, project_root) {
+        return true;
+    }
+
+    let activity_path = Path::new(activity_path.trim_end_matches('/'));
+    let project_root = Path::new(project_root.trim_end_matches('/'));
+    if activity_path.parent() != project_root.parent() {
+        return false;
+    }
+
+    let Some(activity_name) = activity_path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(project_name) = project_root.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+
+    activity_name
+        .strip_prefix(project_name)
+        .is_some_and(|suffix| suffix.starts_with('.'))
+}
+
 pub(crate) fn activity_card_lines(
     entry: &ActivityEntry,
     pane: Option<&AgentPane>,
     width: u16,
     selected: bool,
+    project_color: Option<Color>,
 ) -> Vec<Line<'static>> {
     let width = width as usize;
     let border_style = if selected {
@@ -119,6 +180,9 @@ pub(crate) fn activity_card_lines(
     } else {
         Style::default().fg(Color::Indexed(239))
     };
+    let left_border_style = project_color
+        .map(|color| Style::default().fg(color).add_modifier(Modifier::BOLD))
+        .unwrap_or(border_style);
     let name_style = if selected {
         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
     } else {
@@ -161,7 +225,8 @@ pub(crate) fn activity_card_lines(
 
     vec![
         Line::from(vec![
-            Span::styled(if selected { "╭▸" } else { "╭ " }, border_style),
+            Span::styled("╭", left_border_style),
+            Span::styled(if selected { "▸" } else { " " }, border_style),
             Span::styled(
                 fit_text(status, ACTIVITY_STATUS_WIDTH),
                 activity_status_style(&entry.kind),
@@ -182,6 +247,7 @@ pub(crate) fn activity_card_lines(
             } else {
                 Style::default().fg(Color::Gray)
             },
+            left_border_style,
             border_style,
             "│ ",
             " │",
@@ -190,6 +256,7 @@ pub(crate) fn activity_card_lines(
             &response,
             title_width,
             Style::default().fg(Color::Indexed(245)),
+            left_border_style,
             border_style,
             "│ ",
             " │",
@@ -198,6 +265,7 @@ pub(crate) fn activity_card_lines(
             &metadata,
             title_width,
             Style::default().fg(Color::DarkGray),
+            left_border_style,
             border_style,
             "╰ ",
             " ╯",
@@ -209,14 +277,15 @@ fn framed_card_line(
     content: &str,
     width: usize,
     content_style: Style,
-    border_style: Style,
+    left_border_style: Style,
+    right_border_style: Style,
     left: &'static str,
     right: &'static str,
 ) -> Line<'static> {
     Line::from(vec![
-        Span::styled(left, border_style),
+        Span::styled(left, left_border_style),
         Span::styled(fit_text(content, width), content_style),
-        Span::styled(right, border_style),
+        Span::styled(right, right_border_style),
     ])
 }
 
@@ -332,7 +401,8 @@ mod tests {
             context: Some(ActivityContext::from(&pane)),
         };
 
-        let lines = activity_card_lines(&entry, None, 72, true);
+        let project_color = Color::Rgb(97, 175, 239);
+        let lines = activity_card_lines(&entry, None, 72, true, Some(project_color));
         let rendered = lines
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -344,6 +414,8 @@ mod tests {
         assert!(rendered.contains("Improve the agent activity cards"));
         assert!(rendered.contains("Implemented the requested interaction"));
         assert!(rendered.contains("codex · gpt-6 · tmux:pertmux"));
+        assert_eq!(lines[0].spans[0].style.fg, Some(project_color));
+        assert_eq!(lines[1].spans[0].style.fg, Some(project_color));
         assert!(lines.iter().all(|line| {
             line.spans
                 .iter()
@@ -351,5 +423,28 @@ mod tests {
                 .sum::<usize>()
                 == 72
         }));
+    }
+
+    #[test]
+    fn worktrunk_sibling_paths_match_the_same_project_root() {
+        let root = "/repos/challenge-platform";
+
+        assert!(is_project_worktree_path(root, root));
+        assert!(is_project_worktree_path(
+            "/repos/challenge-platform.rupert-feature",
+            root
+        ));
+        assert!(is_project_worktree_path(
+            "/repos/challenge-platform.another-worktree/",
+            root
+        ));
+        assert!(!is_project_worktree_path(
+            "/repos/challenge-platformer.feature",
+            root
+        ));
+        assert!(!is_project_worktree_path(
+            "/other/challenge-platform.feature",
+            root
+        ));
     }
 }
